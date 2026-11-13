@@ -1,13 +1,26 @@
 # -*- coding: utf-8 -*-
-# clash_rules module - version v4
+# clash_rules module - version v5
 """Stores and reads the Auto Fix rules used by the Link Clash tool.
-Rules are saved in a JSON file. All lengths are stored in feet."""
+
+Two files:
+ - config/clash_rules.default.json, in the repository: the office starting point. Edit it in GitHub to change
+   what new users start with. pyRevit's Update pulls changes to it.
+ - the user's own copy, %APPDATA%\\pyRevit\\EWTestSuite\\clash_rules.json: created from the default the first time
+   it is needed, then changed with the Auto Fix Rules tool. Updates never overwrite it.
+
+Lengths in the files are in inches when the file says "units": "inches" (both files do); older files without
+that line are in feet. Inside the tools every length is in feet."""
 import os
 import json
 
-# Set this to a shared path (e.g. r"\\server\share\clash_rules.json") to share rules between users.
-# Leave as None to store the file next to this module.
+# Set this to a shared path (e.g. r"\\server\share\clash_rules.json") so everyone uses one rules file.
+# Leave as None for a per-user file in %APPDATA%.
 RULES_PATH = None
+
+EXTENSION_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_CONFIG = os.path.join(EXTENSION_DIR, "config", "clash_rules.default.json")
+LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
+OLD_LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clash_rules.json")   # before v5
 
 ELEV_NEVER = "Never (jogs only)"
 ELEV_BEFORE = "Before trying jogs"
@@ -37,6 +50,7 @@ DEFAULTS = {
     "max_elev_change": 1.0,      # furthest the whole conduit may be raised or lowered
     "device_mode": DEVICE_ASK,   # conduit joined straight to a device, when its elevation would change
 }
+# DEFAULTS is only the fallback if config/clash_rules.default.json is missing or unreadable.
 
 LENGTH_KEYS = ["clearance", "max_shift", "shift_step", "jog_lead", "jog_min_leg", "max_elev_change",
                "max_saddle_length"]
@@ -48,17 +62,52 @@ BOOL_KEYS = ["ask_before", "allow_shift", "allow_h_jog", "allow_v_jog", "majorit
 def rules_path():
     if RULES_PATH:
         return RULES_PATH
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "clash_rules.json")
+    return os.path.join(LOCAL_DIR, "clash_rules.json")
 
 
-def _clean(raw):
-    """Defaults overlaid with whatever valid values raw holds."""
-    out = dict(DEFAULTS)
+def _read(path):
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def _write(path, rules):
+    folder = os.path.dirname(path)
+    if folder and not os.path.exists(folder):
+        os.makedirs(folder)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(_to_file(_clean(rules)), f, indent=2, sort_keys=True)
+    if os.path.exists(path):
+        os.remove(path)
+    os.rename(tmp, path)
+
+
+def _to_file(rules):
+    """Rules (feet) -> file contents (inches, rounded so the file stays readable)."""
+    out = dict(rules)
+    for k in LENGTH_KEYS:
+        out[k] = round(rules[k] * 12.0, 4)
+    out["units"] = "inches"
+    return out
+
+
+def default_rules():
+    """The repository's default config (falls back to DEFAULTS if it is missing or unreadable)."""
+    try:
+        return _clean(_read(DEFAULT_CONFIG))
+    except Exception:
+        return dict(DEFAULTS)
+
+
+def _clean(raw, base=None):
+    """base (DEFAULTS if None) overlaid with whatever valid values raw holds. Result is in feet."""
+    out = dict(base if base is not None else DEFAULTS)
     if not isinstance(raw, dict):
         return out
+    scale = 1.0 / 12.0 if raw.get("units") == "inches" else 1.0
     for k in LENGTH_KEYS:
         try:
-            v = float(raw.get(k))
+            v = float(raw.get(k)) * scale
             if v > 0:
                 out[k] = v
         except Exception:
@@ -83,20 +132,27 @@ def _clean(raw):
 
 
 def load_rules():
+    """The user's rules. Settings missing from their file (e.g. added in a later version) come from the
+    repository default. The first time, their file is created from the default (or from a pre-v5 file)."""
+    base = default_rules()
     p = rules_path()
     if not os.path.exists(p):
-        return dict(DEFAULTS)
+        start = base
+        if not RULES_PATH and os.path.exists(OLD_LOCAL):
+            try:
+                start = _clean(_read(OLD_LOCAL), base)   # keep settings saved before v5
+            except Exception:
+                pass
+        try:
+            _write(p, start)
+        except Exception:
+            pass
+        return dict(start)
     try:
-        with open(p, "r") as f:
-            return _clean(json.load(f))
+        return _clean(_read(p), base)
     except Exception:
-        return dict(DEFAULTS)
+        return dict(base)
 
 
 def save_rules(rules):
-    p = rules_path()
-    folder = os.path.dirname(p)
-    if folder and not os.path.exists(folder):
-        os.makedirs(folder)
-    with open(p, "w") as f:
-        json.dump(_clean(rules), f, indent=2, sort_keys=True)
+    _write(rules_path(), rules)

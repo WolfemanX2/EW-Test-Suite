@@ -1,0 +1,19 @@
+{
+  "allow_h_jog": true,
+  "allow_shift": true,
+  "allow_v_jog": true,
+  "ask_before": true,
+  "clearance": 1.0,
+  "device_mode": "Ask each time",
+  "elevation_mode": "Never (jogs only)",
+  "jog_lead": 6.0,
+  "jog_min_leg": 9.0,
+  "majority_elevation": true,
+  "max_elev_change": 12.0,
+  "max_saddle_length": 48.0,
+  "max_shift": 12.0,
+  "shift_step": 1.0,
+  "units": "inches",
+  "v_jog_max_angle": 90,
+  "v_jog_min_angle": 15
+}

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Auto Fix Rules script - version v4
+# Auto Fix Rules script - version v5
 __title__ = "Auto Fix\nRules"
 __doc__ = "Set the rules Link Clash's Auto Fix follows: distances, which kinds of fix are allowed, and their order."
 
@@ -78,7 +78,7 @@ XAML = """
 
         <TextBlock x:Name="status_text" Foreground="Firebrick" TextWrapping="Wrap" Margin="0,12,0,0" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-            <Button x:Name="defaults_btn" Content="Reset to defaults" Padding="10,2" Margin="0,0,20,0" />
+            <Button x:Name="defaults_btn" Content="Reset to office defaults" Padding="10,2" Margin="0,0,20,0" />
             <Button x:Name="save_btn" Content="Save" Width="80" Margin="0,0,6,0" />
             <Button x:Name="cancel_btn" Content="Cancel" Width="80" />
         </StackPanel>
@@ -113,7 +113,7 @@ class RulesWindow(forms.WPFWindow):
             for a in clash_rules.ANGLES:
                 getattr(self, k).Items.Add(a)
         self.fill(rules)
-        self.defaults_btn.Click += lambda s, e: self.fill(clash_rules.DEFAULTS)
+        self.defaults_btn.Click += lambda s, e: self.fill(clash_rules.default_rules())
         self.save_btn.Click += self.on_save
         self.cancel_btn.Click += lambda s, e: self.Close()
 

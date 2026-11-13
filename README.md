@@ -38,14 +38,28 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 ## Saved settings
 
-These files are created by the tools and are not part of the repository, so updates never overwrite them:
+### Auto Fix rules: office default + each user's copy
 
-- `lib/mounting_rules.json` (Routing Preferences)
-- `lib/clash_rules.json` (Auto Fix Rules)
-- Clash statuses: `%APPDATA%\pyRevit\LinkClash\` per model
+- `config/clash_rules.default.json` (in this repository) is the starting point. Edit it here on GitHub to
+  change what everyone starts with. Lengths are in inches; the settings are the ones in the Auto Fix Rules
+  window. Valid choices for the text settings:
+  - `elevation_mode`: `Never (jogs only)`, `Before trying jogs`, `After trying jogs`
+  - `device_mode`: `Ask each time`, `Device remains in place`, `Adjust the device's elevation too`
+  - `v_jog_min_angle` / `v_jog_max_angle`: multiples of 5 from 5 to 90
+- Each user's own copy is `%APPDATA%\pyRevit\EWTestSuite\clash_rules.json`. It is created from the default
+  the first time Link Clash or Auto Fix Rules needs it, and after that only the Auto Fix Rules tool changes it.
+  pyRevit updates never overwrite it.
+- Changing the default later does not change existing users' copies, except for settings their copy doesn't
+  have yet (new settings in a later version are filled in from the default). Users can pick up the new default
+  with **Reset to office defaults** in Auto Fix Rules, then Save.
+- To make everyone share one rules file instead, set `RULES_PATH` in `lib/clash_rules.py` to a network location.
 
-To share settings across a team, set `RULES_PATH` in `lib/mounting_rules.py` / `lib/clash_rules.py`, or
-`STATUS_DIR` in the Link Clash script, to a network location.
+### Other settings
+
+- `lib/mounting_rules.json` (Routing Preferences). Not part of the repository, so updates never overwrite it.
+  To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
+- Clash statuses: `%APPDATA%\pyRevit\LinkClash\` per model. To share them, set `STATUS_DIR` in the Link
+  Clash script to a network location.
 
 ## Versions
 
@@ -56,6 +70,6 @@ Each script has its version on line 2.
 | Auto Conduit | v3 |
 | Routing Preferences | v1 |
 | Link Clash | v11 |
-| Auto Fix Rules | v4 |
+| Auto Fix Rules | v5 |
 | lib/mounting_rules.py | v1 |
-| lib/clash_rules.py | v4 |
+| lib/clash_rules.py | v5 |
