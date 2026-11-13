@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Link Clash script - version v9
+# Link Clash script - version v10
 __title__ = "Link\nClash"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
@@ -53,9 +53,12 @@ PRINT_REPORT = False        # True = also print the clash table in pyRevit's out
 ALLOW_SHIFT = True          # try moving the conduit sideways first
 ALLOW_H_JOG = True          # horizontal jogs (90 degree bends)
 ALLOW_V_JOG = True          # vertical jogs (angled bends)
-V_JOG_ANGLE = 45            # preferred bend angle for vertical jogs (multiple of 5)
-V_JOG_MIN_ANGLE = 15        # if the preferred angle doesn't fit, other multiples of 5 in this range are tried,
-V_JOG_MAX_ANGLE = 90        # closest to the preferred angle first
+V_JOG_MIN_ANGLE = 15        # vertical jog (saddle) bend angles: multiples of 5 in this range,
+V_JOG_MAX_ANGLE = 90        # smallest angle tried first
+MAX_SADDLE_LENGTH = 4.0     # a small angle makes a long saddle; angles whose saddle would be longer than
+                            # this are only used if nothing shorter fits
+MAJORITY_ELEVATION = True   # conduit with several clashes: first try one elevation change that clears
+                            # more than half of them, then saddle around whatever is left
 ELEVATION_MODE = "never"    # raise/lower the whole conduit: "never", "before" jogs or "after" jogs
 MAX_ELEV_CHANGE = 1.0       # furthest the whole conduit may be raised or lowered
 ASK_BEFORE_FIX = True       # starting state of the "Ask before applying each fix" box in the results window
@@ -582,7 +585,7 @@ def load_fix_rules():
     """Replace the Auto Fix settings with the rules saved by the Auto Fix Rules tool, if it is installed."""
     global ASK_BEFORE_FIX, FIX_CLEARANCE, MAX_SHIFT, SHIFT_STEP, JOG_LEAD, JOG_MIN_LEG
     global ALLOW_SHIFT, ALLOW_H_JOG, ALLOW_V_JOG, ELEVATION_MODE, MAX_ELEV_CHANGE
-    global V_JOG_ANGLE, V_JOG_MIN_ANGLE, V_JOG_MAX_ANGLE
+    global V_JOG_MIN_ANGLE, V_JOG_MAX_ANGLE, MAX_SADDLE_LENGTH, MAJORITY_ELEVATION
     if clash_rules is None:
         return
     try:
@@ -597,7 +600,8 @@ def load_fix_rules():
         JOG_LEAD = r["jog_lead"]
         JOG_MIN_LEG = r["jog_min_leg"]
         MAX_ELEV_CHANGE = r["max_elev_change"]
-        V_JOG_ANGLE = r.get("v_jog_angle", V_JOG_ANGLE)
+        MAX_SADDLE_LENGTH = r.get("max_saddle_length", MAX_SADDLE_LENGTH)
+        MAJORITY_ELEVATION = r.get("majority_elevation", MAJORITY_ELEVATION)
         V_JOG_MIN_ANGLE = r.get("v_jog_min_angle", V_JOG_MIN_ANGLE)
         V_JOG_MAX_ANGLE = r.get("v_jog_max_angle", V_JOG_MAX_ANGLE)
         ELEVATION_MODE = {clash_rules.ELEV_BEFORE: "before",
@@ -634,8 +638,9 @@ def cylinder(p, q, radius):
     return GeometryCreationUtilities.CreateExtrusionGeometry(List[CurveLoop]([loop]), z, length)
 
 
-def path_clear(pts, radius, ctx):
-    """True if cylinders along consecutive points hit nothing in any link. Unknown counts as blocked."""
+def path_hits(pts, radius, ctx):
+    """Set of (link, element id) hit by cylinders along consecutive points, or None if it couldn't be tested."""
+    hits = set()
     try:
         for i in range(len(pts) - 1):
             if pts[i].DistanceTo(pts[i + 1]) < 1e-6:
@@ -645,7 +650,7 @@ def path_clear(pts, radius, ctx):
                 local = SolidUtils.CreateTransformed(solid, tf.Inverse)
                 outline = solids_outline([local])
                 if outline is None:
-                    return False
+                    return None
                 cand = (FilteredElementCollector(ldoc)
                         .WherePasses(ctx["cats"])
                         .WhereElementIsNotElementType()
@@ -653,22 +658,33 @@ def path_clear(pts, radius, ctx):
                         .ToElementIds())
                 if cand.Count == 0:
                     continue
-                if (FilteredElementCollector(ldoc, cand)
-                        .WherePasses(ElementIntersectsSolidFilter(local))
-                        .GetElementCount()) > 0:
-                    return False
-        return True
+                for i2 in (FilteredElementCollector(ldoc, cand)
+                           .WherePasses(ElementIntersectsSolidFilter(local))
+                           .ToElementIds()):
+                    hits.add((ldoc.Title, eid(i2)))
+        return hits
     except Exception:
-        return False
+        return None
+
+
+def path_clear(pts, radius, ctx):
+    """True if cylinders along consecutive points hit nothing in any link. Unknown counts as blocked."""
+    hits = path_hits(pts, radius, ctx)
+    return hits is not None and not hits
+
+
+def clash_boxes(el, ctx):
+    """{(link, element id): box corners of that link element in host coordinates} for an element's clashes."""
+    solids = element_solids(el)
+    if not solids:
+        return {}
+    return dict(((title, eid(le)), box) for title, le, _, box in
+                check_element(el, solids, ctx["links"], ctx["cats"], ctx["cache"]))
 
 
 def clash_keys(el, ctx):
     """Set of (link, element id) this element currently clashes with."""
-    solids = element_solids(el)
-    if not solids:
-        return set()
-    return set((title, eid(le)) for title, le, _, _ in
-               check_element(el, solids, ctx["links"], ctx["cats"], ctx["cache"]))
+    return set(clash_boxes(el, ctx))
 
 
 def conduit_conns(el):
@@ -770,22 +786,43 @@ def elevation_candidates(p0, p1, radius, ctx):
                                "Raise" if v.Z > 0 else "Lower", inches(dist)))
 
 
+def majority_lifts(p0, p1, radius, ctx, before_self):
+    """Elevation changes that would clear more than half of the conduit's clashes without adding any,
+    most clashes cleared first, then the smallest move: (vector, description)."""
+    if abs((p1 - p0).Normalize().Z) > 0.99:
+        return []
+    found = []
+    steps = int(math.floor(MAX_ELEV_CHANGE / SHIFT_STEP + 1e-6))
+    for k in range(1, steps + 1):
+        for sign in (1.0, -1.0):
+            v = XYZ(0, 0, sign * k * SHIFT_STEP)
+            hits = path_hits([p0 + v, p1 + v], radius + FIX_CLEARANCE, ctx)
+            if hits is None or not hits <= before_self:
+                continue
+            cleared = len(before_self) - len(hits)
+            if 2 * cleared > len(before_self):
+                found.append((len(hits), k, v, "{} the whole conduit {} (clears {} of its {} clashes)".format(
+                    "Raise" if sign > 0 else "Lower", inches(k * SHIFT_STEP), cleared, len(before_self))))
+    found.sort(key=lambda f: (f[0], f[1]))
+    return [(v, desc) for _, _, v, desc in found[:MAX_SHIFT_TRIES]]
+
+
 def jog_angles():
-    """Vertical jog angles to try (degrees, multiples of 5): the preferred one first, then the rest of the
-    allowed range, closest to the preferred angle first (the shallower one first on a tie)."""
+    """Vertical jog angles allowed (degrees, multiples of 5), smallest first."""
     def five(a):
         return max(5, min(90, int(round(float(a) / 5.0)) * 5))
-    lo, hi, pref = five(V_JOG_MIN_ANGLE), five(V_JOG_MAX_ANGLE), five(V_JOG_ANGLE)
+    lo, hi = five(V_JOG_MIN_ANGLE), five(V_JOG_MAX_ANGLE)
     if lo > hi:
         lo, hi = hi, lo
-    pref = max(lo, min(hi, pref))
-    return sorted(range(lo, hi + 1, 5), key=lambda a: (abs(a - pref), a))
+    return list(range(lo, hi + 1, 5))
 
 
 def jog_candidates(p0, p1, radius, box, ctx):
-    """Jogs around the clashing element that look clear, least added conduit first:
-    (points, description). Horizontal jogs use 90 degree bends; vertical jogs use the first angle from
-    jog_angles() that fits, separately for going over and going under."""
+    """Jogs around the clashing element that look clear, smallest bend angle first, then shortest:
+    (points, description).
+    Vertical jogs (saddles) use the smallest allowed angle whose saddle is no longer than
+    MAX_SADDLE_LENGTH; if none fits within that length, the shortest saddle that fits is used.
+    The offset is only as large as the clearance needs. Horizontal jogs use 90 degree bends."""
     axis = p1 - p0
     length = axis.GetLength()
     d = axis.Normalize()
@@ -801,42 +838,52 @@ def jog_candidates(p0, p1, radius, box, ctx):
     gap = radius + FIX_CLEARANCE
     ta = min(ts) - gap - JOG_LEAD      # where the conduit must already be fully offset
     tb = max(ts) + gap + JOG_LEAD
+    if tb - ta < JOG_MIN_LEG:          # the offset piece itself must not be too short
+        grow_by = (JOG_MIN_LEG - (tb - ta)) / 2.0
+        ta, tb = ta - grow_by, tb + grow_by
 
     def at(t):
         return p0 + d * t
 
-    def grow(off):
-        return off if abs(off) >= JOG_MIN_LEG else (JOG_MIN_LEG if off >= 0 else -JOG_MIN_LEG)
+    def at_least(off, smallest):
+        return off if abs(off) >= smallest else (smallest if off >= 0 else -smallest)
 
-    found = []
+    found = []   # (angle, saddle length, points, description)
     # horizontal jog, 90 degree bends: out sideways, along, back
-    for off in (grow(max(ss) + gap), grow(min(ss) - gap)):
+    for need in (max(ss) + gap, min(ss) - gap):
         if not ALLOW_H_JOG or ta < JOG_MIN_LEG or tb > length - JOG_MIN_LEG:
             break
+        off = at_least(need, JOG_MIN_LEG)
         side = n * off
         pts = [p0, at(ta), at(ta) + side, at(tb) + side, at(tb), p1]
         if path_clear(pts[1:5], radius + FIX_CLEARANCE * 0.5, ctx):
-            found.append((2.0 * abs(off), pts,
+            found.append((90, tb - ta, pts,
                           "Add a horizontal jog (90 degree bends) {} toward {}".format(inches(off), compass(side))))
-    # vertical jog at angle a: each sloped piece covers |off| / tan(a) along the run
+    # vertical saddle at angle a: each sloped piece covers |off| / tan(a) along the run
     angles = jog_angles() if ALLOW_V_JOG else []
-    for off in (grow(max(zs) + gap), grow(min(zs) - gap)):
-        rise = XYZ(0, 0, off)
+    for need in (max(zs) + gap, min(zs) - gap):
+        options = []
         for ang in angles:
             rad = math.radians(ang)
+            # the sloped piece must be at least JOG_MIN_LEG long, so very small offsets are raised just enough
+            off = at_least(need, JOG_MIN_LEG * math.sin(rad))
             run = 0.0 if ang >= 90 else abs(off) / math.tan(rad)
             t_in, t_out = ta - run, tb + run
             if t_in < JOG_MIN_LEG or t_out > length - JOG_MIN_LEG:
-                continue   # a shallower angle needs more room; a steeper one may still fit
-            pts = [p0, at(t_in), at(ta) + rise, at(tb) + rise, at(t_out), p1]
+                continue   # needs more straight conduit than this piece has; a steeper angle may fit
+            rise = XYZ(0, 0, off)
+            options.append((ang, t_out - t_in, off,
+                            [p0, at(t_in), at(ta) + rise, at(tb) + rise, at(t_out), p1]))
+        short = [o for o in options if o[1] <= MAX_SADDLE_LENGTH]           # smallest angle first
+        longer = sorted([o for o in options if o[1] > MAX_SADDLE_LENGTH], key=lambda o: o[1])
+        for ang, saddle, off, pts in short + longer:
             if path_clear(pts[1:5], radius + FIX_CLEARANCE * 0.5, ctx):
-                added = 2.0 * abs(off) * math.tan(rad / 2.0)   # extra conduit compared with the straight run
-                found.append((added, pts,
-                              "Add a vertical jog ({} degree bends) {} {} the clashing element".format(
-                                  ang, inches(off), "over" if off > 0 else "under")))
-                break      # first angle that works for this direction
-    found.sort(key=lambda f: f[0])
-    return [(pts, desc) for _, pts, desc in found]
+                found.append((ang, saddle, pts,
+                              "Add a vertical saddle ({} degree bends, {} long) {} {} the clashing element".format(
+                                  ang, inches(saddle), inches(off), "over" if off > 0 else "under")))
+                break      # best option for this direction
+    found.sort(key=lambda f: (f[0], f[1]))
+    return [(pts, desc) for _, _, pts, desc in found]
 
 
 def remaining_clashes(elements, ctx, target, before_self):
@@ -905,10 +952,101 @@ def apply_jog(d, conduit, pts, ctx, target, before_self):
     return remaining_clashes([conduit] + made, ctx, target, before_self)
 
 
+def attempt(d, fn, args):
+    """Run one fix step inside a sub-transaction. Returns its result, or None (rolled back) if it failed."""
+    st = SubTransaction(d)
+    st.Start()
+    try:
+        res = fn(*args)
+        st.Commit()
+        return res
+    except Exception:
+        try:
+            st.RollBack()
+        except Exception:
+            pass
+        return None
+
+
+def apply_majority_lift(d, conduit, vec, ctx, before_near, before_self):
+    """Elevation change that must leave fewer than half of the original clashes."""
+    left = apply_shift(d, conduit, vec, ctx, before_near, None, before_self)
+    if 2 * (len(before_self) - len(left)) <= len(before_self):
+        raise FixFailed("the elevation change did not clear most of the clashes")
+    return left
+
+
+def fix_single(d, conduit, row, ctx, target, before_self, before_near):
+    """One clash on the conduit: sideways move, then jogs, with whole-conduit elevation changes before or
+    after the jogs as the rules say. Returns (steps, remaining) - steps is empty if nothing worked."""
+    curve = conduit.Location.Curve
+    p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
+    radius = conduit_radius(conduit)
+    move_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
+                  for vec, desc in shift_candidates(p0, p1, radius, ctx)]
+    lift_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
+                  for vec, desc in elevation_candidates(p0, p1, radius, ctx)]
+    jog_tries = [(desc, apply_jog, (d, conduit, pts, ctx, target, before_self))
+                 for pts, desc in jog_candidates(p0, p1, radius, row.link_box, ctx)]
+    if ELEVATION_MODE == "before":
+        attempts = move_tries + lift_tries + jog_tries
+    else:
+        attempts = move_tries + jog_tries + lift_tries
+    for desc, fn, args in attempts:
+        left = attempt(d, fn, args)
+        if left is not None:
+            return [desc], left
+    return [], {}
+
+
+def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes):
+    """Several clashes on the conduit:
+    1. a sideways move that clears everything (if sideways moves are allowed);
+    2. otherwise one elevation change that clears more than half of the clashes;
+    3. then a saddle around each clash that is left.
+    Returns (steps, remaining) - steps is empty if nothing worked."""
+    curve = conduit.Location.Curve
+    p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
+    radius = conduit_radius(conduit)
+    steps = []
+    left = None
+    for vec, desc in shift_candidates(p0, p1, radius, ctx):
+        left = attempt(d, apply_shift, (d, conduit, vec, ctx, before_near, None, before_self))
+        if left is not None:
+            steps.append(desc)
+            break
+    if left is None:
+        for vec, desc in majority_lifts(p0, p1, radius, ctx, before_self):
+            left = attempt(d, apply_majority_lift, (d, conduit, vec, ctx, before_near, before_self))
+            if left is not None:
+                steps.append(desc)
+                break
+    if left is None:
+        left = dict((k, row.host_int) for k in before_self)   # nothing moved; every clash is still there
+
+    for key in sorted(left.keys()):
+        if key not in left:
+            continue   # an earlier saddle already cleared it
+        piece = d.GetElement(make_id(left[key]))
+        if not isinstance(piece, Conduit):
+            continue   # the clash sits on a fitting
+        pc = piece.Location.Curve
+        for pts, desc in jog_candidates(pc.GetEndPoint(0), pc.GetEndPoint(1), radius, boxes.get(key), ctx):
+            res = attempt(d, apply_jog, (d, piece, pts, ctx, key, before_self))
+            if res is not None:
+                pid = eid(piece)
+                for k in [k for k, v in left.items() if v == pid]:
+                    del left[k]          # this piece was rebuilt; res says what is left on its parts
+                left.update(res)
+                steps.append(desc)
+                break
+    return steps, left
+
+
 def auto_fix(row, ask):
-    """Try a sideways move first, then a jog. Everything happens in one transaction (one undo step).
-    Returns a message, or (message, remaining clashes) when the element was retested and the statuses
-    of its clashes should be updated."""
+    """Fix a clashing conduit following the Auto Fix Rules. Everything happens in one transaction
+    (one undo step). Returns a message, or (message, remaining clashes) when the element was retested
+    and the statuses of its clashes should be updated."""
     d = doc
     load_fix_rules()
     conduit = d.GetElement(row.host_id)
@@ -919,7 +1057,8 @@ def auto_fix(row, ask):
 
     links, _ = loaded_links()   # fresh each time, in case links were reloaded since the check
     ctx = {"links": links, "cats": ElementMulticategoryFilter(List[BuiltInCategory](LINK_CATS)), "cache": {}}
-    before_self = clash_keys(conduit, ctx)
+    boxes = clash_boxes(conduit, ctx)
+    before_self = set(boxes)
     try:
         target = (row.link, int(row.lid))
     except Exception:
@@ -930,52 +1069,28 @@ def auto_fix(row, ask):
         left = dict((k, row.host_int) for k in before_self)
         return ("Conduit {} no longer clashes with this element.".format(row.sel), left)
 
-    curve = conduit.Location.Curve
-    p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
-    radius = conduit_radius(conduit)
     before_near = dict((eid(nb), clash_keys(nb, ctx)) for nb in neighbours(conduit))
-    shifts = shift_candidates(p0, p1, radius, ctx)
-    jogs = jog_candidates(p0, p1, radius, row.link_box, ctx)
-    lifts = elevation_candidates(p0, p1, radius, ctx)
-    if not shifts and not jogs and not lifts:
-        return ("No fix found for conduit {} within the Auto Fix Rules: no allowed move is clear and no "
-                "allowed jog fits (jogs need a level conduit with room either side of the clashing "
-                "element).".format(row.sel))
+    level = abs((conduit.Location.Curve.GetEndPoint(1) - conduit.Location.Curve.GetEndPoint(0)).Normalize().Z) < 0.01
+    multi = MAJORITY_ELEVATION and level and len(before_self) >= 2
 
     t = Transaction(d, "Link Clash: Auto Fix")
     t.Start()
-    done = None
-    remaining = {}
     try:
-        # order: sideways moves, then jogs, with whole-conduit elevation changes before or after the jogs
-        move_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
-                      for vec, desc in shifts]
-        lift_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
-                      for vec, desc in lifts]
-        jog_tries = [(desc, apply_jog, (d, conduit, pts, ctx, target, before_self)) for pts, desc in jogs]
-        if ELEVATION_MODE == "before":
-            attempts = move_tries + lift_tries + jog_tries
+        if multi:
+            steps, remaining = fix_multi(d, conduit, row, ctx, before_self, before_near, boxes)
         else:
-            attempts = move_tries + jog_tries + lift_tries
-        for desc, fn, args in attempts:
-            st = SubTransaction(d)
-            st.Start()
-            try:
-                remaining = fn(*args)
-                st.Commit()
-                done = desc
-                break
-            except Exception:
-                try:
-                    st.RollBack()
-                except Exception:
-                    pass
-        if done is None:
+            steps, remaining = fix_single(d, conduit, row, ctx, target, before_self, before_near)
+        if not steps:
             t.RollBack()
-            return ("No fix worked for conduit {}: each move or jog tried either still clashed, "
-                    "disconnected the run, or could not be built by Revit.".format(row.sel))
+            return ("No fix worked for conduit {} within the Auto Fix Rules: each allowed move or jog either "
+                    "still clashed, disconnected the run, did not fit, or could not be built by Revit "
+                    "(jogs need a level conduit with room either side of the clashing element).".format(row.sel))
         if ask:
-            ok = forms.alert("Proposed fix for conduit {}:\n\n{}.\n\nApply it?".format(row.sel, done),
+            plan = "\n".join("{}. {}".format(i + 1, st) for i, st in enumerate(steps))
+            note = ""
+            if remaining:
+                note = "\n\n{} of its {} clash(es) would remain.".format(len(remaining), len(before_self))
+            ok = forms.alert("Proposed fix for conduit {}:\n\n{}{}\n\nApply it?".format(row.sel, plan, note),
                              title="Link Clash - Auto Fix", yes=True, no=True)
             if not ok:
                 t.RollBack()
@@ -989,8 +1104,9 @@ def auto_fix(row, ask):
         except Exception:
             pass
         raise
-    return ("Fixed conduit {}: {}. Ctrl+Z undoes it (after closing this window).".format(
-        row.sel, done[0].lower() + done[1:]), remaining)
+    done = "; then ".join(st[0].lower() + st[1:] for st in steps)
+    return ("Fixed conduit {}: {}. Ctrl+Z undoes it (after closing this window).".format(row.sel, done),
+            remaining)
 
 
 GROUP_NONE = "No grouping"

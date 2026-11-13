@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Auto Fix Rules script - version v2
+# Auto Fix Rules script - version v3
 __title__ = "Auto Fix\nRules"
 __doc__ = "Set the rules Link Clash's Auto Fix follows: distances, which kinds of fix are allowed, and their order."
 
@@ -35,17 +35,18 @@ XAML = """
         <CheckBox x:Name="allow_h_jog" Content="Allow horizontal jogs (90 degree bends)" Margin="0,6,0,0" />
         <CheckBox x:Name="allow_v_jog" Content="Allow vertical jogs (angled bends)" Margin="0,6,0,0" />
         <DockPanel Margin="0,6,0,0">
-            <ComboBox x:Name="v_jog_angle" DockPanel.Dock="Right" Width="70" />
-            <TextBlock Text="Preferred vertical jog angle (degrees)" VerticalAlignment="Center" />
-        </DockPanel>
-        <DockPanel Margin="0,6,0,0">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <ComboBox x:Name="v_jog_min_angle" Width="70" />
                 <TextBlock Text=" to " VerticalAlignment="Center" />
                 <ComboBox x:Name="v_jog_max_angle" Width="70" />
             </StackPanel>
-            <TextBlock Text="If it won't fit, also try angles from (degrees)" VerticalAlignment="Center"
+            <TextBlock Text="Vertical jog angles, smallest tried first (degrees)" VerticalAlignment="Center"
                        TextWrapping="Wrap" />
+        </DockPanel>
+        <DockPanel Margin="0,6,0,0">
+            <TextBox x:Name="max_saddle_length" DockPanel.Dock="Right" Width="70" />
+            <TextBlock Text="Longest vertical jog before a steeper angle is used (inches)"
+                       VerticalAlignment="Center" TextWrapping="Wrap" />
         </DockPanel>
         <DockPanel Margin="0,6,0,0">
             <TextBox x:Name="jog_lead" DockPanel.Dock="Right" Width="70" />
@@ -59,8 +60,12 @@ XAML = """
         <TextBlock Text="3. Raise or lower the whole conduit" FontWeight="Bold" Margin="0,14,0,0" />
         <DockPanel Margin="0,6,0,0">
             <ComboBox x:Name="elevation_mode" DockPanel.Dock="Right" Width="170" />
-            <TextBlock Text="Change the whole conduit's elevation" VerticalAlignment="Center" />
+            <TextBlock Text="Conduit with one clash: change its elevation" VerticalAlignment="Center" />
         </DockPanel>
+        <CheckBox x:Name="majority_elevation" Margin="0,6,0,0">
+            <TextBlock TextWrapping="Wrap"
+                       Text="Conduit with several clashes: first try one elevation change that clears most of them, then jog around the rest" />
+        </CheckBox>
         <DockPanel Margin="0,6,0,0">
             <TextBox x:Name="max_elev_change" DockPanel.Dock="Right" Width="70" />
             <TextBlock Text="Maximum elevation change (inches)" VerticalAlignment="Center" />
@@ -83,6 +88,7 @@ LABELS = {
     "jog_lead": "Straight run before the jog",
     "jog_min_leg": "Shortest jog piece",
     "max_elev_change": "Maximum elevation change",
+    "max_saddle_length": "Longest vertical jog",
 }
 
 
@@ -132,9 +138,6 @@ class RulesWindow(forms.WPFWindow):
             rules[k] = clash_rules.ANGLES[max(0, getattr(self, k).SelectedIndex)]
         if rules["v_jog_min_angle"] > rules["v_jog_max_angle"]:
             self.status_text.Text = "The lowest jog angle can't be larger than the highest."
-            return
-        if not (rules["v_jog_min_angle"] <= rules["v_jog_angle"] <= rules["v_jog_max_angle"]):
-            self.status_text.Text = "The preferred jog angle must be inside the range of angles to try."
             return
         if rules["shift_step"] > rules["max_shift"]:
             self.status_text.Text = "The step between positions can't be larger than the maximum sideways move."

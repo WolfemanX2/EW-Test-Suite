@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# clash_rules module - version v2
+# clash_rules module - version v3
 """Stores and reads the Auto Fix rules used by the Link Clash tool.
 Rules are saved in a JSON file. All lengths are stored in feet."""
 import os
@@ -22,19 +22,21 @@ DEFAULTS = {
     "shift_step": 1.0 / 12,      # moves are tried in steps of this size, smallest first
     "allow_h_jog": True,         # horizontal jogs (90 degree bends)
     "allow_v_jog": True,         # vertical jogs (angled bends)
-    "v_jog_angle": 45,           # preferred vertical jog bend angle, degrees (multiple of 5)
-    "v_jog_min_angle": 15,       # other multiples of 5 in this range are tried if the preferred angle won't fit
-    "v_jog_max_angle": 90,
+    "v_jog_min_angle": 15,       # vertical jog (saddle) bend angles, degrees: multiples of 5 in this range,
+    "v_jog_max_angle": 90,       # smallest tried first
+    "max_saddle_length": 4.0,    # angles whose saddle would be longer than this are only used as a last resort
+    "majority_elevation": True,  # several clashes on one conduit: first try an elevation change clearing most
     "jog_lead": 0.5,             # straight run kept between the obstacle and the jog
     "jog_min_leg": 0.75,         # shortest piece a jog may create
     "elevation_mode": ELEV_NEVER,   # whether the whole conduit may be raised or lowered
     "max_elev_change": 1.0,      # furthest the whole conduit may be raised or lowered
 }
 
-LENGTH_KEYS = ["clearance", "max_shift", "shift_step", "jog_lead", "jog_min_leg", "max_elev_change"]
-ANGLE_KEYS = ["v_jog_angle", "v_jog_min_angle", "v_jog_max_angle"]
+LENGTH_KEYS = ["clearance", "max_shift", "shift_step", "jog_lead", "jog_min_leg", "max_elev_change",
+               "max_saddle_length"]
+ANGLE_KEYS = ["v_jog_min_angle", "v_jog_max_angle"]
 ANGLES = list(range(5, 91, 5))   # allowed angle choices
-BOOL_KEYS = ["ask_before", "allow_shift", "allow_h_jog", "allow_v_jog"]
+BOOL_KEYS = ["ask_before", "allow_shift", "allow_h_jog", "allow_v_jog", "majority_elevation"]
 
 
 def rules_path():
@@ -67,7 +69,6 @@ def _clean(raw):
             pass
     if out["v_jog_min_angle"] > out["v_jog_max_angle"]:
         out["v_jog_min_angle"], out["v_jog_max_angle"] = out["v_jog_max_angle"], out["v_jog_min_angle"]
-    out["v_jog_angle"] = max(out["v_jog_min_angle"], min(out["v_jog_max_angle"], out["v_jog_angle"]))
     if raw.get("elevation_mode") in ELEV_MODES:
         out["elevation_mode"] = raw["elevation_mode"]
     return out
