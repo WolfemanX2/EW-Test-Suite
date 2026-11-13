@@ -67,7 +67,7 @@ Each script has its version on line 2.
 
 | File | Version |
 |---|---|
-| Auto Conduit | v3 |
+| Auto Conduit | v4 |
 | Routing Preferences | v1 |
 | Link Clash | v11 |
 | Auto Fix Rules | v5 |

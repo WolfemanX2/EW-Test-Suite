@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Auto Conduit script - version v3
+# Auto Conduit script - version v4
 __title__ = "Auto\nConduit"
 __doc__ = ("Pick devices or their tags in order (Esc when finished, then confirm); plans orthogonal conduit "
            "for the whole chain, choosing connectors to keep front approaches open, at a chosen elevation "
@@ -14,12 +14,13 @@ from Autodesk.Revit.DB import (
     XYZ, Domain, FilteredElementCollector, BuiltInCategory, ElementId,
     ElementMulticategoryFilter, BoundingBoxIntersectsFilter, Outline,
     BuiltInParameter, Transaction, TransactionGroup, FamilyInstance, IndependentTag,
-    OverrideGraphicSettings, Color, FillPatternElement
+    OverrideGraphicSettings, Color, FillPatternElement, ElementTransformUtils
 )
 from Autodesk.Revit.DB.Electrical import Conduit, ConduitType
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
+from System.Windows.Input import Keyboard, ModifierKeys
 
 import mounting_rules
 
@@ -58,6 +59,11 @@ HIGHLIGHT_COLOR = (255, 0, 160)   # R, G, B
 HIGHLIGHT_WEIGHT = 6      # line weight (1-16) used for highlighted devices
 OPT_ADD_AGAIN = "Add it again (conduit will return to this device)"
 OPT_IGNORE = "Ignore this pick"
+OPT_REMOVE = "Remove it from the chain"
+OPT_UNDO = "Undo last pick"
+OPT_SKIP_DEV = "Skip this device (connect the legs before it)"
+OPT_ADJUST = "Adjust device location"
+OPT_CANCEL_CHAIN = "Cancel (create nothing)"
 OPT_CLOSEST = "Use closest connector"
 OPT_SKIP = "Skip device"
 OPT_FINISH = "Finished - create conduit"
@@ -640,7 +646,11 @@ def link_options(ea, eb, wall_a, wall_b, fb_a, fb_b, z_target, used, static_boxe
 
 def solve_chain(seq, walls, fallback, z_target, static_boxes):
     """Search connector choices for the whole chain and keep the lowest cost plan.
-    Cost = total length + BACK_PENALTY per back approach. Returns (plan, reason)."""
+    Cost = total length + BACK_PENALTY per back approach.
+    Returns (plan, reason, fail_index, partial):
+      success: (plan, None, None, None)
+      failure: (None, why, index of the link that could not be routed (0-based; it joins seq[index] to
+                seq[index + 1]), the best plan for the links before it - possibly empty)"""
     total = len(seq) - 1
 
     cache = {"apps": {}, "links": {}, "hits": 0, "misses": 0}
@@ -661,7 +671,8 @@ def solve_chain(seq, walls, fallback, z_target, static_boxes):
 
     best = [None, None]   # [cost, chosen links]
     nodes = [0]
-    last_reason = ["no connector combination found"]
+    partial = [0, None, []]   # deepest run of links from the start that could be planned: [links, cost, plan]
+    fail = [-1, "no connector combination found"]   # deepest link that failed: [index, message]
 
     def rec(i, used, pboxes, cost, chosen):
         if i == total:
@@ -670,14 +681,19 @@ def solve_chain(seq, walls, fallback, z_target, static_boxes):
                 best[1] = list(chosen)
                 dlog("Complete plan found, cost {:.2f}".format(cost))
             return
+        if i > partial[0] or (i == partial[0] and i > 0 and cost < partial[1]):
+            partial[0], partial[1], partial[2] = i, cost, list(chosen)
         nodes[0] += 1
         if nodes[0] > MAX_NODES:
-            last_reason[0] = "search limit reached (MAX_NODES)"
+            if fail[0] < 0:
+                fail[0], fail[1] = i, "search limit reached (MAX_NODES)"
             return
         opts, reason = options(i, used, pboxes)
         if not opts:
-            last_reason[0] = "Link {} of {} failed: {}".format(i + 1, total, reason)
-            dlog(last_reason[0])
+            msg = "Link {} of {} failed: {}".format(i + 1, total, reason)
+            if i > fail[0]:   # keep the first message at the deepest link: it comes from the best options
+                fail[0], fail[1] = i, msg
+            dlog(msg)
             return
         for o in opts[:MAX_BRANCH]:
             c2 = cost + o["cost"]
@@ -691,9 +707,72 @@ def solve_chain(seq, walls, fallback, z_target, static_boxes):
     rec(0, frozenset(), (), 0.0, [])
     dlog("Search: {} steps, {} link calculations, {} cache hits".format(
         nodes[0], cache["misses"], cache["hits"]))
-    if best[1] is None:
-        return None, last_reason[0]
-    return best[1], None
+    if best[1] is not None:
+        return best[1], None, None, None
+    return None, fail[1], max(fail[0], 0), partial[2][:max(fail[0], 0)]
+
+
+# ---------------- recovering from a link that can't be routed ----------------
+
+def inches_text(v):
+    return "{:.2f} in".format(abs(v) * 12.0)
+
+
+def alignment_moves(ea, eb, walls, z_target):
+    """Small moves of device eb that would line it up with ea, smallest first: [(XYZ, description)].
+    A device that sits slightly off the line of the one before it needs a jog shorter than MIN_RUN,
+    which can't be built; nudging it onto the line removes the jog."""
+    def starts(el):
+        out = []
+        for c in conduit_connectors(el):
+            if c.IsConnected:
+                continue
+            for ap in build_approaches(el, c, eid(el) in walls, z_target):
+                out.append(ap["start"])
+        return out
+
+    found = {}
+    for a in starts(ea):
+        for b in starts(eb):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            for off, other, axis in ((dx, dy, 0), (dy, dx, 1)):
+                # slightly off in this direction, and properly apart (or exactly lined up) in the other
+                if 1e-4 < abs(off) < MIN_RUN and not (1e-4 < abs(other) < MIN_RUN):
+                    key = (axis, round(-off, 4))
+                    found[key] = abs(off)
+    out = []
+    for (axis, move), size in sorted(found.items(), key=lambda kv: kv[1]):
+        vec = XYZ(move, 0, 0) if axis == 0 else XYZ(0, move, 0)
+        way = (("east (+X)" if move > 0 else "west (-X)") if axis == 0
+               else ("north (+Y)" if move > 0 else "south (-Y)"))
+        out.append((vec, "{} toward project {}".format(inches_text(size), way)))
+    return out
+
+
+def adjust_device(ea, eb, moves, walls, fallback, z_target, static_boxes):
+    """Move eb by the first of the candidate moves that makes the link from ea routable.
+    Returns the description of the move made, or None if none worked (nothing is changed then)."""
+    for vec, text in moves[:6]:
+        t = Transaction(doc, "Auto Conduit: adjust device")
+        t.Start()
+        try:
+            ElementTransformUtils.MoveElement(doc, eb.Id, vec)
+            doc.Regenerate()
+            ia, ib = eid(ea), eid(eb)
+            cache = {"apps": {}, "links": {}, "hits": 0, "misses": 0}
+            opts, _ = link_options(ea, eb, ia in walls, ib in walls, ia in fallback, ib in fallback,
+                                   z_target, frozenset(), static_boxes, (), 0, cache)
+            if opts:
+                t.Commit()
+                return text
+            t.RollBack()
+        except Exception:
+            try:
+                if t.HasStarted() and not t.HasEnded():
+                    t.RollBack()
+            except Exception:
+                pass
+    return None
 
 
 # ---------------- creation ----------------
@@ -800,33 +879,60 @@ def pick_elements_in_order():
                 pass
 
 
+def shift_down():
+    """True while a Shift key is held."""
+    try:
+        return (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift
+    except Exception:
+        return False
+
+
 def _pick_loop(ogs):
-    elems = []
-    picked_ids = set()
+    picks = []   # one entry per pick, in order: {"el": device, "ids": [ElementIds highlighted for it]}
     flt = DeviceOrTagFilter()
+    state = {"ogs": ogs}
+
+    def keys():
+        return [eid(p["el"]) for p in picks]
+
+    def remove(index):
+        """Take one pick out of the chain and clear its highlight (unless another pick still uses it)."""
+        gone = picks.pop(index)
+        if state["ogs"] is None:
+            return
+        still = set(eid(i) for p in picks for i in p["ids"])
+        clear = [i for i in gone["ids"] if eid(i) not in still]
+        if clear:
+            highlight(OverrideGraphicSettings(), clear)   # a blank override removes the colour
+
     while True:
-        n = len(elems) + 1
+        n = len(picks) + 1
         try:
             r = uidoc.Selection.PickObject(
                 ObjectType.Element, flt,
-                "Select device or tag #{} in connection order (press Esc when finished)".format(n))
+                "Select device or tag #{} in order (Shift+click a picked device to remove it; "
+                "Esc when finished)".format(n))
         except OperationCanceledException:
-            if not elems:
+            if not picks:
                 return None
             choice = forms.alert(
-                "{} element(s) selected so far.\n\nAre you finished selecting?".format(len(elems)),
+                "{} element(s) selected so far.\n\nAre you finished selecting?".format(len(picks)),
                 title="Auto Conduit",
-                options=[OPT_FINISH, OPT_CONTINUE, OPT_CANCEL])
+                options=[OPT_FINISH, OPT_CONTINUE, OPT_UNDO, OPT_CANCEL])
             if choice == OPT_FINISH:
-                if len(elems) >= 2:
-                    return elems
+                if len(picks) >= 2:
+                    return [p["el"] for p in picks]
                 forms.alert("Select at least two elements.")
+                continue
+            if choice == OPT_UNDO:
+                remove(len(picks) - 1)
                 continue
             if choice == OPT_CANCEL:
                 return None
             continue   # Continue selecting, or dialog closed
         except Exception:
-            return elems if len(elems) >= 2 else None
+            return [p["el"] for p in picks] if len(picks) >= 2 else None
+        shift = shift_down()   # read straight after the click, while the key is still held
         picked = doc.GetElement(r.ElementId)
         el = resolve_element(picked)
         if el is None:
@@ -834,26 +940,32 @@ def _pick_loop(ogs):
                         "Pick the device or a different tag.")
             continue
         k = eid(el)
-        if elems and k == eid(elems[-1]):
+        if shift:
+            # Shift+click = deselect, like Revit: removes the most recent pick of that device
+            if k in keys():
+                remove(len(picks) - 1 - keys()[::-1].index(k))
+            continue
+        if picks and k == eid(picks[-1]["el"]):
             continue   # ignore picking the same device twice in a row
-        if k in picked_ids:
-            first = [eid(e) for e in elems].index(k) + 1
+        if k in keys():
+            first = keys().index(k) + 1
             choice = forms.alert(
                 "{} is already in this chain (pick #{}).\n\n"
                 "Adding it again routes conduit back to it and creates a loop.".format(
                     element_label(el), first),
                 title="Auto Conduit - device already selected",
-                options=[OPT_IGNORE, OPT_ADD_AGAIN])
+                options=[OPT_IGNORE, OPT_REMOVE, OPT_ADD_AGAIN])
+            if choice == OPT_REMOVE:
+                remove(len(picks) - 1 - keys()[::-1].index(k))
+                continue
             if choice != OPT_ADD_AGAIN:
                 continue   # ignored, or dialog closed
-        elems.append(el)
-        picked_ids.add(k)
-        if ogs is not None:
-            ids = [el.Id]
-            if eid(picked) != k:
-                ids.append(picked.Id)   # a tag was picked: mark the tag too
-            if not highlight(ogs, ids):
-                ogs = None   # this view doesn't allow overrides; carry on without highlighting
+        ids = [el.Id]
+        if eid(picked) != k:
+            ids.append(picked.Id)   # a tag was picked: mark the tag too
+        picks.append({"el": el, "ids": ids})
+        if state["ogs"] is not None and not highlight(state["ogs"], ids):
+            state["ogs"] = None   # this view doesn't allow overrides; carry on without highlighting
 
 
 def print_debug(z_target):
@@ -1013,13 +1125,44 @@ def main():
         static_boxes = collect_obstacles(lo, hi, set(eid(e) for e in seq))
 
     # ---- plan the whole chain before creating anything ----
-    plan, reason = solve_chain(seq, walls, fallback, z_target, static_boxes)
-    print_debug(z_target)
-    if plan is None:
-        forms.alert("No valid route for this chain.\n\n{}".format(reason))
+    total_links = len(seq) - 1
+    culprit = None        # device at the link that could not be routed
+    no_adjust = set()     # devices where an adjustment was tried and didn't help
+    while True:
+        plan, reason, fail_i, partial = solve_chain(seq, walls, fallback, z_target, static_boxes)
+        if plan is not None:
+            culprit = None
+            break
+        prev, culprit = seq[fail_i], seq[fail_i + 1]
+        moves = [] if eid(culprit) in no_adjust else alignment_moves(prev, culprit, walls, z_target)
+        text = "{}\n\nFrom: {}\nTo:     {}".format(reason, element_label(prev), element_label(culprit))
+        options = []
+        if partial:
+            options.append(OPT_SKIP_DEV)
+            text += "\n\n'{}' creates the {} link(s) before it.".format(OPT_SKIP_DEV, len(partial))
+        if moves:
+            options.append(OPT_ADJUST)
+            text += ("\n\n'{}' moves the second device {} so it lines up with the first, "
+                     "then plans the chain again.".format(OPT_ADJUST, moves[0][1]))
+        options.append(OPT_CANCEL_CHAIN)
+        text += "\n\nEither way, the second device is left selected so you can find it."
+        choice = forms.alert(text, title="Auto Conduit - link could not be routed", options=options)
+        if choice == OPT_ADJUST:
+            moved = adjust_device(prev, culprit, moves, walls, fallback, z_target, static_boxes)
+            if moved is None:
+                no_adjust.add(eid(culprit))
+                forms.alert("The device could not be moved into line (it may be hosted or pinned), "
+                            "so nothing was changed.")
+            continue   # plan again, with the device in its new place if it moved
+        if choice == OPT_SKIP_DEV:
+            plan = partial
+            break
+        print_debug(z_target)
+        uidoc.Selection.SetElementIds(List[ElementId]([culprit.Id]))
         return
+    print_debug(z_target)
 
-    # ---- create every link ----
+    # ---- create every planned link ----
     tg = TransactionGroup(doc, "Auto Conduit chain")
     tg.Start()
     made_links = 0
@@ -1029,7 +1172,7 @@ def main():
             try:
                 create_link(o["a"], o["b"], o["pts"], link_types[i], level.Id)
             except Exception as ex:
-                failure = "Link {} of {} failed while creating conduit: {}".format(i + 1, len(plan), ex)
+                failure = "Link {} of {} failed while creating conduit: {}".format(i + 1, total_links, ex)
                 break
             made_links += 1
     finally:
@@ -1038,8 +1181,12 @@ def main():
         else:
             tg.RollBack()
 
+    if culprit is not None:
+        uidoc.Selection.SetElementIds(List[ElementId]([culprit.Id]))
     if failure:
         forms.alert("{}\n\n{} link(s) before it were created.".format(failure, made_links))
-
+    elif culprit is not None:
+        forms.alert("Created {} of {} link(s). {} was skipped and is now selected; the devices after it "
+                    "were not connected.".format(made_links, total_links, element_label(culprit)))
 
 main()
