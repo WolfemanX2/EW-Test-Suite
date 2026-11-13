@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# clash_rules module - version v3
+# clash_rules module - version v4
 """Stores and reads the Auto Fix rules used by the Link Clash tool.
 Rules are saved in a JSON file. All lengths are stored in feet."""
 import os
@@ -13,6 +13,11 @@ ELEV_NEVER = "Never (jogs only)"
 ELEV_BEFORE = "Before trying jogs"
 ELEV_AFTER = "After trying jogs"
 ELEV_MODES = [ELEV_NEVER, ELEV_BEFORE, ELEV_AFTER]
+
+DEVICE_ASK = "Ask each time"
+DEVICE_KEEP = "Device remains in place"
+DEVICE_MOVE = "Adjust the device's elevation too"
+DEVICE_MODES = [DEVICE_ASK, DEVICE_KEEP, DEVICE_MOVE]
 
 DEFAULTS = {
     "ask_before": True,          # ask before applying each fix (starting state of the box in the results window)
@@ -30,6 +35,7 @@ DEFAULTS = {
     "jog_min_leg": 0.75,         # shortest piece a jog may create
     "elevation_mode": ELEV_NEVER,   # whether the whole conduit may be raised or lowered
     "max_elev_change": 1.0,      # furthest the whole conduit may be raised or lowered
+    "device_mode": DEVICE_ASK,   # conduit joined straight to a device, when its elevation would change
 }
 
 LENGTH_KEYS = ["clearance", "max_shift", "shift_step", "jog_lead", "jog_min_leg", "max_elev_change",
@@ -69,6 +75,8 @@ def _clean(raw):
             pass
     if out["v_jog_min_angle"] > out["v_jog_max_angle"]:
         out["v_jog_min_angle"], out["v_jog_max_angle"] = out["v_jog_max_angle"], out["v_jog_min_angle"]
+    if raw.get("device_mode") in DEVICE_MODES:
+        out["device_mode"] = raw["device_mode"]
     if raw.get("elevation_mode") in ELEV_MODES:
         out["elevation_mode"] = raw["elevation_mode"]
     return out

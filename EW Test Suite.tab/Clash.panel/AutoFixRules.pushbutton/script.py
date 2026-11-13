@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Auto Fix Rules script - version v3
+# Auto Fix Rules script - version v4
 __title__ = "Auto Fix\nRules"
 __doc__ = "Set the rules Link Clash's Auto Fix follows: distances, which kinds of fix are allowed, and their order."
 
@@ -71,6 +71,11 @@ XAML = """
             <TextBlock Text="Maximum elevation change (inches)" VerticalAlignment="Center" />
         </DockPanel>
 
+        <DockPanel Margin="0,6,0,0">
+            <ComboBox x:Name="device_mode" DockPanel.Dock="Right" Width="220" />
+            <TextBlock Text="Device connected to the conduit" VerticalAlignment="Center" />
+        </DockPanel>
+
         <TextBlock x:Name="status_text" Foreground="Firebrick" TextWrapping="Wrap" Margin="0,12,0,0" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
             <Button x:Name="defaults_btn" Content="Reset to defaults" Padding="10,2" Margin="0,0,20,0" />
@@ -102,6 +107,8 @@ class RulesWindow(forms.WPFWindow):
         forms.WPFWindow.__init__(self, XAML, literal_string=True)
         for m in clash_rules.ELEV_MODES:
             self.elevation_mode.Items.Add(m)
+        for m in clash_rules.DEVICE_MODES:
+            self.device_mode.Items.Add(m)
         for k in clash_rules.ANGLE_KEYS:
             for a in clash_rules.ANGLES:
                 getattr(self, k).Items.Add(a)
@@ -116,6 +123,7 @@ class RulesWindow(forms.WPFWindow):
         for k in clash_rules.LENGTH_KEYS:
             getattr(self, k).Text = fmt(rules[k])
         self.elevation_mode.SelectedItem = rules["elevation_mode"]
+        self.device_mode.SelectedItem = rules["device_mode"]
         for k in clash_rules.ANGLE_KEYS:
             getattr(self, k).SelectedIndex = clash_rules.ANGLES.index(rules[k])
         self.status_text.Text = ""
@@ -134,6 +142,7 @@ class RulesWindow(forms.WPFWindow):
                 return
             rules[k] = v / 12.0
         rules["elevation_mode"] = self.elevation_mode.SelectedItem or clash_rules.ELEV_NEVER
+        rules["device_mode"] = self.device_mode.SelectedItem or clash_rules.DEVICE_ASK
         for k in clash_rules.ANGLE_KEYS:
             rules[k] = clash_rules.ANGLES[max(0, getattr(self, k).SelectedIndex)]
         if rules["v_jog_min_angle"] > rules["v_jog_max_angle"]:

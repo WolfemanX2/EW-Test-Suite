@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Link Clash script - version v10
+# Link Clash script - version v11
 __title__ = "Link\nClash"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
@@ -21,7 +21,8 @@ from Autodesk.Revit.DB import (
     Outline, Options, ViewDetailLevel, Solid, GeometryInstance, SolidUtils,
     BooleanOperationsUtils, BooleanOperationsType,
     Transaction, SubTransaction, TransactionStatus, Line, Arc, CurveLoop,
-    GeometryCreationUtilities, ElementTransformUtils, BuiltInParameter, Domain, ConnectorType
+    GeometryCreationUtilities, ElementTransformUtils, BuiltInParameter, Domain, ConnectorType,
+    FamilyInstance
 )
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI import RevitCommandId, PostableCommand
@@ -57,6 +58,8 @@ V_JOG_MIN_ANGLE = 15        # vertical jog (saddle) bend angles: multiples of 5 
 V_JOG_MAX_ANGLE = 90        # smallest angle tried first
 MAX_SADDLE_LENGTH = 4.0     # a small angle makes a long saddle; angles whose saddle would be longer than
                             # this are only used if nothing shorter fits
+DEVICE_MODE = "ask"         # conduit joined straight to a device, when an elevation change is tried:
+                            # "ask" each time, "keep" the device in place, or "move" it with the conduit
 MAJORITY_ELEVATION = True   # conduit with several clashes: first try one elevation change that clears
                             # more than half of them, then saddle around whatever is left
 ELEVATION_MODE = "never"    # raise/lower the whole conduit: "never", "before" jogs or "after" jogs
@@ -585,7 +588,7 @@ def load_fix_rules():
     """Replace the Auto Fix settings with the rules saved by the Auto Fix Rules tool, if it is installed."""
     global ASK_BEFORE_FIX, FIX_CLEARANCE, MAX_SHIFT, SHIFT_STEP, JOG_LEAD, JOG_MIN_LEG
     global ALLOW_SHIFT, ALLOW_H_JOG, ALLOW_V_JOG, ELEVATION_MODE, MAX_ELEV_CHANGE
-    global V_JOG_MIN_ANGLE, V_JOG_MAX_ANGLE, MAX_SADDLE_LENGTH, MAJORITY_ELEVATION
+    global V_JOG_MIN_ANGLE, V_JOG_MAX_ANGLE, MAX_SADDLE_LENGTH, MAJORITY_ELEVATION, DEVICE_MODE
     if clash_rules is None:
         return
     try:
@@ -602,6 +605,8 @@ def load_fix_rules():
         MAX_ELEV_CHANGE = r["max_elev_change"]
         MAX_SADDLE_LENGTH = r.get("max_saddle_length", MAX_SADDLE_LENGTH)
         MAJORITY_ELEVATION = r.get("majority_elevation", MAJORITY_ELEVATION)
+        DEVICE_MODE = {getattr(clash_rules, "DEVICE_KEEP", None): "keep",
+                       getattr(clash_rules, "DEVICE_MOVE", None): "move"}.get(r.get("device_mode"), "ask")
         V_JOG_MIN_ANGLE = r.get("v_jog_min_angle", V_JOG_MIN_ANGLE)
         V_JOG_MAX_ANGLE = r.get("v_jog_max_angle", V_JOG_MAX_ANGLE)
         ELEVATION_MODE = {clash_rules.ELEV_BEFORE: "before",
@@ -727,6 +732,58 @@ def neighbours(conduit):
             except Exception:
                 pass
     return list(out.values())
+
+
+def connected_devices(conduit):
+    """Devices (family instances that aren't conduit fittings) joined straight to this conduit."""
+    fitting = ElementId(BuiltInCategory.OST_ConduitFitting)
+    out = {}
+    for c in conduit_conns(conduit):
+        for r in partners(c):
+            owner = r.Owner
+            try:
+                if isinstance(owner, FamilyInstance) and owner.Category.Id != fitting:
+                    out[eid(owner)] = owner
+            except Exception:
+                pass
+    return list(out.values())
+
+
+def device_conduits(device, skip_id):
+    """Other conduits joined to a device, directly or through one fitting (they stretch if the device moves)."""
+    out = {}
+    try:
+        conns = list(device.MEPModel.ConnectorManager.Connectors)
+    except Exception:
+        return []
+    for c in conns:
+        try:
+            refs = list(c.AllRefs)
+        except Exception:
+            continue
+        for r in refs:
+            owner = r.Owner
+            if isinstance(owner, Conduit):
+                if owner.Id != skip_id:
+                    out[eid(owner)] = owner
+            elif isinstance(owner, FamilyInstance) and owner.Id != device.Id:
+                try:
+                    for c2 in owner.MEPModel.ConnectorManager.Connectors:
+                        for r2 in c2.AllRefs:
+                            o2 = r2.Owner
+                            if isinstance(o2, Conduit) and o2.Id != skip_id:
+                                out[eid(o2)] = o2
+                except Exception:
+                    pass
+    return list(out.values())
+
+
+def location_of(el):
+    try:
+        p = el.Location.Point
+        return (p.X, p.Y, p.Z)
+    except Exception:
+        return None
 
 
 def closest_conn(el, pt):
@@ -902,19 +959,32 @@ def remaining_clashes(elements, ctx, target, before_self):
     return left
 
 
-def apply_shift(d, conduit, vec, ctx, before_near, target, before_self):
+def apply_shift(d, conduit, vec, ctx, before_near, target, before_self, carry=None):
     """Move the conduit and check the result. Returns the clashes that remain on it.
+    carry = {"move": devices that travel with the conduit, "stay": devices that must not move,
+             "watch": other elements whose clashes must not get worse}.
     Raises FixFailed if the result isn't acceptable."""
+    carry = carry or {}
+    moving = carry.get("move", [])
+    staying = carry.get("stay", [])
     joined = connected_count(conduit)
-    near = neighbours(conduit)
-    ElementTransformUtils.MoveElement(d, conduit.Id, vec)
+    near = neighbours(conduit) + moving + carry.get("watch", [])
+    stay_at = [(dev, location_of(dev)) for dev in staying]
+    if moving:
+        ElementTransformUtils.MoveElements(d, List[ElementId]([conduit.Id] + [dev.Id for dev in moving]), vec)
+    else:
+        ElementTransformUtils.MoveElement(d, conduit.Id, vec)
     d.Regenerate()
     if connected_count(conduit) != joined:
         raise FixFailed("the move disconnected the conduit")
+    for dev, was in stay_at:
+        now = location_of(dev)
+        if was is not None and now is not None and max(abs(was[k] - now[k]) for k in range(3)) > 1e-6:
+            raise FixFailed("the move dragged a device that has to stay in place")
     left = remaining_clashes([conduit], ctx, target, before_self)
     for nb in near:
         if not clash_keys(nb, ctx) <= before_near.get(eid(nb), set()):
-            raise FixFailed("the move pushed a connected conduit into a clash")
+            raise FixFailed("the move pushed a connected element into a clash")
     return left
 
 
@@ -968,23 +1038,28 @@ def attempt(d, fn, args):
         return None
 
 
-def apply_majority_lift(d, conduit, vec, ctx, before_near, before_self):
+def apply_majority_lift(d, conduit, vec, ctx, before_near, before_self, carry):
     """Elevation change that must leave fewer than half of the original clashes."""
-    left = apply_shift(d, conduit, vec, ctx, before_near, None, before_self)
+    left = apply_shift(d, conduit, vec, ctx, before_near, None, before_self, carry)
     if 2 * (len(before_self) - len(left)) <= len(before_self):
         raise FixFailed("the elevation change did not clear most of the clashes")
     return left
 
 
-def fix_single(d, conduit, row, ctx, target, before_self, before_near):
+def with_device(desc, carry):
+    return desc + " (connected device moved with it)" if carry.get("move") else desc
+
+
+def fix_single(d, conduit, row, ctx, target, before_self, before_near, side_carry, lift_carry):
     """One clash on the conduit: sideways move, then jogs, with whole-conduit elevation changes before or
     after the jogs as the rules say. Returns (steps, remaining) - steps is empty if nothing worked."""
     curve = conduit.Location.Curve
     p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
     radius = conduit_radius(conduit)
-    move_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
+    move_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self, side_carry))
                   for vec, desc in shift_candidates(p0, p1, radius, ctx)]
-    lift_tries = [(desc, apply_shift, (d, conduit, vec, ctx, before_near, target, before_self))
+    lift_tries = [(with_device(desc, lift_carry), apply_shift,
+                   (d, conduit, vec, ctx, before_near, target, before_self, lift_carry))
                   for vec, desc in elevation_candidates(p0, p1, radius, ctx)]
     jog_tries = [(desc, apply_jog, (d, conduit, pts, ctx, target, before_self))
                  for pts, desc in jog_candidates(p0, p1, radius, row.link_box, ctx)]
@@ -999,7 +1074,7 @@ def fix_single(d, conduit, row, ctx, target, before_self, before_near):
     return [], {}
 
 
-def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes):
+def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes, side_carry, lift_carry):
     """Several clashes on the conduit:
     1. a sideways move that clears everything (if sideways moves are allowed);
     2. otherwise one elevation change that clears more than half of the clashes;
@@ -1011,15 +1086,15 @@ def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes):
     steps = []
     left = None
     for vec, desc in shift_candidates(p0, p1, radius, ctx):
-        left = attempt(d, apply_shift, (d, conduit, vec, ctx, before_near, None, before_self))
+        left = attempt(d, apply_shift, (d, conduit, vec, ctx, before_near, None, before_self, side_carry))
         if left is not None:
             steps.append(desc)
             break
     if left is None:
         for vec, desc in majority_lifts(p0, p1, radius, ctx, before_self):
-            left = attempt(d, apply_majority_lift, (d, conduit, vec, ctx, before_near, before_self))
+            left = attempt(d, apply_majority_lift, (d, conduit, vec, ctx, before_near, before_self, lift_carry))
             if left is not None:
-                steps.append(desc)
+                steps.append(with_device(desc, lift_carry))
                 break
     if left is None:
         left = dict((k, row.host_int) for k in before_self)   # nothing moved; every clash is still there
@@ -1073,13 +1148,43 @@ def auto_fix(row, ask):
     level = abs((conduit.Location.Curve.GetEndPoint(1) - conduit.Location.Curve.GetEndPoint(0)).Normalize().Z) < 0.01
     multi = MAJORITY_ELEVATION and level and len(before_self) >= 2
 
+    # ---- devices joined straight to this conduit ----
+    # Sideways moves never take a device along. Elevation changes do only if the user (or the rule) says so.
+    devices = connected_devices(conduit)
+    side_carry = {"stay": devices}
+    lift_carry = {"stay": devices}
+    lifts_possible = level and (multi or ELEVATION_MODE != "never")
+    if devices and lifts_possible:
+        mode = DEVICE_MODE
+        if mode == "ask":
+            names = "\n".join(u"  {} : {} (id {})".format(*(describe(dev) + (eid(dev),))) for dev in devices)
+            choice = forms.alert(
+                u"Conduit {} is connected to:\n\n{}\n\nIf Auto Fix raises or lowers this conduit, should the "
+                u"device's elevation change with it, or does the device need to remain in place?".format(
+                    row.sel, names),
+                title="Link Clash - Auto Fix",
+                options=["Adjust the device's elevation too", "Device remains in place"])
+            if choice is None:
+                return "Auto Fix for conduit {} was cancelled.".format(row.sel)
+            mode = "move" if choice.startswith("Adjust") else "keep"
+        if mode == "move":
+            watch = []
+            for dev in devices:
+                watch += device_conduits(dev, conduit.Id)
+            lift_carry = {"move": devices, "watch": watch}
+            for el in devices + watch:
+                if eid(el) not in before_near:
+                    before_near[eid(el)] = clash_keys(el, ctx)
+
     t = Transaction(d, "Link Clash: Auto Fix")
     t.Start()
     try:
         if multi:
-            steps, remaining = fix_multi(d, conduit, row, ctx, before_self, before_near, boxes)
+            steps, remaining = fix_multi(d, conduit, row, ctx, before_self, before_near, boxes,
+                                         side_carry, lift_carry)
         else:
-            steps, remaining = fix_single(d, conduit, row, ctx, target, before_self, before_near)
+            steps, remaining = fix_single(d, conduit, row, ctx, target, before_self, before_near,
+                                          side_carry, lift_carry)
         if not steps:
             t.RollBack()
             return ("No fix worked for conduit {} within the Auto Fix Rules: each allowed move or jog either "

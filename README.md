@@ -55,7 +55,7 @@ Each script has its version on line 2.
 |---|---|
 | Auto Conduit | v3 |
 | Routing Preferences | v1 |
-| Link Clash | v10 |
-| Auto Fix Rules | v3 |
+| Link Clash | v11 |
+| Auto Fix Rules | v4 |
 | lib/mounting_rules.py | v1 |
-| lib/clash_rules.py | v3 |
+| lib/clash_rules.py | v4 |
