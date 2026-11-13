@@ -1,0 +1,5 @@
+# per-user / per-office settings saved by the tools (kept out of git so updates never overwrite them)
+lib/mounting_rules.json
+lib/clash_rules.json
+*.pyc
+__pycache__/
