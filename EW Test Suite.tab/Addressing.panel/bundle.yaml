@@ -1,3 +1,5 @@
 layout:
+  - AddressDevices
+  - AddressingConfig
   - AddressNacVoice
   - NacVoiceTypes

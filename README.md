@@ -8,6 +8,8 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 | Conduit | Routing Preferences | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
 | Clash | Link Clash | Tests the selection against MEP and structural elements in loaded Revit links. Results window with statuses, grouping, Show in 3D and Auto Fix. |
 | Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
+| Addressing | Address Devices | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Addressing Config; unused address parameters on the device are cleared. Shift+Click opens Addressing Config. |
+| Addressing | Addressing Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
 | Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
 | Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
 | Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view named `<LEVEL> - SLC RISER - <PANEL #>` (the panel's level and `Panel #` parameter, in capitals): every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`; the text is at 45 degrees, right justified, hanging below the riser line, its top corner 1" under its device; devices 6' apart; view scale 1/8" = 1'-0"). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
@@ -74,6 +76,19 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
   with **Reset to office defaults** in Auto Fix Rules, then Save.
 - To make everyone share one rules file instead, set `RULES_PATH` in `lib/clash_rules.py` to a network location.
 
+### Addressing Config: default + each user's copy
+
+- Each user's own table is `%APPDATA%\MyTools\AddressCounts.json`, the same file and format as the
+  standalone Address Devices add-in, so both can be used side by side. Only the Addressing Config tool
+  changes it; pyRevit updates never overwrite it.
+- `config/address_config.default.json` (in this repository) is the office default. It is empty until rules are
+  put in it: set them up in Addressing Config, click **Open Table File**, and paste that file's contents here
+  on GitHub. A user with no table yet then starts from a copy of it.
+- **Load Default Config...** in Addressing Config opens at that file (or at the last default file the user
+  chose, which can be anywhere), and after a confirmation replaces the user's table with its rules. The default
+  file is only read. The previous table is kept as `AddressCounts.backup.json`.
+- To make everyone edit one table instead, set `TABLE_PATH` in `lib/slc_addressing.py` to a network location.
+
 ### Other settings
 
 - `lib/mounting_rules.json` (Routing Preferences). Not part of the repository, so updates never overwrite it.
@@ -98,6 +113,10 @@ Each script has its version on line 2.
 | Auto Fix Rules | v5 |
 | lib/mounting_rules.py | v1 |
 | lib/clash_rules.py | v5 |
+| Address Devices | v1 |
+| Addressing Config | v1 |
+| lib/slc_addressing.py | v1 |
+| lib/slc_config_editor.py | v1 |
 | Address NAC / Voice | v2 |
 | NAC / Voice Types | v1 |
 | lib/nac_voice_types.py | v1 |
