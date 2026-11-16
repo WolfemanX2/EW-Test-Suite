@@ -13,6 +13,7 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 | Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view named `<LEVEL> - SLC RISER - <PANEL #>` (the panel's level and `Panel #` parameter, in capitals): every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`; the text is at 45 degrees, right justified, hanging below the riser line, its top corner 1" under its device; devices 6' apart; view scale 1/8" = 1'-0"). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
 | Riser | Riser Symbols | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
 | Project Cleanup | Line Nuke | Creates 15 standard Solid line styles named `Detail Line - <Color> - <Size>` (Black, Blue, Red, Green, Magenta; Thin = weight 1, Medium = 3, Thick = 6), then moves the lines of every other line style with the same color, weight and pattern onto the standard style and deletes the duplicate. A second mode also merges the remaining duplicate line styles and renames them `Color - Weight - Pattern`. Built-in styles are never changed; you pick styles to exclude and confirm a preview first (No undoes everything). |
+| Project Cleanup | Consolidate Text Styles | Groups text styles by text size (within a tolerance entered as a fraction or decimal of an inch) and merges each group into its most-used style: text notes and schedule text using the other styles are switched to it and the other styles are deleted. The kept style is rounded to the nearest 1/64" and renamed `<size> <font> <modifiers>` (e.g. `1/8" Arial Bold`). Only the size is compared, so merged text takes on the kept style's font and formatting. You pick styles to exclude and confirm a preview first. |
 
 ## Install
 
@@ -105,3 +106,4 @@ Each script has its version on line 2.
 | lib/slc_riser.py | v2 |
 | lib/riser_layout.py | v7 |
 | Line Nuke | v3 |
+| Consolidate Text Styles | v4 |
