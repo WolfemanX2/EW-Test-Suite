@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v4
+# riser_layout module - version v5
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -138,17 +138,43 @@ def layout(rows, root, info, returns, cfg):
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text]}
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
-    cfg      = spacing, per_line, pad, text_gap, line_h, row_gap
+    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
-             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, "L" | "C" | "R")]}"""
+             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)]}
+
+    how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
+         "D" = a device's label: text at 45 degrees, right justified, hanging down to the left of the
+               device. (x, y) is the device's point on the riser line; the script puts the midpoint of the
+               text's right side on the line, with the text's uppermost corner on the device centreline.
+
+    The riser line is drawn unbroken through the devices."""
     sp = cfg["spacing"]
     per = max(1, int(cfg["per_line"]))
     pad, text_gap, lh, row_gap = cfg["pad"], cfg["text_gap"], cfg["line_h"], cfg["row_gap"]
+    char_w = cfg["char_w"]
+    diag = 0.7071067811865476       # sin 45 = cos 45
     out = {"symbols": [], "boxes": [], "lines": [], "texts": []}
 
-    def text_depth(n):
+    def label_size(n):
+        """(length, height) of a device's label before it is turned."""
         lines = info[n]["lines"]
-        return info[n]["ext"][3] + ((text_gap + len(lines) * lh) if lines else 0.0)
+        if not lines:
+            return 0.0, 0.0
+        return max(len(t) for t in lines) * char_w, len(lines) * lh
+
+    def label_drop(n):
+        """How far a device's turned label reaches below the riser line."""
+        length, height = label_size(n)
+        return (length + height * 0.5) * diag if length else 0.0
+
+    def label_reach(n):
+        """How far a device's turned label reaches left of the device centreline."""
+        length, height = label_size(n)
+        return (length + height) * diag if length else 0.0
+
+    def root_depth():
+        lines = info[root]["lines"]
+        return info[root]["ext"][3] + ((text_gap + len(lines) * lh) if lines else 0.0)
 
     def place(n, x, y):
         l, r, u, d = info[n]["ext"]
@@ -156,28 +182,37 @@ def layout(rows, root, info, returns, cfg):
             out["symbols"].append((x, y, n))
         else:
             out["boxes"].append((x, y, l, r, u, d))
-        if info[n]["lines"]:
-            out["texts"].append((x, y - d - text_gap, "\n".join(info[n]["lines"]), "C"))
+        if not info[n]["lines"]:
+            return
+        text = "\n".join(info[n]["lines"])
+        if n == root:
+            out["texts"].append((x, y - d - text_gap, text, "C"))
+        else:
+            out["texts"].append((x, y, text, "D"))
 
+    devices = [n for row in rows for n in row["nodes"]]
+    reach = max(label_reach(n) for n in devices) if devices else 0.0
     root_r = info[root]["ext"][1]
-    x_first = root_r + sp           # first device of every line
-    x_back = x_first - sp * 0.5     # where a wrapped line comes back to, and where a tap row starts
+    back_gap = max(sp * 0.5, reach + pad)   # a wrapped line comes back clear of the first label
+    x_first = root_r + max(sp, back_gap + pad)      # first device of every line
+    x_back = x_first - back_gap     # where a wrapped line comes back to, and where a tap row starts
     cursor = None                   # bottom of what has been drawn so far
 
     for row in rows:
         nodes = row["nodes"]
         chunks = [nodes[i:i + per] for i in range(0, len(nodes), per)]
-        wrap = None     # (x of the last device's right edge, its y, x of the turn)
+        turn = None     # (x, y) where the previous line of this row ended, ready to turn down
         for ci, chunk in enumerate(chunks):
             last_chunk = ci == len(chunks) - 1
-            up = max(info[n]["ext"][2] for n in chunk)
-            below = max(text_depth(n) for n in chunk)
+            up = max(max(info[n]["ext"][2] for n in chunk),
+                     max(label_size(n)[1] for n in chunk) * 0.5 * diag)
+            below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             if ci == 0:
                 if row["source"] is None:
                     up = max(up, info[root]["ext"][2])
                     if row.get("label"):
                         up = max(up, lh * 1.4)
-                    below = max(below, text_depth(root))
+                    below = max(below, root_depth())
                 else:
                     up = max(up, lh * 1.2)
                     below = max(below, lh * 1.2)
@@ -196,7 +231,7 @@ def layout(rows, root, info, returns, cfg):
             if ci == 0:
                 if row["source"] is None:
                     place(root, 0.0, y)
-                    edge = root_r
+                    start = root_r
                     if row.get("label"):
                         out["texts"].append((root_r + sp * 0.08, y + lh * 1.25, row["label"], "L"))
                 else:
@@ -205,26 +240,25 @@ def layout(rows, root, info, returns, cfg):
                     if row.get("label"):
                         label = "%s %s" % (row["label"], label)
                     out["texts"].append((x_back - sp * 0.05, y + lh, label, "R"))
-                    edge = x_back
+                    start = x_back
             else:
-                ex, ey, tx = wrap
-                out["lines"].append(((ex, ey), (tx, ey)))
-                out["lines"].append(((tx, ey), (tx, cursor)))
+                tx, ty = turn
+                out["lines"].append(((tx, ty), (tx, cursor)))
                 out["lines"].append(((tx, cursor), (x_back, cursor)))
                 out["lines"].append(((x_back, cursor), (x_back, y)))
-                edge = x_back
+                start = x_back
 
+            x = x_first
             for k, n in enumerate(chunk):
                 x = x_first + k * sp
-                l, r = info[n]["ext"][0], info[n]["ext"][1]
-                out["lines"].append(((edge, y), (x - l, y)))
                 place(n, x, y)
-                edge = x + r
-
+            end = x                                     # the last device's centre
             if not last_chunk:
-                wrap = (edge, y, edge + sp * 0.5)
+                end = x + info[chunk[-1]]["ext"][1] + sp * 0.5
+                turn = (end, y)
             elif nodes[-1] in returns:
-                out["lines"].append(((edge, y), (edge + sp * 0.4, y)))
-                out["texts"].append((edge + sp * 0.45, y + lh * 0.6, "RETURNS TO PANEL", "L"))
+                end = x + info[chunk[-1]]["ext"][1] + sp * 0.4
+                out["texts"].append((end + sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "L"))
+            out["lines"].append(((start, y), (end, y)))   # one unbroken line through the devices
             cursor = y - below
     return out

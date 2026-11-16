@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v5
+# SLC Riser script - version v6
 __title__ = "SLC\nRiser"
-__doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
+__doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
+           "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
            "(Esc when finished). Each loop is followed along its conduit starting at that device, away from "
            "the panel, so the device you pick decides the order. Press Esc without picking any to follow "
            "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
-           "lines (first- / last). Each row is labeled with its loop (L#), read from those addresses. "
+           "lines (first- / last). The address text is at 45 degrees, right justified, ending on the riser "
+           "line under its device, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
@@ -16,12 +18,18 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
 
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
-    ViewFamily, TextNote, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter
+    ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
+    ElementId, BuiltInParameter, ElementTransformUtils
 )
+try:
+    from Autodesk.Revit.DB import VerticalTextAlignment
+except ImportError:
+    VerticalTextAlignment = None    # older Revit: the label is placed by its corner instead
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
+
+import math
 
 import slc_riser as sr
 import riser_layout as rl
@@ -44,6 +52,8 @@ BOX_SIZE = 0.375        # box drawn for a type that has no symbol
 PANEL_BOX = (0.75, 0.5) # width, height of the box drawn for a panel that has no symbol
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
+PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
+LABEL_ANGLE = math.pi / 4.0         # device address text: 45 degrees
 
 
 def paper(inches):
@@ -110,8 +120,35 @@ def first_devices(root):
         picked.append(el)
 
 
+def named_value(el, name):
+    """Text of the parameter with that name (case ignored) on the element or its type, or ''."""
+    wanted = name.strip().lower()
+    holders = [el]
+    try:
+        holders.append(doc.GetElement(el.GetTypeId()))
+    except Exception:
+        pass
+    for holder in holders:
+        if holder is None:
+            continue
+        for p in holder.Parameters:
+            try:
+                if p.Definition.Name.strip().lower() != wanted or not p.HasValue:
+                    continue
+                text = p.AsString() if p.StorageType == StorageType.String else p.AsValueString()
+            except Exception:
+                continue
+            text = (text or "").strip()
+            if text:
+                return text
+    return ""
+
+
 def element_name(el):
-    """What a panel is called on the diagram."""
+    """What a panel is called on the diagram: its Panel #, else its panel name, Mark or type name."""
+    text = named_value(el, PANEL_NUMBER_PARAM)
+    if text:
+        return text
     for bip in (BuiltInParameter.RBS_ELEC_PANEL_NAME, BuiltInParameter.ALL_MODEL_MARK):
         try:
             p = el.get_Parameter(bip)
@@ -124,6 +161,46 @@ def element_name(el):
         return sr.type_name(doc.GetElement(el.GetTypeId()))
     except Exception:
         return "PANEL"
+
+
+def level_name(el):
+    """Name of the level the element is hosted on, or ''."""
+    ids = []
+    try:
+        ids.append(el.LevelId)
+    except Exception:
+        pass
+    for bip in (BuiltInParameter.FAMILY_LEVEL_PARAM, BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM,
+                BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM):
+        try:
+            p = el.get_Parameter(bip)
+            if p is not None:
+                ids.append(p.AsElementId())
+        except Exception:
+            pass
+    try:
+        ids.append(el.Host.LevelId)     # hosted on a wall, floor or ceiling
+    except Exception:
+        pass
+    for lid in ids:
+        try:
+            if lid is None or lid == ElementId.InvalidElementId:
+                continue
+            level = doc.GetElement(lid)
+            if level is not None and level.Name:
+                return level.Name
+        except Exception:
+            pass
+    return ""
+
+
+def view_name(root):
+    """LEVEL 1 - SLC RISER - FACU-01"""
+    parts = [level_name(root), "SLC Riser", element_name(root)]
+    name = " - ".join(p for p in parts if p).upper()
+    for ch in "\\:{}[]|;<>?`~":      # characters Revit does not allow in a view name
+        name = name.replace(ch, "-")
+    return name
 
 
 # ---------- Tracing ----------
@@ -196,6 +273,38 @@ def text_type():
     return tt.Id, size * VIEW_SCALE * LINE_SPACING
 
 
+def device_label(view, x, y, text, type_id, est_height):
+    """A device's address text: 45 degrees, right justified, hanging down to the left. The midpoint of its
+    right side sits on the riser line and its uppermost corner on the device centreline (x)."""
+    half = math.sin(LABEL_ANGLE) * 0.5      # x offset of the right-side midpoint, per unit of text height
+    opts = TextNoteOptions(type_id)
+    opts.HorizontalAlignment = HorizontalTextAlignment.Right
+    opts.Rotation = LABEL_ANGLE
+    middle = False
+    if VerticalTextAlignment is not None:
+        try:
+            opts.VerticalAlignment = VerticalTextAlignment.Middle
+            middle = True
+        except Exception:
+            pass
+    if not middle:
+        # Placed by its top right corner, which is the uppermost one: on the centreline, half the
+        # (estimated) height above the line along the slope.
+        TextNote.Create(doc, view.Id, XYZ(x, y + est_height * 0.5 * math.cos(LABEL_ANGLE), 0), text, opts)
+        return
+    # Placed by the midpoint of its right side, then slid along the line by its real height.
+    note = TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+    height = est_height
+    try:
+        doc.Regenerate()
+        measured = note.Height * view.Scale     # Height is the size on the sheet
+        if measured > 0:
+            height = measured
+    except Exception:
+        pass
+    ElementTransformUtils.MoveElement(doc, note.Id, XYZ(height * half, 0, 0))
+
+
 def measure_symbols(view, symbols):
     """{symbol id: (left, right, up, down)} - how far each symbol reaches from its insertion point,
     found by placing one, measuring it and deleting it again."""
@@ -224,7 +333,7 @@ def measure_symbols(view, symbols):
     return sizes
 
 
-def draw(view, plan, node_symbol, type_id):
+def draw(view, plan, node_symbol, type_id, line_h):
     """Create everything in the layout. Returns the number of things that could not be created."""
     failed = [0]
     min_len = doc.Application.ShortCurveTolerance
@@ -252,6 +361,9 @@ def draw(view, plan, node_symbol, type_id):
              "R": HorizontalTextAlignment.Right}
     for x, y, text, how in plan["texts"]:
         try:
+            if how == "D":
+                device_label(view, x, y, text, type_id, (text.count("\n") + 1) * line_h)
+                continue
             opts = TextNoteOptions(type_id)
             opts.HorizontalAlignment = align[how]
             TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
@@ -336,7 +448,7 @@ def main():
     t = Transaction(doc, "Create SLC riser")
     t.Start()
     try:
-        view = new_drafting_view("SLC Riser - %s" % element_name(root))
+        view = new_drafting_view(view_name(root))
         type_id, line_h = text_type()
         used = {}
         for sym in node_symbol.values():
@@ -366,13 +478,14 @@ def main():
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines}
 
         widest = max(i["ext"][0] + i["ext"][1] for n, i in info.items() if n != root_id)
-        # Room for the widest label too (a character is taken as about 0.7 of the text size wide).
-        char_w = line_h / LINE_SPACING * 0.7
-        longest = max(len(text) for n, i in info.items() if n != root_id for text in i["lines"])
-        cfg = {"spacing": max(paper(SPACING), widest + paper(0.375), longest * char_w + paper(0.125)), "per_line": PER_LINE,
+        # Turned labels sit side by side on the slope, so the spacing has to clear the tallest one.
+        char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
+        tallest = max(len(i["lines"]) for n, i in info.items() if n != root_id) * line_h
+        cfg = {"spacing": max(paper(SPACING), widest + paper(0.375), tallest * 1.5 + paper(0.0625)),
+               "per_line": PER_LINE, "char_w": char_w,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
-        failed = draw(view, plan, node_symbol, type_id)
+        failed = draw(view, plan, node_symbol, type_id, line_h)
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
