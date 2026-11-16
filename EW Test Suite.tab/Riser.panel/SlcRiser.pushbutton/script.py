@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v7
-__title__ = "SLC\nRiser v7"
+# SLC Riser script - version v8
+__title__ = "SLC\nRiser v8"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -10,7 +10,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
-           "the riser line with its top corner on the line at its device, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
+           "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
@@ -43,8 +43,9 @@ TITLE = "SLC Riser"
 # ---------------- Settings ----------------
 VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
 PER_LINE = 10           # devices on one line before the row wraps underneath
+DEVICE_SPACING_FT = 6.0     # device centre to device centre, in feet in the view
+LABEL_OFFSET_IN = 1.0       # device address text starts this many inches (in the view) below the riser line
 # Sizes on the printed sheet, in inches:
-SPACING = 1.0           # device to device (widened automatically if a symbol is wider than this allows)
 ROW_GAP = 0.5           # extra space between rows
 PAD = 0.125             # space above and below each line of devices
 TEXT_GAP = 0.06         # between a symbol and the addresses under it
@@ -459,12 +460,9 @@ def main():
                 lines.insert(0, keys[n].split(" : ")[-1])
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines}
 
-        widest = max(i["ext"][0] + i["ext"][1] for n, i in info.items() if n != root_id)
-        # Turned labels sit side by side on the slope, so the spacing has to clear the tallest one.
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
-        tallest = max(len(i["lines"]) for n, i in info.items() if n != root_id) * line_h
-        cfg = {"spacing": max(paper(SPACING), widest + paper(0.375), tallest * 1.5 + paper(0.0625)),
-               "per_line": PER_LINE, "char_w": char_w,
+        cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "char_w": char_w,
+               "label_offset": LABEL_OFFSET_IN / 12.0,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
         failed = draw(view, plan, node_symbol, type_id, line_h)

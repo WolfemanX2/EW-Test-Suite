@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v6
+# riser_layout module - version v7
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -138,20 +138,22 @@ def layout(rows, root, info, returns, cfg):
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text]}
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
-    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap
+    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap, label_offset (how far below
+               the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
              "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)]}
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
          "D" = a device's label: text at 45 degrees, right justified, hanging down to the left of the
-               device. (x, y) is the device's point on the riser line, where the text's uppermost corner
-               (its top right corner) goes.
+               device. (x, y) is where the text's uppermost corner (its top right corner) goes: on the
+               device centreline, label_offset below the riser line.
 
     The riser line is drawn unbroken through the devices."""
     sp = cfg["spacing"]
     per = max(1, int(cfg["per_line"]))
     pad, text_gap, lh, row_gap = cfg["pad"], cfg["text_gap"], cfg["line_h"], cfg["row_gap"]
     char_w = cfg["char_w"]
+    offset = cfg.get("label_offset", 0.0)
     diag = 0.7071067811865476       # sin 45 = cos 45
     out = {"symbols": [], "boxes": [], "lines": [], "texts": []}
 
@@ -165,7 +167,7 @@ def layout(rows, root, info, returns, cfg):
     def label_drop(n):
         """How far a device's turned label reaches below the riser line."""
         length, height = label_size(n)
-        return (length + height) * diag if length else 0.0
+        return (length + height) * diag + offset if length else 0.0
 
     def label_reach(n):
         """How far a device's turned label reaches left of the device centreline."""
@@ -188,7 +190,7 @@ def layout(rows, root, info, returns, cfg):
         if n == root:
             out["texts"].append((x, y - d - text_gap, text, "C"))
         else:
-            out["texts"].append((x, y, text, "D"))
+            out["texts"].append((x, y - offset, text, "D"))
 
     devices = [n for row in rows for n in row["nodes"]]
     reach = max(label_reach(n) for n in devices) if devices else 0.0
