@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v2
+# SLC Riser script - version v3
 __title__ = "SLC\nRiser"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
            "Select (or pick) the panel the conduit starts from. The tool follows the connected conduit from "
@@ -7,7 +7,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
            "in order of connection, one row per conduit run leaving the panel, with its full addresses "
            "(N#L#M# / N#L#D#) underneath. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
-           "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. "
+           "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
+           "one is asked about when the tool runs, and the choice is saved to the table. "
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
 
 from Autodesk.Revit.DB import (
@@ -247,23 +248,52 @@ def main():
     # Symbol for each thing drawn.
     drawn = [root_id] + [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
-    node_symbol, missing = {}, {}
+    chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
     for n in drawn:
-        wanted = table.get(keys[n], "")
+        key = keys[n]
+        wanted = table.get(key, "")
         if wanted in available:
-            node_symbol[n] = available[wanted]
-        elif n != root_id or wanted:
-            missing[keys[n]] = ("symbol '%s' is not loaded in this project" % wanted) if wanted else "no symbol set"
+            chosen[key] = wanted
+        elif key not in missing:
+            missing.append(key)
     if missing:
-        listing = "\n".join("%s  -  %s" % (k, missing[k]) for k in sorted(missing)[:15])
-        if len(missing) > 15:
-            listing += "\n... and %d more" % (len(missing) - 15)
-        go_on = forms.alert("%d type(s) on this riser have no symbol to draw:\n\n%s\n\n"
-                            "Draw them as boxes labeled with the type name? (Choose No to stop and set them "
-                            "in Riser Symbols first.)" % (len(missing), listing),
-                            title=TITLE, yes=True, no=True)
-        if not go_on:
-            return
+        names = sorted(available.keys())
+        if not names:
+            go_on = forms.alert("No Generic Annotation or Detail Item types are loaded in this project, so "
+                                "there are no symbols to choose from.\n\nDraw every device as a box labeled "
+                                "with its type name?", title=TITLE, yes=True, no=True)
+            if not go_on:
+                return
+        else:
+            picked_any = False
+            for i, key in enumerate(missing, start=1):
+                wanted = table.get(key, "")
+                if wanted:
+                    forms.toast("Saved symbol '%s' for %s is not loaded in this project." % (wanted, key))
+                picked = forms.SelectFromList.show(
+                    names, title="Symbol for %s  (%d of %d without one)" % (key, i, len(missing)),
+                    button_name="Use Symbol", multiselect=False)
+                if picked:
+                    chosen[key] = picked
+                    table[key] = picked
+                    picked_any = True
+                    continue
+                go_on = forms.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
+                                    "(Choose No to stop without creating the riser.)" % key,
+                                    title=TITLE, yes=True, no=True)
+                if not go_on:
+                    break
+            else:
+                go_on = True
+            if picked_any:      # remembered for next time, even if this run was stopped
+                try:
+                    sr.save_table(table)
+                except Exception as ex:
+                    forms.alert("The symbols you chose are used for this riser but could not be saved:\n%s"
+                                "\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
+            if not go_on:
+                return
+    node_symbol = dict((n, available[chosen[keys[n]]]) for n in drawn if keys[n] in chosen)
 
     t = Transaction(doc, "Create SLC riser")
     t.Start()
