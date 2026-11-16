@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v3
+# SLC Riser script - version v4
 __title__ = "SLC\nRiser"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
-           "Select (or pick) the panel the conduit starts from. The tool follows the connected conduit from "
-           "it and draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
-           "in order of connection, one row per conduit run leaving the panel, with its full addresses "
-           "(N#L#M# / N#L#D#) underneath. Each row is labeled with its loop (L#), read from those addresses. "
+           "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
+           "(Esc when finished). Each loop is followed along its conduit starting at that device, away from "
+           "the panel, so the device you pick decides the order. Press Esc without picking any to follow "
+           "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
+           "in order of connection, one row per conduit run leaving the panel, with its full address "
+           "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last as "
+           "first-last. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
@@ -75,6 +78,38 @@ def starting_element():
     return doc.GetElement(ref.ElementId)
 
 
+class AddressedDeviceFilter(ISelectionFilter):
+    """Allows Fire Alarm Devices that have an SLC address."""
+    def AllowElement(self, elem):
+        try:
+            return sr.is_device(elem) and len(sr.slc_addresses(elem)) > 0
+        except Exception:
+            return False
+
+    def AllowReference(self, ref, pt):
+        return False
+
+
+def first_devices(root):
+    """Devices picked as the first of each loop, in pick order. Empty = follow every run from the panel."""
+    picked, seen = [], set([sr.eid_int(root.Id)])
+    flt = AddressedDeviceFilter()
+    while True:
+        prompt = ("Pick the FIRST device of loop %d (Esc when finished%s)"
+                  % (len(picked) + 1, "" if picked else "; Esc now = follow every run from the panel"))
+        try:
+            ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
+        except OperationCanceledException:
+            return picked
+        el = doc.GetElement(ref.ElementId)
+        i = sr.eid_int(el.Id)
+        if i in seen:
+            forms.toast("Already picked.")
+            continue
+        seen.add(i)
+        picked.append(el)
+
+
 def element_name(el):
     """What a panel is called on the diagram."""
     for bip in (BuiltInParameter.RBS_ELEC_PANEL_NAME, BuiltInParameter.ALL_MODEL_MARK):
@@ -92,8 +127,9 @@ def element_name(el):
 
 
 # ---------- Tracing ----------
-def trace_from(root):
-    """(rows, returns, elements, addresses, unaddressed devices) for the conduit connected to root."""
+def trace_from(root, firsts):
+    """(rows, returns, elements, addresses, unaddressed devices) for the conduit connected to root.
+    firsts: the first device of each loop (empty = every run leaving root)."""
     elements = {}       # id -> element
     addresses = {}      # id -> [SLC addresses] for fire alarm devices
     port_cache = {}
@@ -115,7 +151,8 @@ def trace_from(root):
         return bool(addresses.get(i))
 
     root_id = remember(root)
-    children, returns, passed = rl.trace(root_id, ports, is_node)
+    starts = [remember(el) for el in firsts]
+    children, returns, passed = rl.trace(root_id, ports, is_node, starts or None)
     rows = rl.build_rows(root_id, children)
     for row in rows:
         row["label"] = sr.loop_label([addresses[n] for n in row["nodes"]])
@@ -228,7 +265,8 @@ def main():
     root = starting_element()
     if root is None:
         return
-    rows, returns, elements, addresses, unaddressed = trace_from(root)
+    firsts = first_devices(root)
+    rows, returns, elements, addresses, unaddressed = trace_from(root, firsts)
     root_id = sr.eid_int(root.Id)
     if not rows:
         msg = "No devices with an SLC address are connected by conduit to the selected element."
@@ -313,6 +351,8 @@ def main():
         info = {}
         for n in drawn:
             lines = list(addresses.get(n, []))
+            if len(lines) > 1:
+                lines = ["%s-%s" % (lines[0], lines[-1])]     # several addresses: first-last
             if n == root_id:
                 lines = [element_name(root)]
             if n in node_symbol:
@@ -326,7 +366,10 @@ def main():
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines}
 
         widest = max(i["ext"][0] + i["ext"][1] for n, i in info.items() if n != root_id)
-        cfg = {"spacing": max(paper(SPACING), widest + paper(0.375)), "per_line": PER_LINE,
+        # Room for the widest label too (a character is taken as about 0.7 of the text size wide).
+        char_w = line_h / LINE_SPACING * 0.7
+        longest = max(len(text) for n, i in info.items() if n != root_id for text in i["lines"])
+        cfg = {"spacing": max(paper(SPACING), widest + paper(0.375), longest * char_w + paper(0.125)), "per_line": PER_LINE,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
         failed = draw(view, plan, node_symbol, type_id)

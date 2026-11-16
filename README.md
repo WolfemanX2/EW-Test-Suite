@@ -10,7 +10,7 @@ pyRevit extension with conduit routing, link clash, device addressing and riser 
 | Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
 | Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
 | Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
-| Riser | SLC Riser | Select the panel; follows the connected conduit from it and draws a one-line riser in a new drafting view: every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full addresses underneath. Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
+| Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view: every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show as `first-last`). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
 | Riser | Riser Symbols | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
 
 ## Install
@@ -85,7 +85,7 @@ Each script has its version on line 2.
 | Address NAC / Voice | v2 |
 | NAC / Voice Types | v1 |
 | lib/nac_voice_types.py | v1 |
-| SLC Riser | v3 |
+| SLC Riser | v4 |
 | Riser Symbols | v1 |
 | lib/slc_riser.py | v2 |
-| lib/riser_layout.py | v2 |
+| lib/riser_layout.py | v3 |

@@ -1,13 +1,39 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v2
+# riser_layout module - version v3
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
 Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing."""
 
 
-def trace(root, ports, is_node):
+def find_path(root, target, ports, is_node):
+    """The passed-through ids joining root to target without going through another device, or []."""
+    parent = {root: None}
+    queue = [root]
+    while queue:
+        e = queue.pop(0)
+        for group in ports(e):
+            for nxt in group:
+                if nxt in parent:
+                    continue
+                parent[nxt] = e
+                if nxt == target:
+                    path = []
+                    while parent[e] is not None:
+                        path.append(e)
+                        e = parent[e]
+                    return path
+                if not is_node(nxt):
+                    queue.append(nxt)
+    return []
+
+
+def trace(root, ports, is_node, starts=None):
     """Follow the connections outward from root.
+
+    starts: the first device of each run, in the order the runs are wanted. Each run is then followed
+    away from root starting at that device, and only those runs are followed. None = every connector
+    of root, in connector order.
 
     ports(id)   -> one list of connected ids per connector of that element
     is_node(id) -> True for an element that is drawn (a device); everything else (conduit, fittings,
@@ -23,7 +49,17 @@ def trace(root, ports, is_node):
     passed = []
     # One connector at a time, finishing everything beyond it before the next one, so a loop that comes
     # back to the panel is followed all the way round from its first end.
-    stack = [(root, iter(ports(root)))]
+    if starts:
+        for s in starts:
+            visited.update(find_path(root, s, ports, is_node))   # the way back to root is not a return
+        visited.update(starts)
+        children[root] = list(starts)
+        stack = []
+        for s in reversed(starts):
+            children[s] = []
+            stack.append((s, iter(ports(s))))
+    else:
+        stack = [(root, iter(ports(root)))]
     while stack:
         node, groups = stack[-1]
         try:
