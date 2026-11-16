@@ -42,7 +42,7 @@ TITLE = "SLC Riser"
 
 # ---------------- Settings ----------------
 VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
-PER_LINE = 10           # devices on one line before the row wraps underneath
+PER_LINE = 5           # devices on one line before the row wraps underneath
 DEVICE_SPACING_FT = 4.5# device centre to device centre, in feet in the view
 LABEL_OFFSET_IN = 1.0       # device address text starts this many inches (in the view) below the riser line
 # Sizes on the printed sheet, in inches:
