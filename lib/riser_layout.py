@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v3
+# riser_layout module - version v4
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -201,7 +201,7 @@ def layout(rows, root, info, returns, cfg):
                         out["texts"].append((root_r + sp * 0.08, y + lh * 1.25, row["label"], "L"))
                 else:
                     src_lines = info[row["source"]]["lines"]
-                    label = "T-TAP FROM\n%s" % (src_lines[0] if src_lines else "DEVICE")
+                    label = "T-TAP FROM\n%s" % (src_lines[0].rstrip("-") if src_lines else "DEVICE")
                     if row.get("label"):
                         label = "%s %s" % (row["label"], label)
                     out["texts"].append((x_back - sp * 0.05, y + lh, label, "R"))

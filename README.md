@@ -88,4 +88,4 @@ Each script has its version on line 2.
 | SLC Riser | v5 |
 | Riser Symbols | v1 |
 | lib/slc_riser.py | v2 |
-| lib/riser_layout.py | v3 |
+| lib/riser_layout.py | v4 |
