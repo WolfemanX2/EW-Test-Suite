@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v4
+# SLC Riser script - version v5
 __title__ = "SLC\nRiser"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -7,8 +7,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view.\n\n"
            "the panel, so the device you pick decides the order. Press Esc without picking any to follow "
            "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
-           "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last as "
-           "first-last. Each row is labeled with its loop (L#), read from those addresses. "
+           "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
+           "lines (first- / last). Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
@@ -352,7 +352,7 @@ def main():
         for n in drawn:
             lines = list(addresses.get(n, []))
             if len(lines) > 1:
-                lines = ["%s-%s" % (lines[0], lines[-1])]     # several addresses: first-last
+                lines = [lines[0] + "-", lines[-1]]     # several addresses: first- / last, on two lines
             if n == root_id:
                 lines = [element_name(root)]
             if n in node_symbol:
