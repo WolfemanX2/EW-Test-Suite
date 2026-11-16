@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Riser Symbols script - version v1
-__title__ = "Riser\nSymbols"
+__title__ = "Riser\nSymbols v1"
 __doc__ = ("Editable table of the symbol the riser tools draw for each Family : Type.\n\n"
            "The symbol is any loaded Generic Annotation or Detail Item type. 'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")

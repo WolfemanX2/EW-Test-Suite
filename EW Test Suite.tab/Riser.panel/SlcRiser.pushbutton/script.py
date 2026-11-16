@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v6
-__title__ = "SLC\nRiser"
+# SLC Riser script - version v7
+__title__ = "SLC\nRiser v7"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -9,8 +9,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
-           "lines (first- / last). The address text is at 45 degrees, right justified, ending on the riser "
-           "line under its device, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
+           "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
+           "the riser line with its top corner on the line at its device, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
@@ -19,12 +19,12 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter, ElementTransformUtils
+    ElementId, BuiltInParameter
 )
 try:
     from Autodesk.Revit.DB import VerticalTextAlignment
 except ImportError:
-    VerticalTextAlignment = None    # older Revit: the label is placed by its corner instead
+    VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
@@ -41,7 +41,7 @@ output = script.get_output()
 TITLE = "SLC Riser"
 
 # ---------------- Settings ----------------
-VIEW_SCALE = 48         # scale of the new drafting view (48 = 1/4" = 1'-0")
+VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
 PER_LINE = 10           # devices on one line before the row wraps underneath
 # Sizes on the printed sheet, in inches:
 SPACING = 1.0           # device to device (widened automatically if a symbol is wider than this allows)
@@ -273,36 +273,18 @@ def text_type():
     return tt.Id, size * VIEW_SCALE * LINE_SPACING
 
 
-def device_label(view, x, y, text, type_id, est_height):
-    """A device's address text: 45 degrees, right justified, hanging down to the left. The midpoint of its
-    right side sits on the riser line and its uppermost corner on the device centreline (x)."""
-    half = math.sin(LABEL_ANGLE) * 0.5      # x offset of the right-side midpoint, per unit of text height
+def device_label(view, x, y, text, type_id):
+    """A device's address text: 45 degrees, right justified, hanging down to the left, with its uppermost
+    corner (the top right one) on the riser line at the device centreline (x, y)."""
     opts = TextNoteOptions(type_id)
     opts.HorizontalAlignment = HorizontalTextAlignment.Right
     opts.Rotation = LABEL_ANGLE
-    middle = False
     if VerticalTextAlignment is not None:
         try:
-            opts.VerticalAlignment = VerticalTextAlignment.Middle
-            middle = True
+            opts.VerticalAlignment = VerticalTextAlignment.Top
         except Exception:
             pass
-    if not middle:
-        # Placed by its top right corner, which is the uppermost one: on the centreline, half the
-        # (estimated) height above the line along the slope.
-        TextNote.Create(doc, view.Id, XYZ(x, y + est_height * 0.5 * math.cos(LABEL_ANGLE), 0), text, opts)
-        return
-    # Placed by the midpoint of its right side, then slid along the line by its real height.
-    note = TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
-    height = est_height
-    try:
-        doc.Regenerate()
-        measured = note.Height * view.Scale     # Height is the size on the sheet
-        if measured > 0:
-            height = measured
-    except Exception:
-        pass
-    ElementTransformUtils.MoveElement(doc, note.Id, XYZ(height * half, 0, 0))
+    TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
 def measure_symbols(view, symbols):
@@ -362,7 +344,7 @@ def draw(view, plan, node_symbol, type_id, line_h):
     for x, y, text, how in plan["texts"]:
         try:
             if how == "D":
-                device_label(view, x, y, text, type_id, (text.count("\n") + 1) * line_h)
+                device_label(view, x, y, text, type_id)
                 continue
             opts = TextNoteOptions(type_id)
             opts.HorizontalAlignment = align[how]
