@@ -1,6 +1,6 @@
 # EW Test Suite
 
-pyRevit extension with conduit routing, link clash, device addressing and riser diagram tools for Revit.
+pyRevit extension with conduit routing, link clash, and device addressing tools for Revit.
 
 | Panel | Button | What it does |
 |---|---|---|
@@ -10,8 +10,6 @@ pyRevit extension with conduit routing, link clash, device addressing and riser 
 | Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
 | Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
 | Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
-| Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view: every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
-| Riser | Riser Symbols | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
 
 ## Install
 
@@ -26,6 +24,13 @@ This repository is private, so pyRevit needs a GitHub personal access token to d
    ```
 
 3. Reload pyRevit (pyRevit tab > Reload). The **EW Test Suite** tab appears.
+
+### Branches
+
+- `main` holds the released tools (Conduit, Clash, Addressing). Installs pull this branch by default.
+- `dev` holds every tool, including ones still being tested. To test on your own machine, switch your
+  install to it: run `git checkout dev` in the extension folder, then use pyRevit **Update** as usual.
+  When a tool is ready, merge `dev` into `main`.
 
 ### Updating
 
@@ -64,9 +69,6 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
   To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
 - NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/nac_voice_types.py` to a network location.
-- Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
-  overwrite it. To share it, set `TABLE_PATH` in `lib/slc_riser.py` to a network location.
-- Riser drawing sizes (view scale, devices per line, spacing) are the settings at the top of the SLC Riser script.
 - Clash statuses: `%APPDATA%\pyRevit\LinkClash\` per model. To share them, set `STATUS_DIR` in the Link
   Clash script to a network location.
 
@@ -85,7 +87,3 @@ Each script has its version on line 2.
 | Address NAC / Voice | v2 |
 | NAC / Voice Types | v1 |
 | lib/nac_voice_types.py | v1 |
-| SLC Riser | v5 |
-| Riser Symbols | v1 |
-| lib/slc_riser.py | v2 |
-| lib/riser_layout.py | v4 |
