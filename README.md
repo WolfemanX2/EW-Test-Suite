@@ -1,6 +1,6 @@
 # EW Test Suite
 
-pyRevit extension with conduit routing and link clash tools for Revit.
+pyRevit extension with conduit routing, link clash and device addressing tools for Revit.
 
 | Panel | Button | What it does |
 |---|---|---|
@@ -8,6 +8,8 @@ pyRevit extension with conduit routing and link clash tools for Revit.
 | Conduit | Routing Preferences | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
 | Clash | Link Clash | Tests the selection against MEP and structural elements in loaded Revit links. Results window with statuses, grouping, Show in 3D and Auto Fix. |
 | Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
+| Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
+| Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
 
 ## Install
 
@@ -58,6 +60,8 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 - `lib/mounting_rules.json` (Routing Preferences). Not part of the repository, so updates never overwrite it.
   To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
+- NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
+  overwrite it. To share it, set `TABLE_PATH` in `lib/nac_voice_types.py` to a network location.
 - Clash statuses: `%APPDATA%\pyRevit\LinkClash\` per model. To share them, set `STATUS_DIR` in the Link
   Clash script to a network location.
 
@@ -73,3 +77,6 @@ Each script has its version on line 2.
 | Auto Fix Rules | v5 |
 | lib/mounting_rules.py | v1 |
 | lib/clash_rules.py | v5 |
+| Address NAC / Voice | v1 |
+| NAC / Voice Types | v1 |
+| lib/nac_voice_types.py | v1 |
