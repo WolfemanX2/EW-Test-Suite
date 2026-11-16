@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v5
+# riser_layout module - version v6
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -144,8 +144,8 @@ def layout(rows, root, info, returns, cfg):
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
          "D" = a device's label: text at 45 degrees, right justified, hanging down to the left of the
-               device. (x, y) is the device's point on the riser line; the script puts the midpoint of the
-               text's right side on the line, with the text's uppermost corner on the device centreline.
+               device. (x, y) is the device's point on the riser line, where the text's uppermost corner
+               (its top right corner) goes.
 
     The riser line is drawn unbroken through the devices."""
     sp = cfg["spacing"]
@@ -165,12 +165,12 @@ def layout(rows, root, info, returns, cfg):
     def label_drop(n):
         """How far a device's turned label reaches below the riser line."""
         length, height = label_size(n)
-        return (length + height * 0.5) * diag if length else 0.0
+        return (length + height) * diag if length else 0.0
 
     def label_reach(n):
         """How far a device's turned label reaches left of the device centreline."""
         length, height = label_size(n)
-        return (length + height) * diag if length else 0.0
+        return length * diag if length else 0.0
 
     def root_depth():
         lines = info[root]["lines"]
@@ -204,8 +204,7 @@ def layout(rows, root, info, returns, cfg):
         turn = None     # (x, y) where the previous line of this row ended, ready to turn down
         for ci, chunk in enumerate(chunks):
             last_chunk = ci == len(chunks) - 1
-            up = max(max(info[n]["ext"][2] for n in chunk),
-                     max(label_size(n)[1] for n in chunk) * 0.5 * diag)
+            up = max(info[n]["ext"][2] for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             if ci == 0:
                 if row["source"] is None:
