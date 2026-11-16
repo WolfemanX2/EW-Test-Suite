@@ -30,8 +30,15 @@ This repository is private, so pyRevit needs a GitHub personal access token to d
 ### Branches
 
 - `main` holds the released tools (Conduit, Clash, Addressing). Installs pull this branch by default.
-- `dev` holds every tool, including ones still being tested. To test on your own machine, switch your
-  install to it: run `git checkout dev` in the extension folder, then use pyRevit **Update** as usual.
+- `dev` holds every tool, including ones still being tested. To test on your own machine, reinstall from it
+  (back up `lib\mounting_rules.json` first; it lives in the extension folder and is removed with it):
+
+  ```
+  pyrevit extensions delete EWTestSuite
+  pyrevit extend ui EWTestSuite https://github.com/WolfemanX2/ew-test-suite.git --branch=dev --username=<your GitHub user> --password=<token>
+  ```
+
+  Put `mounting_rules.json` back in `lib`, then Reload. pyRevit **Update** then pulls `dev` on that machine.
   When a tool is ready, merge `dev` into `main`.
 
 ### Updating
