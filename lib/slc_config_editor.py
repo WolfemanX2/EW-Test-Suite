@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# slc_config_editor module - version v1
-"""The Addressing Config window: editable table of the Family : Type rules used by Address Devices.
-Opened by the Addressing Config button and by Shift+Click on Address Devices."""
+# slc_config_editor module - version v2
+"""The Addressing Config window: editable table of the Family : Type rules used by Address SLC.
+Opened by the Addressing Config button and by Shift+Click on Address SLC."""
 import os
 
 import clr

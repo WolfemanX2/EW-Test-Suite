@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address Devices script - version v1
-__title__ = "Address\nDevices v1"
+# Address SLC script - version v2
+__title__ = "Address\nSLC v2"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -9,9 +9,14 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "Each Family : Type is addressed by its rule in Addressing Config: a fixed number of addresses, "
            "named Address Options to choose from, or a prompt for the count. A type without a rule is asked "
            "for its kind and count.\n\n"
+           "Follow the conduit: after a device is addressed (or after 'Continue From Selected'), pick a conduit "
+           "leaving it. Every device connected downstream by that conduit type is found, listed for "
+           "confirmation and addressed in order of connection. Conduit of any other type is not followed.\n\n"
            "Shift+Click opens Addressing Config. Press Esc to finish picking.")
 
-from Autodesk.Revit.DB import Transaction, TransactionStatus, IndependentTag
+from System.Collections.Generic import List
+from Autodesk.Revit.DB import Transaction, TransactionStatus, IndependentTag, ElementId
+from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
@@ -23,7 +28,8 @@ doc = revit.doc
 uidoc = revit.uidoc
 output = script.get_output()
 
-TITLE = "Address Devices"
+TITLE = "Address SLC"
+PREVIEW_LIMIT = 25  # devices listed in the confirmation before a conduit run is addressed
 BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
 
 try:
@@ -63,9 +69,14 @@ def resolve_device(elem):
 
 
 class DeviceOrTagFilter(ISelectionFilter):
-    """Allows devices, or tags hosted to a device."""
+    """Allows devices, or tags hosted to a device; with conduit=True also conduit (to follow it)."""
+    def __init__(self, conduit=False):
+        self.conduit = conduit
+
     def AllowElement(self, elem):
         try:
+            if self.conduit and isinstance(elem, Conduit):
+                return True
             return resolve_device(elem) is not None
         except Exception:
             return False
@@ -96,7 +107,7 @@ def choose(options, message):
 NEW_LOOP_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Address Devices - New Loop"
+        Title="Address SLC - New Loop"
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
@@ -174,7 +185,7 @@ class NewLoopDialog(forms.WPFWindow):
 COUNT_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Address Devices"
+        Title="Address SLC"
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
@@ -259,6 +270,10 @@ class Session(object):
         self.undefined_seen = set()
         self.count_prompted = set()
         self.option_prompted = set()
+        self.anchor = None          # device a conduit run is followed from: the last one addressed
+        self.following = False      # True while a conduit run is being addressed
+        self.current = None         # device being addressed
+        self.runs = []              # summary lines of the conduit runs followed
 
     def address(self, kind, number):
         return slc.fmt_address(self.prefix, kind, number)
@@ -345,6 +360,7 @@ class Session(object):
                 self.resumed = ("Continuing N%dL%d after element %d: from M%s / D%s"
                                 % (n, l, slc.eid_int(device.Id), slc.fmt_number(start_m), slc.fmt_number(start_d)))
                 forms.toast(self.resumed)
+                self.anchor = device
                 return n, l, start_m, start_d
 
             forms.toast("That device has no N#L#M000 / N#L#D000 address to continue from. Pick another.")
@@ -372,25 +388,133 @@ class Session(object):
 
     # ---- Picking ----
     def pick_devices(self):
-        flt = DeviceOrTagFilter()
+        flt = DeviceOrTagFilter(conduit=True)
         while True:
-            prompt = ("Select device or its tag (next: %s | %s) - Esc to finish"
+            prompt = ("Select device or its tag, or a conduit to address everything downstream "
+                      "(next: %s | %s) - Esc to finish"
                       % (self.address(slc.MODULE, self.next[slc.MODULE]),
                          self.address(slc.DETECTOR, self.next[slc.DETECTOR])))
             try:
                 ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
             except OperationCanceledException:
                 return
-            device = resolve_device(doc.GetElement(ref.ElementId))
+            picked = doc.GetElement(ref.ElementId)
+            if isinstance(picked, Conduit):
+                if not self.follow_conduit(picked):
+                    return
+                continue
+            device = resolve_device(picked)
             if device is None:
                 forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
                 continue
             if not self.address_device(device):
                 return
 
+    # ---- Following conduit ----
+    def follow_conduit(self, conduit):
+        """Addresses every device downstream of the anchor device along the picked conduit's type.
+        Returns False when the run has to stop."""
+        if self.anchor is None:
+            forms.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
+                        "followed away from the last device addressed (or the device chosen with "
+                        "'Continue From Selected').", title=TITLE)
+            return True
+
+        type_id = slc.eid_int(conduit.GetTypeId())
+        type_name = slc.element_type_name(doc, conduit) or "the picked"
+        elements, port_cache = {}, {}
+
+        def remember(el):
+            i = slc.eid_int(el.Id)
+            elements.setdefault(i, el)
+            return i
+
+        def ports(i):
+            if i not in port_cache:
+                port_cache[i] = [[remember(e) for e in group] for group in slc.connected_elements(elements[i])]
+            return port_cache[i]
+
+        def allowed(i):
+            # Only conduit of the picked type is followed; fittings, boxes and devices are passed through.
+            el = elements[i]
+            return not isinstance(el, Conduit) or slc.eid_int(el.GetTypeId()) == type_id
+
+        anchor_id = remember(self.anchor)
+        order, problem = slc.trace_downstream(remember(conduit), anchor_id, ports, allowed,
+                                              lambda i: slc.is_device(elements[i]))
+        if problem:
+            forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
+                        "Pick a conduit on the run leaving the last device addressed, or pick a device."
+                        % (anchor_id, type_name), title=TITLE)
+            return True
+
+        todo, no_params, done = [], [], 0
+        for i in order:
+            if i in self.addressed:
+                done += 1
+            elif any(not p.IsReadOnly for _pos, p in self.reader.get(elements[i])):
+                todo.append(elements[i])
+            else:
+                no_params.append(i)
+        if not todo:
+            forms.alert("No devices with SLC Address parameters were found downstream of element %d on '%s' "
+                        "conduit." % (anchor_id, type_name), title=TITLE)
+            return True
+
+        lines = ["%d. %s" % (n, slc.family_key(doc, el)) for n, el in enumerate(todo[:PREVIEW_LIMIT], start=1)]
+        if len(todo) > PREVIEW_LIMIT:
+            lines.append("... and %d more" % (len(todo) - PREVIEW_LIMIT))
+        readdress = len([el for el in todo if self.device_addresses(el)])
+        notes = []
+        if readdress:
+            notes.append("%d of them already have an address, which will be replaced." % readdress)
+        if no_params:
+            notes.append("%d device(s) on the run have no SLC Address parameter and are passed over."
+                         % len(no_params))
+        if done:
+            notes.append("%d device(s) already addressed this run are left as they are." % done)
+        go_on = forms.alert(
+            "Found %d device(s) downstream of element %d on '%s' conduit, in this order:\n\n%s\n\n%s"
+            "Address them starting at %s | %s?"
+            % (len(todo), anchor_id, type_name, "\n".join(lines),
+               ("\n".join(notes) + "\n\n") if notes else "",
+               self.address(slc.MODULE, self.next[slc.MODULE]),
+               self.address(slc.DETECTOR, self.next[slc.DETECTOR])),
+            title=TITLE, yes=True, no=True)
+        if not go_on:
+            return True
+
+        before = len(self.log)
+        keep_going = True
+        self.following = True
+        try:
+            for el in todo:
+                if not self.address_device(el):
+                    keep_going = False
+                    break
+        finally:
+            self.following = False
+        count = len(self.log) - before
+        self.runs.append("Followed '%s' conduit from element %d: %d of %d device(s) addressed"
+                         % (type_name, anchor_id, count, len(todo)))
+        for i in no_params:
+            self.problems.append("Element %d (%s): on the followed conduit but has no writable SLC Address "
+                                 "parameter. Passed over." % (i, slc.family_key(doc, elements[i])))
+        forms.toast("%d device(s) addressed along the conduit." % count)
+        return keep_going
+
+    def show(self, device):
+        """Select a device so the user can see which one a question is about."""
+        try:
+            uidoc.Selection.SetElementIds(List[ElementId]([device.Id]))
+            uidoc.RefreshActiveView()
+        except Exception:
+            pass
+
     def address_device(self, device):
         """Addresses one device. Returns False when the run has to stop."""
         eid = slc.eid_int(device.Id)
+        self.current = device
 
         # Guard against picking the same device twice (directly or via its tag).
         earlier = self.addressed.get(eid)
@@ -459,6 +583,7 @@ class Session(object):
                  "cleared": cleared, "option": option}
         self.log.append(entry)
         self.addressed[eid] = entry
+        self.anchor = device
         if first > original:
             self.rounding_skips.append((eid, kind, original, first - 1))
         return True
@@ -520,6 +645,9 @@ class Session(object):
             default_count = self.last_choice[key][0]
             if not lock_kind:
                 default_kind = self.last_choice[key][1]
+        if self.following:
+            self.show(self.current)     # the device was found by the tool, not picked: show which one it is
+            message = "Element %d\n%s" % (slc.eid_int(self.current.Id), message)
         dlg = CountDialog(message, choices, default_count, default_kind, lock_kind, count_label)
         dlg.ShowDialog()
         if dlg.result is None:
@@ -536,6 +664,8 @@ class Session(object):
         output.print_md("### Addressing complete (%s)" % self.prefix)
         if self.resumed:
             output.print_md("- %s" % self.resumed)
+        for line in self.runs:
+            output.print_md("- %s" % line)
         output.print_md("- Devices addressed: **%d**" % len(self.log))
         for kind in slc.KINDS:
             if self.next[kind] > self.start[kind]:

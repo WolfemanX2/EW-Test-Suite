@@ -8,7 +8,7 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 | Conduit | Routing Preferences | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
 | Clash | Link Clash | Tests the selection against MEP and structural elements in loaded Revit links. Results window with statuses, grouping, Show in 3D and Auto Fix. |
 | Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
-| Addressing | Address Devices | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Addressing Config; unused address parameters on the device are cleared. Shift+Click opens Addressing Config. |
+| Addressing | Address SLC | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Addressing Config; unused address parameters on the device are cleared. **Follow the conduit:** after a device is addressed (or after Continue From Selected), pick a conduit leaving it; every device connected downstream by conduit of that conduit type is listed for confirmation, then addressed in order of connection (at a split, the branch with fewer devices first). Conduit of any other type is not followed. Shift+Click opens Addressing Config. |
 | Addressing | Addressing Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
 | Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
 | Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
@@ -113,10 +113,10 @@ Each script has its version on line 2.
 | Auto Fix Rules | v5 |
 | lib/mounting_rules.py | v1 |
 | lib/clash_rules.py | v5 |
-| Address Devices | v1 |
-| Addressing Config | v1 |
-| lib/slc_addressing.py | v1 |
-| lib/slc_config_editor.py | v1 |
+| Address SLC | v2 |
+| Addressing Config | v2 |
+| lib/slc_addressing.py | v2 |
+| lib/slc_config_editor.py | v2 |
 | Address NAC / Voice | v2 |
 | NAC / Voice Types | v1 |
 | lib/nac_voice_types.py | v1 |

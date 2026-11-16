@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v1
-"""Shared pieces of the SLC addressing tools (Address Devices, Addressing Config): the parameter names, the
+# slc_addressing module - version v2
+"""Shared pieces of the SLC addressing tools (Address SLC, Addressing Config): the parameter names, the
 address format, the rules table and the default config.
 
 Addresses are written N#L#M000 for modules and N#L#D000 for detectors, into the text parameters
@@ -8,7 +8,7 @@ Addresses are written N#L#M000 for modules and N#L#D000 for detectors, into the 
 
 The rules table is the user's own file, %APPDATA%\\MyTools\\AddressCounts.json - the same file, in the same
 format, as the standalone Address Devices add-in, so the two can be used side by side. It is changed with the
-Addressing Config tool (or Shift+Click on Address Devices). Updates never overwrite it.
+Addressing Config tool (or Shift+Click on Address SLC). Updates never overwrite it.
 
 config/address_config.default.json, in the repository, is the office default. If it holds rules, a user who has
 no table yet starts from a copy of it, and 'Load Default Config' in Addressing Config opens at it. The tools
@@ -18,7 +18,8 @@ import re
 import json
 import shutil
 
-from Autodesk.Revit.DB import BuiltInCategory, StorageType, FilteredElementCollector
+from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, StorageType, FilteredElementCollector, Domain,
+                               ConnectorType)
 
 # Set this to a shared path (e.g. r"\\server\share\AddressCounts.json") so everyone edits one table.
 # Leave as None for a per-user file in %APPDATA% (recommended together with a default config).
@@ -193,6 +194,150 @@ def scan_loops(doc, reader):
 def loop_label(loop):
     parts = ["last %s%s" % (k, fmt_number(loop["last"][k])) for k in KINDS if loop["last"][k] is not None]
     return "Continue Addressing N%dL%d (%s)" % (loop["n"], loop["l"], ", ".join(parts))
+
+
+# ---------- Conduit connections ----------
+def conduit_connectors(el):
+    """Conduit connectors of a conduit, fitting or family instance."""
+    cm = None
+    try:
+        cm = el.ConnectorManager                # conduit
+    except Exception:
+        pass
+    if cm is None:
+        try:
+            cm = el.MEPModel.ConnectorManager   # devices, fittings, boxes, panels
+        except Exception:
+            cm = None
+    if cm is None:
+        return []
+    out = []
+    for c in cm.Connectors:
+        try:
+            if c.Domain == Domain.DomainCableTrayConduit:
+                out.append(c)
+        except Exception:
+            pass
+    try:
+        out.sort(key=lambda c: c.Id)
+    except Exception:
+        pass
+    return out
+
+
+def connected_elements(el):
+    """One list per conduit connector of el: the elements physically joined to that connector."""
+    groups = []
+    own = eid_int(el.Id)
+    for c in conduit_connectors(el):
+        group = []
+        try:
+            if c.IsConnected:
+                for r in c.AllRefs:
+                    try:
+                        if r.ConnectorType == ConnectorType.Logical:
+                            continue
+                        owner = r.Owner
+                        if owner is not None and eid_int(owner.Id) != own:
+                            group.append(owner)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        groups.append(group)
+    return groups
+
+
+def element_type_name(doc, el):
+    """Name of an element's type (e.g. the conduit type of a conduit), or ''."""
+    try:
+        etype = doc.GetElement(el.GetTypeId())
+    except Exception:
+        return ""
+    if etype is None:
+        return ""
+    try:
+        p = etype.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
+        if p is not None and p.AsString():
+            return p.AsString()
+    except Exception:
+        pass
+    try:
+        return etype.Name
+    except Exception:
+        return ""
+
+
+def trace_downstream(conduit, anchor, ports, allowed, is_device):
+    """Devices reached by following conduit away from the anchor device, in order of connection.
+
+    conduit     id of the conduit that was picked: it gives the direction (and, through `allowed`, the type)
+    anchor      id of the device the run starts from; the trace never passes back through it
+    ports(i)    -> one list of neighbour ids per conduit connector of element i
+    allowed(i)  -> False for an element that must not be followed (a conduit of another type)
+    is_device(i)-> True for a Fire Alarm Device
+
+    The side of the picked conduit that leads back to the anchor is upstream; everything on the other side
+    is downstream. Where the conduit splits, the branch with fewer devices is listed first, then the longer.
+    Returns (ordered device ids, None), or (None, reason) when the conduit does not lead back to the anchor."""
+    def step(i, blocked):
+        return [n for group in ports(i) for n in group if n not in blocked and allowed(n)]
+
+    # Which end of the picked conduit leads back to the anchor? (fewest elements in between, if both do)
+    ends = [[n for n in group if allowed(n)] for group in ports(conduit)]
+    ends = [e for e in ends if e]
+    best = None     # (distance, index of the upstream end)
+    for index, end in enumerate(ends):
+        seen, frontier, distance = set([conduit]), list(end), 0
+        seen.update(end)
+        while frontier:
+            if anchor in frontier:
+                if best is None or distance < best[0]:
+                    best = (distance, index)
+                break
+            following = []
+            for i in frontier:
+                for n in step(i, seen):
+                    seen.add(n)
+                    following.append(n)
+            frontier, distance = following, distance + 1
+    if best is None:
+        return None, "not connected"
+    downstream = [n for index, end in enumerate(ends) if index != best[1] for n in end]
+
+    visited = set([conduit, anchor])
+    visited.update(ends[best[1]])
+
+    def collect(start):
+        """Devices from start onward. A straight run is walked in a loop; only a split recurses."""
+        order, node = [], start
+        while True:
+            visited.add(node)
+            if is_device(node):
+                order.append(node)
+            onward = []
+            for n in step(node, visited):
+                if n not in onward:
+                    onward.append(n)
+            if not onward:
+                return order
+            if len(onward) == 1:
+                node = onward[0]
+                continue
+            branches = []
+            for n in onward:
+                if n not in visited:
+                    branches.append(collect(n))
+            branches.sort(key=len)      # stable: equal branches keep connector order
+            for branch in branches:
+                order.extend(branch)
+            return order
+
+    order = []
+    for n in downstream:
+        if n not in visited:
+            order.extend(collect(n))
+    return order, None
 
 
 # ---------- Address Options: "Single Zone":6, "Dual Zone":12 ----------

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# Addressing Config script - version v1
-__title__ = "Addressing\nConfig v1"
-__doc__ = ("Editable table of the Family : Type rules used by Address Devices: Device Type (Module or Detector), "
+# Addressing Config script - version v2
+__title__ = "Addressing\nConfig v2"
+__doc__ = ("Editable table of the Family : Type rules used by Address SLC: Device Type (Module or Detector), "
            "Number of Addresses, Address Options and Round Up To Multiple Of.\n\n"
            "Address Options are named choices offered when the device is picked, typed as "
            "\"Single Zone\":6, \"Dual Zone\":12.\n\n"
