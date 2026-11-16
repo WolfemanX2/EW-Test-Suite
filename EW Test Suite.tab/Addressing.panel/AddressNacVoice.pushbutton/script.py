@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v1
+# Address NAC / Voice script - version v2
 __title__ = "Address\nNAC / Voice"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
            "Voice Address = V#-#.#, Voice Circuit = V#-#\n\n"
            "At the start, choose for NAC and for Voice whether to continue a circuit already in the project "
-           "(resumes after its highest device number), start a new one, or skip that kind for this run. "
+           "(resumes after its highest device number), continue from a selected device (resumes after that "
+           "device's number), start a new one, or skip that kind for this run. "
            "NAC and Voice are counted separately.\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
            "(NAC / Voice Types tool). A type that isn't in the table is asked about once per run.\n\n"
@@ -124,21 +125,6 @@ def scan_existing():
 
 
 # ---------- Prompts ----------
-def ask_int(prompt, title, default, min_val=None):
-    """Prompt for a whole number. Returns None if the user cancels."""
-    while True:
-        val = forms.ask_for_string(default=str(default), prompt=prompt, title=title)
-        if val is None:
-            return None
-        val = val.strip()
-        if val.isdigit() and (min_val is None or int(val) >= min_val):
-            return int(val)
-        if min_val is None:
-            forms.alert("Please enter a whole number.", title=title)
-        else:
-            forms.alert("Please enter a whole number, %d or higher." % min_val, title=title)
-
-
 def choose(options, message):
     """One of options, or None. Buttons for a short list, a searchable list for a long one."""
     if len(options) > BUTTON_LIMIT:
@@ -146,11 +132,135 @@ def choose(options, message):
     return forms.CommandSwitchWindow.show(options, message=message)
 
 
-def choose_circuit(kind, existing):
+NEW_CIRCUIT_XAML = """
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New circuit"
+        SizeToContent="WidthAndHeight"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Topmost="True">
+    <StackPanel Margin="16">
+        <TextBlock x:Name="msg_text" TextWrapping="Wrap" MaxWidth="340" Margin="0,0,0,12"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock x:Name="source_label" Width="240" VerticalAlignment="Center"/>
+            <TextBox x:Name="source_box" Width="90"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Circuit number:" Width="240" VerticalAlignment="Center"/>
+            <TextBox x:Name="circuit_box" Width="90"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Starting device number:" Width="240" VerticalAlignment="Center"/>
+            <TextBox x:Name="start_box" Width="90"/>
+        </StackPanel>
+        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="340"
+                   Margin="0,0,0,10"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
+            <Button Content="Back" Width="80" IsCancel="True" Click="cancel_click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
+"""
+
+
+class NewCircuitDialog(forms.WPFWindow):
+    """One window for a new circuit: power supply, circuit and starting device number.
+    self.result = (source, circuit, start), or None if the user went back."""
+    def __init__(self, kind, existing):
+        forms.WPFWindow.__init__(self, NEW_CIRCUIT_XAML, literal_string=True)
+        self.kind = kind
+        self.existing = existing
+        self.result = None
+        name = nv.KIND_NAMES[kind]
+        self.Title = "%s - new %s circuit" % (TITLE, name)
+        self.msg_text.Text = ("%s Address = %s#-#.#  (%s - circuit . device order)"
+                              % (name, kind, nv.SOURCE_NAMES[kind]))
+        label = "%s number:" % nv.SOURCE_NAMES[kind]
+        self.source_label.Text = label[0].upper() + label[1:]
+        self.source_box.Text = "1"
+        self.circuit_box.Text = "1"
+        self.start_box.Text = "1"
+        self.source_box.Focus()
+        self.source_box.SelectAll()
+
+    def _read(self, box, what, min_val):
+        text = (box.Text or "").strip()
+        if not text.isdigit() or int(text) < min_val:
+            self.error_text.Text = "%s must be a whole number, %d or higher." % (what, min_val)
+            box.Focus()
+            box.SelectAll()
+            return None
+        return int(text)
+
+    def ok_click(self, sender, args):
+        source = self._read(self.source_box, "The %s number" % nv.SOURCE_NAMES[self.kind], 0)
+        if source is None:
+            return
+        circuit = self._read(self.circuit_box, "The circuit number", 0)
+        if circuit is None:
+            return
+        start = self._read(self.start_box, "The starting device number", 1)
+        if start is None:
+            return
+        last = self.existing.get((source, circuit))
+        if last and start <= last:
+            go_on = forms.alert("%s already has addresses up to %s in this project. Starting at %s can create "
+                                "duplicate addresses.\n\nUse it anyway?"
+                                % (nv.fmt_circuit(self.kind, source, circuit),
+                                   nv.fmt_address(self.kind, source, circuit, last),
+                                   nv.fmt_address(self.kind, source, circuit, start)),
+                                title=self.Title, yes=True, no=True)
+            if not go_on:
+                self.error_text.Text = "Change the numbers, or press Back to choose something else."
+                return
+        self.result = (source, circuit, start)
+        self.Close()
+
+    def cancel_click(self, sender, args):
+        self.result = None
+        self.Close()
+
+
+def address_on(el, kind):
+    """(source, circuit, number) written on a device for that kind, or None."""
+    p = nv.get_param(el, nv.PARAM_NAMES[kind]["address"])
+    if p is None:
+        return None
+    try:
+        return nv.parse_address(kind, p.AsString())
+    except Exception:
+        return None
+
+
+def preselected_device():
+    """The one device selected (directly or by its tag) when the tool was started, or None."""
+    devices = {}
+    try:
+        for eid in uidoc.Selection.GetElementIds():
+            el = resolve_device(doc.GetElement(eid))
+            if el is not None:
+                devices[nv.eid_int(el.Id)] = el
+    except Exception:
+        return None
+    return list(devices.values())[0] if len(devices) == 1 else None
+
+
+def choose_circuit(kind, existing, preselected):
     """Ask what to do with one kind (NAC or Voice) this run.
     Returns {"source", "circuit", "next", "resumed"}, "SKIP", or None if cancelled."""
     name = nv.KIND_NAMES[kind]
     labels, ordered = {}, []
+
+    # Continue from one device: the device selected when the tool started, or one picked now.
+    pre = address_on(preselected, kind) if preselected is not None else None
+    if pre:
+        selected_label = "Continue from selected (%s)" % nv.fmt_address(kind, pre[0], pre[1], pre[2])
+    else:
+        selected_label = "Continue from selected - pick a device..."
+    ordered.append(selected_label)
+
     for key in sorted(existing):
         label = "Continue %s (last %s)" % (nv.fmt_circuit(kind, key[0], key[1]),
                                            nv.fmt_address(kind, key[0], key[1], existing[key]))
@@ -160,40 +270,42 @@ def choose_circuit(kind, existing):
     skip_label = "Skip - do not address %s this run" % name
     ordered.extend([new_label, skip_label])
 
-    choice = choose(ordered, "%s: which circuit do you want to address?" % name)
-    if not choice:
-        return None
-    if choice == skip_label:
-        return "SKIP"
-    if choice != new_label:
+    while True:
+        choice = choose(ordered, "%s: which circuit do you want to address?" % name)
+        if not choice:
+            return None
+        if choice == skip_label:
+            return "SKIP"
+
+        if choice == selected_label:
+            parsed = pre
+            if not parsed:
+                try:
+                    ref = uidoc.Selection.PickObject(
+                        ObjectType.Element, DeviceOrTagFilter(),
+                        "Select the device (or its tag) to continue %s from - Esc to go back" % name)
+                except OperationCanceledException:
+                    continue
+                el = resolve_device(doc.GetElement(ref.ElementId))
+                parsed = address_on(el, kind) if el is not None else None
+                if not parsed:
+                    forms.alert("That device has no %s in the %s#-#.# format to continue from."
+                                % (nv.PARAM_NAMES[kind]["address"], kind), title=TITLE)
+                    continue
+            source, circuit, num = parsed
+            return {"source": source, "circuit": circuit, "next": num + 1, "resumed": True,
+                    "from": nv.fmt_address(kind, source, circuit, num)}
+
+        if choice == new_label:
+            dlg = NewCircuitDialog(kind, existing)
+            dlg.ShowDialog()
+            if dlg.result is None:
+                continue    # back to the list
+            source, circuit, start = dlg.result
+            return {"source": source, "circuit": circuit, "next": start, "resumed": False}
+
         source, circuit = labels[choice]
         return {"source": source, "circuit": circuit, "next": existing[(source, circuit)] + 1, "resumed": True}
-
-    title = "%s - new %s circuit" % (TITLE, name)
-    while True:
-        source = ask_int("Enter the %s %s number (the first number in %s#-#.#):"
-                         % (name, nv.SOURCE_NAMES[kind], kind), title, 1)
-        if source is None:
-            return None
-        circuit = ask_int("Enter the %s circuit number (the second number in %s%d-#.#):"
-                          % (name, kind, source), title, 1)
-        if circuit is None:
-            return None
-        last = existing.get((source, circuit))
-        start = ask_int("Enter the starting device number for %s:" % nv.fmt_circuit(kind, source, circuit),
-                        title, (last + 1) if last else 1, 1)
-        if start is None:
-            return None
-        if last and start <= last:
-            go_on = forms.alert("%s already has addresses up to %s in this project. Starting at %s can create "
-                                "duplicate addresses.\n\nUse it anyway?"
-                                % (nv.fmt_circuit(kind, source, circuit),
-                                   nv.fmt_address(kind, source, circuit, last),
-                                   nv.fmt_address(kind, source, circuit, start)),
-                                title=title, yes=True, no=True)
-            if not go_on:
-                continue
-        return {"source": source, "circuit": circuit, "next": start, "resumed": False}
 
 
 # ---------- Table manager (Shift+Click) ----------
@@ -299,10 +411,11 @@ def main():
         return
 
     # ---- For NAC and for Voice: continue a circuit, start a new one, or skip ----
+    preselected = preselected_device()
     existing = scan_existing()
     state = {}      # kind -> {"source", "circuit", "next", "resumed", "start"}
     for kind in nv.KINDS:
-        picked = choose_circuit(kind, existing[kind])
+        picked = choose_circuit(kind, existing[kind], preselected)
         if picked is None:
             return      # cancelled
         if picked == "SKIP":
@@ -429,6 +542,8 @@ def main():
         s = state[kind]
         circuit = nv.fmt_circuit(kind, s["source"], s["circuit"])
         how = "continued" if s["resumed"] else "new"
+        if s.get("from"):
+            how = "continued from %s" % s["from"]
         if s["next"] > s["start"]:
             output.print_md("- %s circuit **%s** (%s): %s to **%s**"
                             % (name, circuit, how,
