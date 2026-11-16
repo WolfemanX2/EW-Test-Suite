@@ -1,6 +1,6 @@
 # EW Test Suite
 
-pyRevit extension with conduit routing, link clash, device addressing and riser diagram tools for Revit.
+pyRevit extension with conduit routing, link clash, device addressing, riser diagram and project cleanup tools for Revit.
 
 | Panel | Button | What it does |
 |---|---|---|
@@ -12,6 +12,7 @@ pyRevit extension with conduit routing, link clash, device addressing and riser 
 | Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
 | Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view named `<LEVEL> - SLC RISER - <PANEL #>` (the panel's level and `Panel #` parameter, in capitals): every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`; the text is at 45 degrees, right justified, hanging below the riser line, its top corner 1" under its device; devices 6' apart; view scale 1/8" = 1'-0"). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
 | Riser | Riser Symbols | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
+| Project Cleanup | Line Nuke | Creates 15 standard Solid line styles named `Detail Line - <Color> - <Size>` (Black, Blue, Red, Green, Magenta; Thin = weight 1, Medium = 3, Thick = 6), then moves the lines of every other line style with the same color, weight and pattern onto the standard style and deletes the duplicate. A second mode also merges the remaining duplicate line styles and renames them `Color - Weight - Pattern`. Built-in styles are never changed; you pick styles to exclude and confirm a preview first (No undoes everything). |
 
 ## Install
 
@@ -103,3 +104,4 @@ Each script has its version on line 2.
 | Riser Symbols | v1 |
 | lib/slc_riser.py | v2 |
 | lib/riser_layout.py | v7 |
+| Line Nuke | v3 |
