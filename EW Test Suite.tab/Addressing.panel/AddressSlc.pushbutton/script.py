@@ -6,13 +6,13 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
            "At the start, continue a loop already in the project (resumes after its highest M and D numbers), "
            "continue from a selected device (resumes after the addresses written on it), or start a new one.\n\n"
-           "Each Family : Type is addressed by its rule in Addressing Config: a fixed number of addresses, "
+           "Each Family : Type is addressed by its rule in Address SLC - Config: a fixed number of addresses, "
            "named Address Options to choose from, or a prompt for the count. A type without a rule is asked "
            "for its kind and count.\n\n"
            "Follow the conduit: after a device is addressed (or after 'Continue From Selected'), pick a conduit "
            "leaving it. Every device connected downstream by that conduit type is found, listed for "
            "confirmation and addressed in order of connection. Conduit of any other type is not followed.\n\n"
-           "Shift+Click opens Addressing Config. Press Esc to finish picking.")
+           "Shift+Click opens Address SLC - Config. Press Esc to finish picking.")
 
 from System.Collections.Generic import List
 from Autodesk.Revit.DB import Transaction, TransactionStatus, IndependentTag, ElementId

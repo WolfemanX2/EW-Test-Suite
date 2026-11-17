@@ -3,7 +3,7 @@
 __title__ = "Auto\nConduit"
 __doc__ = ("Pick devices or their tags in order (Esc when finished, then confirm); plans orthogonal conduit "
            "for the whole chain, choosing connectors to keep front approaches open, at a chosen elevation "
-           "from the current view's level. Wall devices (per Routing Preferences) are entered from the "
+           "from the current view's level. Wall devices (per Auto Conduit - Config) are entered from the "
            "front or back only. Each run uses the conduit type set for the family it leaves.")
 
 import heapq
@@ -1071,10 +1071,10 @@ def main():
         forms.alert("Fewer than two elements remain after skipping devices.")
         return
 
-    # ---- conduit type per run (set per family in Routing Preferences) ----
+    # ---- conduit type per run (set per family in Auto Conduit - Config) ----
     link_types, missing = resolve_link_types(seq, rules)
     if missing:
-        forms.alert("These conduit types from Routing Preferences were not found in this project:\n\n{}\n\n"
+        forms.alert("These conduit types from Auto Conduit - Config were not found in this project:\n\n{}\n\n"
                     "Runs using them will use the default conduit type instead.".format("\n".join(missing)))
     if any(t is None for t in link_types):
         default_type = choose_default_type()

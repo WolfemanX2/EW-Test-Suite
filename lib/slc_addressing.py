@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # slc_addressing module - version v2
-"""Shared pieces of the SLC addressing tools (Address SLC, Addressing Config): the parameter names, the
+"""Shared pieces of the SLC addressing tools (Address SLC, Address SLC - Config): the parameter names, the
 address format, the rules table and the default config.
 
 Addresses are written N#L#M000 for modules and N#L#D000 for detectors, into the text parameters
@@ -8,10 +8,10 @@ Addresses are written N#L#M000 for modules and N#L#D000 for detectors, into the 
 
 The rules table is the user's own file, %APPDATA%\\MyTools\\AddressCounts.json - the same file, in the same
 format, as the standalone Address Devices add-in, so the two can be used side by side. It is changed with the
-Addressing Config tool (or Shift+Click on Address SLC). Updates never overwrite it.
+Address SLC - Config tool (or Shift+Click on Address SLC). Updates never overwrite it.
 
 config/address_config.default.json, in the repository, is the office default. If it holds rules, a user who has
-no table yet starts from a copy of it, and 'Load Default Config' in Addressing Config opens at it. The tools
+no table yet starts from a copy of it, and 'Load Default Config' in Address SLC - Config opens at it. The tools
 only ever read a default file."""
 import os
 import re
@@ -347,7 +347,7 @@ def option_display(label, count):
 
 
 def format_options(options):
-    """[(label, count)] -> the text typed in Addressing Config."""
+    """[(label, count)] -> the text typed in Address SLC - Config."""
     return ", ".join('"%s":%d' % (label, count) for label, count in options or [])
 
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Addressing Config script - version v2
-__title__ = "Addressing\nConfig v2"
+# Address SLC - Config script - version v3
+__title__ = "Address SLC - Config v3"
 __doc__ = ("Editable table of the Family : Type rules used by Address SLC: Device Type (Module or Detector), "
            "Number of Addresses, Address Options and Round Up To Multiple Of.\n\n"
            "Address Options are named choices offered when the device is picked, typed as "

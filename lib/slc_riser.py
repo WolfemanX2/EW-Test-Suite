@@ -4,7 +4,7 @@
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\riser_symbols.json. It is changed with the
-Riser Symbols tool. Updates never overwrite it."""
+SLC Riser - Config tool. Updates never overwrite it."""
 import os
 import re
 import json

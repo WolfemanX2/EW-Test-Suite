@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Riser Symbols script - version v1
-__title__ = "Riser\nSymbols v1"
+# SLC Riser - Config script - version v2
+__title__ = "SLC Riser - Config v2"
 __doc__ = ("Editable table of the symbol the riser tools draw for each Family : Type.\n\n"
            "The symbol is any loaded Generic Annotation or Detail Item type. 'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")
@@ -15,7 +15,7 @@ from pyrevit import revit, forms
 import slc_riser as sr
 
 doc = revit.doc
-TITLE = "Riser Symbols"
+TITLE = "SLC Riser - Config"
 SCOPES = [("Fire Alarm Device types", BuiltInCategory.OST_FireAlarmDevices),
           ("Electrical Equipment types (panels)", BuiltInCategory.OST_ElectricalEquipment)]
 
@@ -39,7 +39,7 @@ def loaded_type_keys(category):
 EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Riser Symbols"
+        Title="SLC Riser - Config"
         Width="860" Height="520" MinWidth="680" MinHeight="380"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">

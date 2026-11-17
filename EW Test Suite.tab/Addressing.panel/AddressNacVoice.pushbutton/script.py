@@ -10,7 +10,7 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "device's number), start a new one, or skip that kind for this run. "
            "NAC and Voice are counted separately.\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
-           "(NAC / Voice Types tool). A type that isn't in the table is asked about once per run.\n\n"
+           "(Address NAC / Voice - Config). A type that isn't in the table is asked about once per run.\n\n"
            "Shift+Click to define / remove table entries. Press Esc to finish picking.")
 
 import os

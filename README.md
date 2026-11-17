@@ -2,20 +2,22 @@
 
 pyRevit extension with conduit routing, link clash, device addressing, riser diagram and project cleanup tools for Revit.
 
+Every tool's settings window lives in the **Tool Configs** drop-down (its own panel at the end of the tab) and is named `<Tool Name> - Config`.
+
 | Panel | Button | What it does |
 |---|---|---|
 | Conduit | Auto Conduit | Pick devices (or their tags) in order; plans and creates orthogonal conduit between them. |
-| Conduit | Routing Preferences | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
 | Clash | Link Clash | Tests the selection against MEP and structural elements in loaded Revit links. Results window with statuses, grouping, Show in 3D and Auto Fix. |
-| Clash | Auto Fix Rules | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
-| Addressing | Address SLC | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Addressing Config; unused address parameters on the device are cleared. **Follow the conduit:** after a device is addressed (or after Continue From Selected), pick a conduit leaving it; every device connected downstream by conduit of that conduit type is listed for confirmation, then addressed in order of connection (at a split, the branch with fewer devices first). Conduit of any other type is not followed. Shift+Click opens Addressing Config. |
-| Addressing | Addressing Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
+| Addressing | Address SLC | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Address SLC - Config; unused address parameters on the device are cleared. **Follow the conduit:** after a device is addressed (or after Continue From Selected), pick a conduit leaving it; every device connected downstream by conduit of that conduit type is listed for confirmation, then addressed in order of connection (at a split, the branch with fewer devices first). Conduit of any other type is not followed. Shift+Click opens Address SLC - Config. |
 | Addressing | Address NAC / Voice | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`) and Voice Address / Voice Circuit (`V#-#.#` / `V#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one; NAC and Voice count separately. Shift+Click to edit the lookup table. |
-| Addressing | NAC / Voice Types | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
 | Riser | SLC Riser | Select the panel, then pick the first device of each loop (Esc when finished; Esc with none picked follows every run from the panel). Follows the conduit from each first device away from the panel and draws a one-line riser in a new drafting view named `<LEVEL> - SLC RISER - <PANEL #>` (the panel's level and `Panel #` parameter, in capitals): every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop (`L#`, read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`; the text is at 45 degrees, right justified, hanging below the riser line, its top corner 1" under its device; devices 6' apart; view scale 1/8" = 1'-0"). Conduit splits become T-tap rows. A type with no symbol in the table is asked about and the choice is saved. |
-| Riser | Riser Symbols | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
 | Project Cleanup | Line Nuke | Creates 15 standard Solid line styles named `Detail Line - <Color> - <Size>` (Black, Blue, Red, Green, Magenta; Thin = weight 1, Medium = 3, Thick = 6), then moves the lines of every other line style with the same color, weight and pattern onto the standard style and deletes the duplicate. A second mode also merges the remaining duplicate line styles and renames them `Color - Weight - Pattern`. Built-in styles are never changed; you pick styles to exclude and confirm a preview first (No undoes everything). |
 | Project Cleanup | Consolidate Text Styles | Groups text styles by text size (within a tolerance entered as a fraction or decimal of an inch) and merges each group into its most-used style: text notes and schedule text using the other styles are switched to it and the other styles are deleted. The kept style is rounded to the nearest 1/64" and renamed `<size> <font> <modifiers>` (e.g. `1/8" Arial Bold`). Only the size is compared, so merged text takes on the kept style's font and formatting. You pick styles to exclude and confirm a preview first. |
+| Tool Configs | Auto Conduit - Config | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
+| Tool Configs | Link Clash - Config | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
+| Tool Configs | Address SLC - Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
+| Tool Configs | Address NAC / Voice - Config | Lookup table: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
+| Tool Configs | SLC Riser - Config | Lookup table: the Generic Annotation or Detail Item type drawn for each Family : Type. |
 
 ## Install
 
@@ -63,35 +65,35 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 ### Auto Fix rules: office default + each user's copy
 
 - `config/clash_rules.default.json` (in this repository) is the starting point. Edit it here on GitHub to
-  change what everyone starts with. Lengths are in inches; the settings are the ones in the Auto Fix Rules
+  change what everyone starts with. Lengths are in inches; the settings are the ones in the Link Clash - Config
   window. Valid choices for the text settings:
   - `elevation_mode`: `Never (jogs only)`, `Before trying jogs`, `After trying jogs`
   - `device_mode`: `Ask each time`, `Device remains in place`, `Adjust the device's elevation too`
   - `v_jog_min_angle` / `v_jog_max_angle`: multiples of 5 from 5 to 90
 - Each user's own copy is `%APPDATA%\pyRevit\EWTestSuite\clash_rules.json`. It is created from the default
-  the first time Link Clash or Auto Fix Rules needs it, and after that only the Auto Fix Rules tool changes it.
+  the first time Link Clash or Link Clash - Config needs it, and after that only the Link Clash - Config tool changes it.
   pyRevit updates never overwrite it.
 - Changing the default later does not change existing users' copies, except for settings their copy doesn't
   have yet (new settings in a later version are filled in from the default). Users can pick up the new default
-  with **Reset to office defaults** in Auto Fix Rules, then Save.
+  with **Reset to office defaults** in Link Clash - Config, then Save.
 - To make everyone share one rules file instead, set `RULES_PATH` in `lib/clash_rules.py` to a network location.
 
-### Addressing Config: default + each user's copy
+### Address SLC - Config: default + each user's copy
 
 - Each user's own table is `%APPDATA%\MyTools\AddressCounts.json`, the same file and format as the
-  standalone Address Devices add-in, so both can be used side by side. Only the Addressing Config tool
+  standalone Address Devices add-in, so both can be used side by side. Only the Address SLC - Config tool
   changes it; pyRevit updates never overwrite it.
 - `config/address_config.default.json` (in this repository) is the office default. It is empty until rules are
-  put in it: set them up in Addressing Config, click **Open Table File**, and paste that file's contents here
+  put in it: set them up in Address SLC - Config, click **Open Table File**, and paste that file's contents here
   on GitHub. A user with no table yet then starts from a copy of it.
-- **Load Default Config...** in Addressing Config opens at that file (or at the last default file the user
+- **Load Default Config...** in Address SLC - Config opens at that file (or at the last default file the user
   chose, which can be anywhere), and after a confirmation replaces the user's table with its rules. The default
   file is only read. The previous table is kept as `AddressCounts.backup.json`.
 - To make everyone edit one table instead, set `TABLE_PATH` in `lib/slc_addressing.py` to a network location.
 
 ### Other settings
 
-- `lib/mounting_rules.json` (Routing Preferences). Not part of the repository, so updates never overwrite it.
+- `lib/mounting_rules.json` (Auto Conduit - Config). Not part of the repository, so updates never overwrite it.
   To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
 - NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/nac_voice_types.py` to a network location.
@@ -108,20 +110,20 @@ Each script has its version on line 2.
 | File | Version |
 |---|---|
 | Auto Conduit | v4 |
-| Routing Preferences | v1 |
+| Auto Conduit - Config | v2 |
 | Link Clash | v11 |
-| Auto Fix Rules | v5 |
+| Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
 | lib/clash_rules.py | v5 |
 | Address SLC | v2 |
-| Addressing Config | v2 |
+| Address SLC - Config | v3 |
 | lib/slc_addressing.py | v2 |
 | lib/slc_config_editor.py | v2 |
 | Address NAC / Voice | v2 |
-| NAC / Voice Types | v1 |
+| Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v1 |
 | SLC Riser | v8 |
-| Riser Symbols | v1 |
+| SLC Riser - Config | v2 |
 | lib/slc_riser.py | v2 |
 | lib/riser_layout.py | v7 |
 | Line Nuke | v3 |

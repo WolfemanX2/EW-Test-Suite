@@ -36,7 +36,7 @@ from System.Collections.Generic import List
 from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
 
 try:
-    import clash_rules          # lib/clash_rules.py, edited with the Auto Fix Rules tool
+    import clash_rules          # lib/clash_rules.py, edited with the Link Clash - Config tool
 except Exception:
     clash_rules = None
 
@@ -50,7 +50,7 @@ MAX_ROWS = 500              # most clashes listed
 PRINT_REPORT = False        # True = also print the clash table in pyRevit's output window
 # --- Auto Fix (lengths in feet) ---
 # These are only the fallback values. When lib/clash_rules.py is installed, the rules saved by the
-# Auto Fix Rules tool replace them every time a fix runs.
+# Link Clash - Config tool replace them every time a fix runs.
 ALLOW_SHIFT = True          # try moving the conduit sideways first
 ALLOW_H_JOG = True          # horizontal jogs (90 degree bends)
 ALLOW_V_JOG = True          # vertical jogs (angled bends)
@@ -585,7 +585,7 @@ def show_in_3d(row):
 # ---------------- Auto Fix ----------------
 
 def load_fix_rules():
-    """Replace the Auto Fix settings with the rules saved by the Auto Fix Rules tool, if it is installed."""
+    """Replace the Auto Fix settings with the rules saved by the Link Clash - Config tool, if it is installed."""
     global ASK_BEFORE_FIX, FIX_CLEARANCE, MAX_SHIFT, SHIFT_STEP, JOG_LEAD, JOG_MIN_LEG
     global ALLOW_SHIFT, ALLOW_H_JOG, ALLOW_V_JOG, ELEVATION_MODE, MAX_ELEV_CHANGE
     global V_JOG_MIN_ANGLE, V_JOG_MAX_ANGLE, MAX_SADDLE_LENGTH, MAJORITY_ELEVATION, DEVICE_MODE
@@ -1119,7 +1119,7 @@ def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes, side_carry,
 
 
 def auto_fix(row, ask):
-    """Fix a clashing conduit following the Auto Fix Rules. Everything happens in one transaction
+    """Fix a clashing conduit following the Link Clash - Config rules. Everything happens in one transaction
     (one undo step). Returns a message, or (message, remaining clashes) when the element was retested
     and the statuses of its clashes should be updated."""
     d = doc
@@ -1187,7 +1187,7 @@ def auto_fix(row, ask):
                                           side_carry, lift_carry)
         if not steps:
             t.RollBack()
-            return ("No fix worked for conduit {} within the Auto Fix Rules: each allowed move or jog either "
+            return ("No fix worked for conduit {} within the Link Clash - Config rules: each allowed move or jog either "
                     "still clashed, disconnected the run, did not fit, or could not be built by Revit "
                     "(jogs need a level conduit with room either side of the clashing element).".format(row.sel))
         if ask:

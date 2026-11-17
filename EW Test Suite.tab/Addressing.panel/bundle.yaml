@@ -1,5 +1,3 @@
 layout:
   - AddressSlc
-  - AddressingConfig
   - AddressNacVoice
-  - NacVoiceTypes

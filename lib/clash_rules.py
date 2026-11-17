@@ -6,7 +6,7 @@ Two files:
  - config/clash_rules.default.json, in the repository: the office starting point. Edit it in GitHub to change
    what new users start with. pyRevit's Update pulls changes to it.
  - the user's own copy, %APPDATA%\\pyRevit\\EWTestSuite\\clash_rules.json: created from the default the first time
-   it is needed, then changed with the Auto Fix Rules tool. Updates never overwrite it.
+   it is needed, then changed with the Link Clash - Config tool. Updates never overwrite it.
 
 Lengths in the files are in inches when the file says "units": "inches" (both files do); older files without
 that line are in feet. Inside the tools every length is in feet."""

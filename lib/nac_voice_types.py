@@ -4,7 +4,7 @@
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\nac_voice_types.json. It is changed with the
-NAC / Voice Types tool (or Shift+Click on Address NAC / Voice). Updates never overwrite it."""
+Address NAC / Voice - Config tool (or Shift+Click on Address NAC / Voice). Updates never overwrite it."""
 import os
 import re
 import json

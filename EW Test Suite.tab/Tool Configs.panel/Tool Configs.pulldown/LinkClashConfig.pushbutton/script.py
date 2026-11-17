@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto Fix Rules script - version v5
-__title__ = "Auto Fix\nRules"
+# Link Clash - Config script - version v6
+__title__ = "Link Clash - Config v6"
 __doc__ = "Set the rules Link Clash's Auto Fix follows: distances, which kinds of fix are allowed, and their order."
 
 from pyrevit import forms
@@ -10,7 +10,7 @@ import clash_rules
 XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Auto Fix Rules" Width="520" SizeToContent="Height" ResizeMode="NoResize"
+        Title="Link Clash - Config" Width="520" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen">
     <StackPanel Margin="12">
         <TextBlock Text="General" FontWeight="Bold" />

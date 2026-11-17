@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Routing Preferences script - version v1
-__title__ = "Routing\nPreferences"
+# Auto Conduit - Config script - version v2
+__title__ = "Auto Conduit - Config v2"
 __doc__ = ("Pull in all Fire Alarm Device families in the project and set each family's mounting (Wall/Ceiling) "
            "and default conduit type for runs leaving it.")
 
@@ -18,7 +18,7 @@ doc = revit.doc
 XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Routing Preferences" Width="880" Height="660"
+        Title="Auto Conduit - Config" Width="880" Height="660"
         WindowStartupLocation="CenterScreen">
     <DockPanel Margin="10">
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">

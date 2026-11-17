@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # slc_config_editor module - version v2
-"""The Addressing Config window: editable table of the Family : Type rules used by Address SLC.
-Opened by the Addressing Config button and by Shift+Click on Address SLC."""
+"""The Address SLC - Config window: editable table of the Family : Type rules used by Address SLC.
+Opened by the Address SLC - Config button and by Shift+Click on Address SLC."""
 import os
 
 import clr
@@ -14,7 +14,7 @@ from pyrevit import forms
 
 import slc_addressing as slc
 
-TITLE = "Addressing Config"
+TITLE = "Address SLC - Config"
 KIND_BY_NAME = dict((name, kind) for kind, name in slc.KIND_NAMES.items())
 
 
@@ -107,7 +107,7 @@ def loaded_types_info(doc, family_cache):
 EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Addressing Config"
+        Title="Address SLC - Config"
         Width="1160" Height="520" MinWidth="980" MinHeight="380"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">

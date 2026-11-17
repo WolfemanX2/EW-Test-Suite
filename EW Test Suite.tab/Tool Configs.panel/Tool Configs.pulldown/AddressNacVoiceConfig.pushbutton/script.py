@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC / Voice Types script - version v1
-__title__ = "NAC / Voice\nTypes"
+# Address NAC / Voice - Config script - version v2
+__title__ = "Address NAC / Voice - Config v2"
 __doc__ = ("Editable table of the Family : Type rules used by Address NAC / Voice. Each type is NAC Only, "
            "Voice Only, or NAC and Voice.\n\n"
            "'Add Types From Project' lists ALL loaded Fire Alarm Device types, including families that have "
@@ -16,7 +16,7 @@ from pyrevit import revit, forms
 import nac_voice_types as nv
 
 doc = revit.doc
-TITLE = "NAC / Voice Types"
+TITLE = "Address NAC / Voice - Config"
 ADDRESS_NAMES = dict((nv.PARAM_NAMES[k]["address"].lower(), k) for k in nv.KINDS)
 
 
@@ -111,7 +111,7 @@ def loaded_types_info(family_cache):
 EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NAC / Voice Types"
+        Title="Address NAC / Voice - Config"
         Width="760" Height="520" MinWidth="620" MinHeight="380"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">

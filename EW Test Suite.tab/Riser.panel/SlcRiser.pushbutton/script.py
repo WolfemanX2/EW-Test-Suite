@@ -12,7 +12,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
-           "Each Family : Type is drawn with the symbol set for it in the Riser Symbols tool. A type without "
+           "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
 
