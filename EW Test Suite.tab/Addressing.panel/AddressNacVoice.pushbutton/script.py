@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v4
-__title__ = "Address\nNAC / Voice v4"
+# Address NAC / Voice script - version v5
+__title__ = "Address\nNAC / Voice v5"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
@@ -13,7 +13,8 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "leaving it. The devices connected downstream by that conduit type are found in order of connection, "
            "and you choose how far to go: to a device you pick, up to a max device count for the circuit, or "
            "up to a max current (amps, from each device's Current parameter; default 1.2 A). The conduit between "
-           "the devices of a NAC run gets Notification Circuit = N12 (power supply 1, circuit 2).\n\n"
+           "the devices of a run gets Notification Circuit = N12 (NAC, power supply 1, circuit 2) or V12 "
+           "(Voice); a conduit carrying both holds both, e.g. N16,V16.\n\n"
            "When you finish, the last device of each circuit addressed gets NAC EOL / Voice EOL = Yes and every "
            "other device on that circuit gets No.\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
@@ -795,7 +796,7 @@ class Session(object):
             if p is None or p.IsReadOnly:
                 missing += 1
             else:
-                sets.append((p, text))
+                sets.append((p, nv.merge_conduit_value(p.AsString(), kind, text)))
         return sets, missing
 
     def follow_conduit(self, conduit):
@@ -951,7 +952,8 @@ class Session(object):
         if total is not None:
             line += ", circuit total %s" % nv.fmt_amps(total)
         if conduits:
-            line += "; %d conduit(s) set to %s" % (len(conduits), conduits[0][1])
+            line += "; %d conduit(s) given %s" % (len(conduits), nv.fmt_conduit(kind, self.state[kind]["source"],
+                                                                                self.state[kind]["circuit"]))
         if no_param:
             self.problems.append("%d conduit(s) on the run from element %d have no writable %s parameter."
                                  % (no_param, anchor_id, nv.CONDUIT_PARAM_NAMES[kind]))

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v3
+# nac_voice_types module - version v4
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -31,8 +31,9 @@ PARAM_NAMES = {
 # Yes/No parameter on the device: Yes on the last device of its circuit, No on every other device of the circuit.
 EOL_PARAM_NAMES = {"N": "NAC EOL", "V": "Voice EOL"}
 # Text parameter on the conduit between the devices of a downstream run: N12 = power supply 1, circuit 2.
+# A conduit carrying both holds both, NAC first, separated by a comma: N16,V16.
 # Set a kind to None to leave its conduit alone.
-CONDUIT_PARAM_NAMES = {"N": "Notification Circuit", "V": None}
+CONDUIT_PARAM_NAMES = {"N": "Notification Circuit", "V": "Notification Circuit"}
 # Circuit numbers offered when starting a new circuit.
 CIRCUIT_RANGES = {"N": range(1, 7), "V": range(1, 9)}
 
@@ -71,6 +72,15 @@ def fmt_circuit(kind, source, circuit):
 def fmt_conduit(kind, source, circuit):
     """N12 - written on the conduit of a downstream run."""
     return "%s%d%d" % (kind, source, circuit)
+
+
+def merge_conduit_value(current, kind, text):
+    """The conduit's value with this kind's circuit replaced by text, keeping the other kind's:
+    ("N16", "V", "V16") -> "N16,V16"; ("N15,V16", "N", "N12") -> "N12,V16"."""
+    parts = [x.strip() for x in (current or "").split(",") if x.strip()]
+    others = [x for x in parts if x[:1].upper() != kind]
+    ordered = [x for k in KINDS for x in ([text] if k == kind else [o for o in others if o[:1].upper() == k])]
+    return ",".join(ordered + [o for o in others if o[:1].upper() not in KINDS])
 
 
 def fmt_address(kind, source, circuit, num):
