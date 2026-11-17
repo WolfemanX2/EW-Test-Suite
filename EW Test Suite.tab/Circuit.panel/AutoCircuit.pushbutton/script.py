@@ -1,22 +1,25 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v2
-__title__ = "Auto-\nCircuit v2"
+# Auto-Circuit script - version v3
+__title__ = "Auto-\nCircuit v3"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
            "a new one (N#-#.# / V#-#.#, as Address NAC / Voice), then set the circuit limits (max current, default "
            "1.2 A, and max device count). SLC: continue a loop, continue from a selected device, or start a new "
            "one (N#L#M000 / N#L#D000, as Address SLC).\n"
-           "3. Pick devices or their tags in order (Esc when finished). A circuit continued from a device starts "
-           "from that device. Elements that don't take an address of this kind, such as the power supply or "
-           "panel, are connected but not addressed.\n"
+           "3. Pick the new devices or their tags in order (Esc when finished). Elements that don't take an "
+           "address of this kind, such as the power supply or panel, are connected but not addressed.\n"
+           "   Continuing a circuit: choose to continue from its last device, or select a device on it. If devices "
+           "come after the one you select (followed along the conduit), the new devices are inserted: the conduit "
+           "to the next device is removed, new conduit runs through the new devices back to it, and every device "
+           "after them on the conduit is renumbered.\n"
            "4. Conduit is planned and created as in Auto Conduit, using Auto Conduit - Config. After a "
            "confirmation the connected devices are addressed in order:\n"
            "   NAC / Voice: Address and Circuit parameters, Notification Circuit on the new conduit (N12 / V12), "
            "and EOL on the last device of the circuit. Types from Address NAC / Voice - Config.\n"
            "   SLC: each Family : Type by its rule in Address SLC - Config (count, Address Options, rounding); "
            "modules and detectors counted separately; unused address parameters cleared.\n\n"
-           "Everything is one Undo.")
+           "Everything is one Undo; cancelling at any step after picking puts everything back.")
 
 # Conduit routing and creation below are copied from Auto Conduit v4 (that tool is unchanged).
 # Addressing follows Address NAC / Voice v5 and Address SLC v2, using their shared modules (read only).
@@ -41,6 +44,7 @@ from System.Windows.Input import Keyboard, ModifierKeys
 import mounting_rules            # Auto Conduit - Config (read only here)
 import nac_voice_types as nv     # Address NAC / Voice - Config and address format (read only here)
 import slc_addressing as slc     # Address SLC - Config and address format (read only here)
+import conduit_trace as ct       # follows conduit from a device (shared with Address NAC / Voice)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -1336,8 +1340,46 @@ class NotificationRun(object):
             last = existing[(source, circuit)]
             holders = [d for d in all_devices() if nv_address_on(d, kind) == (source, circuit, last)]
             return {"source": source, "circuit": circuit, "next": last + 1, "resumed": True,
-                    "from": nv.fmt_address(kind, source, circuit, last),
-                    "anchor": holders[0] if len(holders) == 1 else None}
+                    "from": nv.fmt_address(kind, source, circuit, last), "anchor": None,
+                    "last_device": holders[0] if len(holders) == 1 else None}
+
+    # ---- continuing / inserting: where the new conduit starts, and the devices after it ----
+    def last_device_options(self):
+        dev = self.state.get("last_device")
+        if dev is None:
+            return []
+        return [("Continue from the last device (%s)" % self.state["from"], dev)]
+
+    def position(self, el):
+        """The device's number on this circuit, or None if it is not on it."""
+        parsed = nv_address_on(el, self.kind)
+        s = self.state
+        if parsed and parsed[0] == s["source"] and parsed[1] == s["circuit"]:
+            return parsed[2]
+        return None
+
+    def on_circuit(self, el):
+        return self.position(el) is not None
+
+    def compare(self, anchor, el):
+        """1 if el comes after the anchor on the circuit, -1 if before, 0 if it can't be told."""
+        a, b = self.position(anchor), self.position(el)
+        if a is None or b is None or a == b:
+            return 0
+        return 1 if b > a else -1
+
+    def set_anchor(self, anchor):
+        self.state["anchor"] = anchor
+        self.state["from"] = self.address(self.position(anchor)) if self.position(anchor) else element_label(anchor)
+        self.info.pop(eid(anchor), None)
+
+    def downstream_info(self, el):
+        return self.classify(el)
+
+    def prepare_insert(self, anchor, members):
+        """New devices go right after the anchor; the devices after it are renumbered from there."""
+        self.state["next"] = self.position(anchor) + 1
+        self.state["start"] = self.state["next"]
 
     # ---- what a device takes ----
     def device_label(self, el, key):
@@ -1385,8 +1427,9 @@ class NotificationRun(object):
                     circ_p = nv.get_param(el, names["circuit"])
                     if circ_p is not None and circ_p.IsReadOnly:
                         circ_p = None
+                    had = nv_address_on(el, self.kind)
                     out.update({"addr": True, "targets": (addr_p, circ_p), "amps": nv.get_current(doc, el),
-                                "had": nv_address_on(el, self.kind)})
+                                "had": had, "old": nv.fmt_address(self.kind, *had) if had else None})
         self.info[k] = out
         return out
 
@@ -1442,6 +1485,8 @@ class NotificationRun(object):
         line = "%s  %s" % (text, info["key"])
         if info["amps"] is not None:
             line += "  (%s)" % nv.fmt_amps(info["amps"])
+        if info.get("old") and info["old"] != text:
+            line += "  (was %s)" % info["old"]
         return line
 
     def confirm_notes(self, planned):
@@ -1731,6 +1776,7 @@ class SlcRun(object):
         self.problems = []
         self.cleared = 0
         self._pending = None        # (numbered, next numbers, rounding skips) from the last plan()
+        self.loop_last = {slc.MODULE: None, slc.DETECTOR: None}   # highest numbers on the loop at the start
 
     def address(self, kind, number):
         return slc.fmt_address(self.prefix, kind, number)
@@ -1784,10 +1830,110 @@ class SlcRun(object):
                 resumed = "N%dL%d (M%s / D%s next)" % (loop["n"], loop["l"], slc.fmt_number(picked[2]),
                                                        slc.fmt_number(picked[3]))
             self.prefix = "N%dL%d" % (picked[0], picked[1])
+            for loop in loops:
+                if loop["n"] == picked[0] and loop["l"] == picked[1]:
+                    self.loop_last = dict(loop["last"])
             nxt = {slc.MODULE: picked[2], slc.DETECTOR: picked[3]}
+            last_devices = {}
+            if resumed and anchor is None:
+                for kind in slc.KINDS:
+                    if self.loop_last[kind] is None:
+                        continue
+                    text = self.address(kind, self.loop_last[kind])
+                    holders = [d for d in all_devices()
+                               if any(p.AsString() == text for _pos, p in self.reader.get(d))]
+                    if len(holders) == 1:
+                        last_devices[kind] = (text, holders[0])
             self.state = {"next": nxt, "start": dict(nxt), "resumed": bool(resumed), "from": resumed,
-                          "anchor": anchor}
+                          "anchor": anchor, "last_devices": last_devices}
             return True
+
+    # ---- continuing / inserting: where the new conduit starts, and the devices after it ----
+    def last_device_options(self):
+        out = []
+        for kind in slc.KINDS:
+            found = self.state.get("last_devices", {}).get(kind)
+            if found:
+                out.append(("Continue from the last %s (%s)" % (slc.KIND_NAMES[kind].lower(), found[0]), found[1]))
+        return out
+
+    def positions(self, el):
+        """{kind: (lowest, highest)} of the device's addresses on this loop."""
+        out = {}
+        for _pos, p in self.reader.get(el):
+            try:
+                parsed = slc.parse_address(p.AsString())
+            except Exception:
+                parsed = None
+            if not parsed or "N%dL%d" % (parsed[0], parsed[1]) != self.prefix:
+                continue
+            kind, number = parsed[2], parsed[3]
+            lo, hi = out.get(kind, (number, number))
+            out[kind] = (min(lo, number), max(hi, number))
+        return out
+
+    def on_circuit(self, el):
+        return bool(self.positions(el))
+
+    def compare(self, anchor, el):
+        """1 if el comes after the anchor on the loop, -1 if before, 0 if it can't be told (no shared kind)."""
+        pa, pe = self.positions(anchor), self.positions(el)
+        for kind in pa:
+            if kind in pe:
+                if pe[kind][0] > pa[kind][1]:
+                    return 1
+                if pe[kind][1] < pa[kind][0]:
+                    return -1
+        return 0
+
+    def set_anchor(self, anchor):
+        self.state["anchor"] = anchor
+        pa = self.positions(anchor)
+        self.state["from"] = "element %d (%s)" % (eid(anchor), ", ".join(
+            self._range_text(k, pa[k][0], pa[k][1]) for k in slc.KINDS if k in pa) or "no address")
+        self.info.pop(eid(anchor), None)
+
+    def downstream_info(self, el):
+        """A device already on the loop, renumbered with its rule: the rule's count and rounding if it has one,
+        otherwise as many addresses as it has now (no prompts for devices already addressed)."""
+        k = eid(el)
+        if k in self.info:
+            return self.info[k]
+        key = element_key(el)
+        pos = self.positions(el)
+        writable = [p for _pos, p in self.reader.get(el) if not p.IsReadOnly]
+        out = {"key": key, "addr": False, "why": None, "amps": None}
+        if not pos or not writable:
+            out["why"] = "no writable SLC Address parameters"
+        else:
+            kind = slc.MODULE if slc.MODULE in pos else slc.DETECTOR
+            current = 0
+            for _pos, p in self.reader.get(el):
+                parsed = slc.parse_address(p.AsString() or "")
+                if parsed and "N%dL%d" % (parsed[0], parsed[1]) == self.prefix and parsed[2] == kind:
+                    current += 1
+            rule = self.table.get(key)
+            count = rule["count"] if rule and rule["count"] and rule["kind"] == kind else current
+            count = max(1, min(count, len(writable)))
+            out.update({"addr": True, "kind": kind, "fill": writable[:count], "leftovers": writable[count:],
+                        "option": None, "round_to": rule["round_to"] if rule else None, "had": True,
+                        "old": self._range_text(kind, pos[kind][0], pos[kind][1])})
+        self.info[k] = out
+        return out
+
+    def prepare_insert(self, anchor, members):
+        """Numbers carry on right after the anchor's own addresses; the other kind carries on from the first
+        device after the anchor that has it (or after the loop's highest, if none does)."""
+        pa = self.positions(anchor)
+        nxt = {}
+        for kind in slc.KINDS:
+            if kind in pa:
+                nxt[kind] = pa[kind][1] + 1
+                continue
+            lows = [self.positions(m)[kind][0] for m in members if kind in self.positions(m)]
+            nxt[kind] = min(lows) if lows else (self.loop_last[kind] or 0) + 1
+        self.state["next"] = nxt
+        self.state["start"] = dict(nxt)
 
     def continue_from_selected(self, loops, device):
         """((n, l, start module, start detector), device) resumed right after the device's addresses, or None.
@@ -1853,9 +1999,11 @@ class SlcRun(object):
                     out["why"] = "not addressed (chosen when picked)"
                 else:
                     count, kind, option = resolved
+                    pos = self.positions(el)
+                    old = ", ".join(self._range_text(kk, pos[kk][0], pos[kk][1]) for kk in slc.KINDS if kk in pos)
                     out.update({"addr": True, "kind": kind, "fill": writable[:count], "leftovers": writable[count:],
                                 "option": option, "round_to": rule["round_to"] if rule else None,
-                                "had": self.device_addresses(el) is not None})
+                                "had": self.device_addresses(el) is not None, "old": old or None})
         self.info[k] = out
         return out
 
@@ -1962,6 +2110,8 @@ class SlcRun(object):
         line = "%s  %s" % (text, info["key"])
         if info["option"] and info["option"] != str(len(info["fill"])):
             line += "  [%s]" % info["option"]
+        if info.get("old") and info["old"] != text:
+            line += "  (was %s)" % info["old"]
         return line
 
     def confirm_notes(self, planned):
@@ -2042,7 +2192,7 @@ def choose_circuit_type():
     return None
 
 
-def pick_chain(run):
+def pick_chain(run, min_picks=2):
     """Pick devices (or tags) in order. A continued circuit starts from its last device, already in the chain.
     Returns the list of elements, or None if cancelled. Highlights are rolled back afterwards."""
     ogs = make_highlight() if HIGHLIGHT_PICKED else None
@@ -2054,7 +2204,7 @@ def pick_chain(run):
         except Exception:
             tg, ogs = None, None
     try:
-        return _pick_loop(ogs, run)
+        return _pick_loop(ogs, run, min_picks)
     finally:
         if tg is not None:
             try:
@@ -2063,7 +2213,7 @@ def pick_chain(run):
                 pass
 
 
-def _pick_loop(ogs, run):
+def _pick_loop(ogs, run, min_picks):
     picks = []   # {"el": element, "ids": [ElementIds highlighted for it]}
     flt = DeviceOrTagFilter()
     state = {"ogs": ogs}
@@ -2086,23 +2236,22 @@ def _pick_loop(ogs, run):
             highlight(OverrideGraphicSettings(), clear)
 
     def finish():
-        if len(picks) >= 2:
+        if len(picks) >= min_picks:
             return [p["el"] for p in picks]
-        forms.alert("Select at least two elements.", title=TITLE)
+        forms.alert("Select at least %d element(s)." % min_picks, title=TITLE)
         return None
 
     anchor = run.state.get("anchor")
     if anchor is not None:
-        run.classify(anchor)
-        add(anchor, [anchor.Id])
-    elif run.state["resumed"] and isinstance(run, NotificationRun):
-        forms.alert("The last device on %s (%s) could not be found as a single device, so the conduit starts "
-                    "from your first pick." % (run.circuit_text(), run.state["from"]), title=TITLE)
+        run.set_anchor(anchor)
+    if anchor is not None:
+        start_note = " (new devices, after element %d)" % eid(anchor)
+    elif run.state["resumed"]:
+        start_note = " (new devices; you choose where they connect next)"
+    else:
+        start_note = ""
 
     while True:
-        start_note = ""
-        if anchor is not None and picks and eid(picks[0]["el"]) == eid(anchor):
-            start_note = " from element %d" % eid(anchor)
         try:
             r = uidoc.Selection.PickObject(
                 ObjectType.Element, flt,
@@ -2127,7 +2276,7 @@ def _pick_loop(ogs, run):
                 return None
             continue
         except Exception:
-            return [p["el"] for p in picks] if len(picks) >= 2 else None
+            return [p["el"] for p in picks] if len(picks) >= min_picks else None
         shift = shift_down()
         picked = doc.GetElement(r.ElementId)
         el = resolve_element(picked)
@@ -2141,6 +2290,9 @@ def _pick_loop(ogs, run):
                 remove(len(picks) - 1 - keys()[::-1].index(k))
             continue
         if picks and k == eid(picks[-1]["el"]):
+            continue
+        if anchor is not None and k == eid(anchor):
+            forms.toast("That is the device the circuit continues from; the new conduit starts there.", title=TITLE)
             continue
         if k in keys():
             first = keys().index(k) + 1
@@ -2191,6 +2343,157 @@ def chain_items(run, connected):
     return items, passed
 
 
+# ---------------- choosing where the new devices connect ----------------
+
+CANCELLED = object()
+OPT_SELECT_START = "Select a device to continue from (insert after it)"
+
+
+def choose_anchor(run, new):
+    """The device the new conduit starts from, None for a new circuit, or CANCELLED."""
+    new_ids = set(eid(e) for e in new)
+    anchor = run.state.get("anchor")
+    if anchor is not None:
+        return anchor
+    if not run.state["resumed"]:
+        return None
+    options = run.last_device_options()
+    labels = [label for label, _dev in options] + [OPT_SELECT_START]
+    devices = dict(options)
+    while True:
+        choice = forms.CommandSwitchWindow.show(
+            labels, message="%s: where do the %d new device(s) connect?" % (run.circuit_text(), len(new)))
+        if not choice:
+            return CANCELLED
+        if choice == OPT_SELECT_START:
+            el = pick_addressed_device("Select the device on %s (or its tag) to continue from - the new devices "
+                                       "go right after it. Esc to go back" % run.circuit_text())
+            if el is None:
+                continue
+            if not run.on_circuit(el):
+                forms.alert("That device is not on %s. Pick a device on the circuit." % run.circuit_text(),
+                            title=TITLE)
+                continue
+        else:
+            el = devices[choice]
+        if eid(el) in new_ids:
+            forms.alert("That device is one of the new devices you picked. Choose a different device to continue "
+                        "from.", title=TITLE)
+            continue
+        run.set_anchor(el)
+        return el
+
+
+def is_conduit_fitting(el):
+    try:
+        return eid(el.Category.Id) == int(BuiltInCategory.OST_ConduitFitting)
+    except Exception:
+        return False
+
+
+def run_between(a, start, b):
+    """The conduit and fittings joining device a to device b, starting with the conduit `start` leaving a.
+    Returns ([elements], None), or (None, reason) if they are not joined by plain conduit and fittings or the
+    run splits between them (deleting it would cut off the other branch)."""
+    a_id, b_id = eid(a), eid(b)
+    type_id = eid(start.GetTypeId())
+    parent, nodes = {eid(start): None}, {eid(start): start}
+    frontier, found = [start], False
+    while frontier and not found:
+        following = []
+        for el in frontier:
+            for group in ct.connected_elements(el):
+                for n in group:
+                    k = eid(n)
+                    if k == a_id or k in parent:
+                        continue
+                    if k == b_id:
+                        parent[k] = eid(el)
+                        found = True
+                        continue
+                    if isinstance(n, Conduit):
+                        if eid(n.GetTypeId()) != type_id:
+                            continue
+                    elif not is_conduit_fitting(n):
+                        continue    # a device, box or anything else: the run doesn't go through it
+                    parent[k] = eid(el)
+                    nodes[k] = n
+                    following.append(n)
+        frontier = following
+    if not found:
+        return None, ("they are not joined by conduit and fittings only (there may be a junction box or another "
+                      "device between them, or conduit of another type)")
+    path, k = [], parent[b_id]
+    while k is not None:
+        path.append(nodes[k])
+        k = parent[k]
+    for el in path:
+        if not isinstance(el, Conduit) and len([g for g in ct.connected_elements(el) if g]) > 2:
+            return None, "the conduit splits (a tee or cross fitting) between them"
+    return path, None
+
+
+def find_insert(run, anchor):
+    """What comes after the anchor along the conduit.
+    Returns (None, None) when nothing on the circuit is after it (the new devices extend the circuit),
+    ({"next": device right after the anchor, "members": devices on the circuit after the anchor in order of
+    connection, "path": conduit and fittings between the anchor and "next"}, None) to insert, or
+    (None, reason) / (CANCELLED, None)."""
+    sides = []
+    for group in ct.connected_elements(anchor):
+        c = None
+        for n in group:
+            if isinstance(n, Conduit):
+                c = n
+                break
+        if c is None:
+            continue
+        order, problem = ct.follow(doc, anchor, c, nv.is_device)
+        if problem or not order:
+            continue
+        members = [el for el in order if run.on_circuit(el)]
+        signs = [run.compare(anchor, el) for el in members]
+        sides.append({"conduit": c, "order": order, "members": members,
+                      "before": -1 in signs, "after": 1 in signs})
+    candidates = [sd for sd in sides if sd["members"] and not sd["before"]]
+    if len(candidates) > 1 and len([sd for sd in candidates if sd["after"]]) == 1:
+        candidates = [sd for sd in candidates if sd["after"]]
+    if not candidates:
+        return None, None
+    side = candidates[0]
+    if len(candidates) > 1:
+        labels = {}
+        for sd in candidates:
+            first = sd["members"][0]
+            labels["Toward element %d (%s), %d device(s) on %s" % (
+                eid(first), run.downstream_info(first).get("old") or element_key(first), len(sd["members"]),
+                run.circuit_text())] = sd
+        choice = forms.CommandSwitchWindow.show(sorted(labels.keys()),
+                                                message="Which way is downstream of the device you continue from?")
+        if not choice:
+            return CANCELLED, None
+        side = labels[choice]
+    nxt = side["order"][0]
+    path, why = run_between(anchor, side["conduit"], nxt)
+    if why:
+        return None, ("The new devices can't be inserted between {} and {}: {}.\n\nPick a device on a straight "
+                      "run of conduit to continue from.".format(element_label(anchor), element_label(nxt), why))
+    return {"next": nxt, "members": side["members"], "path": path}, None
+
+
+def unreached(run, anchor, ids):
+    """Devices on the circuit that come after the anchor by number but were not found along the conduit."""
+    out = []
+    for el in all_devices():
+        if eid(el) in ids or eid(el) == eid(anchor):
+            continue
+        if run.on_circuit(el) and run.compare(anchor, el) == 1:
+            out.append(el)
+    return out
+
+
+# ---------------- report ----------------
+
 def report(run, made_links, total_links, conduits_made, addressed, passed, notes):
     output.print_md("### Auto-Circuit: {} {}".format(run.name, run.circuit_text()))
     output.print_md("- {} ({})".format(run.circuit_text(), ("continued from %s" % run.state["from"])
@@ -2213,52 +2516,117 @@ def report(run, made_links, total_links, conduits_made, addressed, passed, notes
         output.print_md("- Issue: {}".format(msg))
 
 
+# ---------------- main ----------------
+
 def main():
     # ---- 1. circuit type, 2. which circuit / loop (and limits) ----
     run = choose_circuit_type()
     if run is None or not run.setup():
         return
 
-    # ---- 3. pick the chain ----
-    elems = pick_chain(run)
-    if not elems or len(elems) < 2:
+    # ---- 3. pick the new devices ----
+    new = pick_chain(run, min_picks=1 if run.state["resumed"] else 2)
+    if not new:
         return
+
+    # ---- 4. where they connect: after the last device, or inserted after a device you pick ----
+    anchor = choose_anchor(run, new)
+    if anchor is CANCELLED:
+        return
+    insert = None
+    if anchor is not None:
+        new = [e for e in new if eid(e) != eid(anchor)]
+        insert, why = find_insert(run, anchor)
+        if insert is CANCELLED:
+            return
+        if why:
+            forms.alert(why, title=TITLE)
+            uidoc.Selection.SetElementIds(List[ElementId]([anchor.Id]))
+            return
+        if insert is not None:
+            new_ids = set(eid(e) for e in new)
+            if eid(insert["next"]) in new_ids or any(eid(m) in new_ids for m in insert["members"]):
+                forms.alert("One of the new devices is already on {} after {}. Pick devices that aren't on the "
+                            "circuit yet.".format(run.circuit_text(), element_label(anchor)), title=TITLE)
+                return
+            run.prepare_insert(anchor, insert["members"])
+    chain = ([anchor] if anchor is not None else []) + new + ([insert["next"]] if insert else [])
+    if not new or len(chain) < 2:
+        forms.alert("There is nothing to connect.", title=TITLE)
+        return
+
+    # Everything from here on (removing the old run, moves, conduit, addresses) is one Undo; a cancel undoes it all.
+    tg = TransactionGroup(doc, "Auto-Circuit")
+    tg.Start()
+    result = None
+    try:
+        result = build(run, chain, anchor, insert)
+    except Exception as ex:
+        forms.alert("Stopped by an unexpected error, so nothing was changed:\n\n{}".format(ex), title=TITLE)
+        result = None
+    finally:
+        if result is not None:
+            tg.Assimilate()
+        else:
+            tg.RollBack()
+    if result is None:
+        return
+    if result.get("select") is not None:
+        uidoc.Selection.SetElementIds(List[ElementId]([result["select"].Id]))
+    report(run, *result["report"])
+
+
+def build(run, chain, anchor, insert):
+    """Removes the old run (insert), plans and creates the conduit and writes the addresses.
+    Returns {"report": (...), "select": element or None} to keep the changes, or None to undo them all."""
+    removed = 0
+    if insert is not None:
+        ids = List[ElementId]([e.Id for e in insert["path"]])
+        error = commit(Transaction(doc, "Auto-Circuit: remove conduit for the insert"), lambda: doc.Delete(ids))
+        if error:
+            forms.alert("The conduit between {} and {} could not be removed: {}".format(
+                element_label(anchor), element_label(insert["next"]), error), title=TITLE)
+            return None
+        removed = len(insert["path"])
 
     # ---- routing preferences: mounting + conduit type (Auto Conduit - Config) ----
     rules = mounting_rules.load_rules()
-    walls = set(eid(e) for e in elems
+    walls = set(eid(e) for e in chain
                 if mounting_rules.get_mounting_for_element(e, rules) == mounting_rules.WALL)
+    fixed = set(eid(e) for e in ([anchor, insert["next"]] if insert else []))   # can't be skipped
 
-    n = len(elems)
+    n = len(chain)
     need = {}
-    for i, e in enumerate(elems):
+    for i, e in enumerate(chain):
         need[eid(e)] = need.get(eid(e), 0) + (1 if i in (0, n - 1) else 2)
 
     skip = set()
     fallback = set()
     checked = set()
-    for e in elems:
+    for e in chain:
         k = eid(e)
         if k not in walls or k in checked:
             continue
         checked.add(k)
-        tops = free_top_count(e)
-        if tops >= need[k]:
+        if free_top_count(e) >= need[k]:
+            continue
+        if k in fixed:
+            fallback.add(k)
             continue
         choice = forms.alert(
             "Wall device {} has {} unconnected top Conduit connector(s) but needs {}.\n\n"
             "Skip this device (it is not connected or addressed), or use its closest available "
-            "connector(s)?".format(element_label(e), tops, need[k]),
+            "connector(s)?".format(element_label(e), free_top_count(e), need[k]),
             title=TITLE, options=[OPT_CLOSEST, OPT_SKIP])
         if not choice:
-            return
+            return None
         if choice == OPT_SKIP:
             skip.add(k)
         else:
             fallback.add(k)
 
     seq = []
-    for e in elems:
+    for e in chain:
         if eid(e) in skip:
             continue
         if seq and eid(seq[-1]) == eid(e):
@@ -2266,7 +2634,7 @@ def main():
         seq.append(e)
     if len(seq) < 2:
         forms.alert("Fewer than two elements remain after skipping devices.", title=TITLE)
-        return
+        return None
 
     link_types, missing = resolve_link_types(seq, rules)
     if missing:
@@ -2276,7 +2644,7 @@ def main():
     if any(t is None for t in link_types):
         default_type = choose_default_type()
         if default_type is None:
-            return
+            return None
         link_types = [t if t is not None else default_type for t in link_types]
 
     level = doc.ActiveView.GenLevel
@@ -2288,7 +2656,7 @@ def main():
     if level is None:
         forms.alert("Could not determine a level. Run this from a plan or section view that has an associated "
                     "level.", title=TITLE)
-        return
+        return None
 
     offset = None
     while offset is None:
@@ -2296,7 +2664,7 @@ def main():
                                    prompt="Conduit elevation above '{}':".format(level.Name),
                                    title="Auto-Circuit - Conduit Elevation")
         if txt is None:
-            return
+            return None
         offset = parse_length(txt)
         if offset is None:
             forms.alert("Could not read '{}' as a length. Try something like 15'-0\" or 180.".format(txt),
@@ -2321,7 +2689,7 @@ def main():
         hi = (max(xs) + MARGIN, max(ys) + MARGIN, max(zs) + MARGIN)
         static_boxes = collect_obstacles(lo, hi, set(eid(e) for e in seq))
 
-    # ---- 4. plan the whole chain before creating anything ----
+    # ---- 5. plan the whole chain before creating anything ----
     total_links = len(seq) - 1
     culprit = None
     no_adjust = set()
@@ -2334,7 +2702,7 @@ def main():
         moves = [] if eid(culprit) in no_adjust else alignment_moves(prev, culprit, walls, z_target)
         text = "{}\n\nFrom: {}\nTo:     {}".format(reason, element_label(prev), element_label(culprit))
         options = []
-        if partial:
+        if partial and insert is None:
             options.append(OPT_SKIP_DEV)
             text += ("\n\n'{}' creates the {} link(s) before it and addresses only the devices they "
                      "connect.".format(OPT_SKIP_DEV, len(partial)))
@@ -2343,7 +2711,10 @@ def main():
             text += ("\n\n'{}' moves the second device {} so it lines up with the first, "
                      "then plans the chain again.".format(OPT_ADJUST, moves[0][1]))
         options.append(OPT_CANCEL_CHAIN)
-        text += "\n\nEither way, the second device is left selected so you can find it."
+        if insert is not None:
+            text += ("\n\nAn insert has to reconnect to {}, so the chain can't stop early; Cancel puts the removed "
+                     "conduit back.".format(element_label(insert["next"])))
+        text += "\n\nThe second device is left selected so you can find it."
         choice = forms.alert(text, title="Auto-Circuit - link could not be routed", options=options)
         if choice == OPT_ADJUST:
             moved = adjust_device(prev, culprit, moves, walls, fallback, z_target, static_boxes)
@@ -2357,21 +2728,50 @@ def main():
             break
         print_debug(z_target)
         uidoc.Selection.SetElementIds(List[ElementId]([culprit.Id]))
-        return
+        return None
     print_debug(z_target)
 
-    # ---- 5. number the devices and confirm ----
-    items, passed = chain_items(run, seq[:len(plan) + 1])
+    # ---- 6. number the devices (new ones, then everything after them when inserting) and confirm ----
+    def items_for(connected_links):
+        connected = seq[:connected_links + 1]
+        if insert is not None:
+            connected = [e for e in connected if eid(e) != eid(insert["next"])]
+        items, passed = chain_items(run, connected)
+        if insert is not None:
+            seen = set(eid(e) for e, _i in items + passed)
+            for m in insert["members"]:
+                if eid(m) in seen:
+                    continue
+                seen.add(eid(m))
+                info = run.downstream_info(m)
+                if info["addr"]:
+                    items.append((m, info))
+                else:
+                    passed.append((m, info))
+        return items, passed
+
+    items, passed = items_for(len(plan))
     planned, error = run.plan(items)
     if error:
-        forms.alert("The devices can't be addressed: {}\n\nNothing was created.".format(error), title=TITLE)
-        return
+        forms.alert("The devices can't be addressed: {}\n\nNothing was changed.".format(error), title=TITLE)
+        return None
+    new_ids = set(eid(e) for e in chain[1:-1]) if insert else set()
     lines = [run.preview_line(el, info, text) for el, info, text in planned[:PREVIEW_LIMIT]]
     if len(planned) > PREVIEW_LIMIT:
         lines.append("... and {} more".format(len(planned) - PREVIEW_LIMIT))
     if not planned:
         lines.append("(no devices on the chain take a {} address)".format(run.name))
     notes = run.confirm_notes(planned) if planned else []
+    if insert is not None:
+        notes.insert(0, "Inserts after {}: the conduit to {} ({} conduit / fitting element(s)) is replaced and "
+                        "the {} device(s) after it on the conduit are renumbered.".format(
+                            element_label(anchor), element_label(insert["next"]), removed,
+                            len([1 for e, _i, _t in planned if eid(e) not in new_ids])))
+        missed = unreached(run, anchor, set(eid(e) for e, _i, _t in planned))
+        if missed:
+            notes.append("{} device(s) on {} come after it by number but are not on this conduit run, so they "
+                         "keep their addresses (they may now duplicate): elements {}.".format(
+                             len(missed), run.circuit_text(), ", ".join(str(eid(e)) for e in missed[:10])))
     if passed:
         notes.append("{} element(s) on the chain are connected but not addressed (see the report).".format(
             len(passed)))
@@ -2379,55 +2779,47 @@ def main():
         len(plan), len(planned), run.circuit_text(), "\n".join(lines), "\n".join(notes)),
         title=TITLE, yes=True, no=True)
     if not go_on:
-        return
+        return None
 
-    # ---- 6. create the conduit, address, finish (EOL) - one undo ----
-    tg = TransactionGroup(doc, "Auto-Circuit")
-    tg.Start()
+    # ---- 7. create the conduit, address, finish (EOL) ----
     made_links = 0
     conduits = []
     failure = None
     addressed = []
-    try:
-        for i, o in enumerate(plan):
-            try:
-                conduits.extend(create_link(o["a"], o["b"], o["pts"], link_types[i], level.Id))
-            except Exception as ex:
-                failure = "Link {} of {} failed while creating conduit: {}".format(i + 1, total_links, ex)
-                break
-            made_links += 1
-        if made_links > 0:
-            if made_links < len(plan):
-                # only the devices that were connected (numbers before them are unchanged)
-                items, passed = chain_items(run, seq[:made_links + 1])
-                planned, error = run.plan(items)
-            if planned:
-                error = run.write(planned, conduits)
-                if error:
-                    run.problems.append("Nothing was addressed: {}".format(error))
-                else:
-                    addressed = planned
-                    try:
-                        run.finish()
-                    except Exception as ex:
-                        run.problems.append("EOL parameters were not set: {}".format(ex))
-    finally:
-        if made_links > 0:
-            tg.Assimilate()
+    for i, o in enumerate(plan):
+        try:
+            conduits.extend(create_link(o["a"], o["b"], o["pts"], link_types[i], level.Id))
+        except Exception as ex:
+            failure = "Link {} of {} failed while creating conduit: {}".format(i + 1, total_links, ex)
+            break
+        made_links += 1
+    if made_links == 0 or (failure and insert is not None):
+        forms.alert("{}\n\nNothing was changed.".format(failure or "No conduit was created."), title=TITLE)
+        return None
+    if made_links < len(plan):
+        items, passed = items_for(made_links)   # only the devices that were connected
+        planned, error = run.plan(items)
+    if planned:
+        error = run.write(planned, conduits)
+        if error:
+            run.problems.append("Nothing was addressed: {}".format(error))
         else:
-            tg.RollBack()
+            addressed = planned
+            try:
+                run.finish()
+            except Exception as ex:
+                run.problems.append("EOL parameters were not set: {}".format(ex))
 
     notes = []
+    if insert is not None:
+        notes.append("Inserted after {}; removed {} conduit / fitting element(s) to {}.".format(
+            element_label(anchor), removed, element_label(insert["next"])))
     if failure:
         notes.append(failure)
     if culprit is not None:
-        uidoc.Selection.SetElementIds(List[ElementId]([culprit.Id]))
         notes.append("{} could not be connected and is now selected; the devices after it were not connected "
                      "or addressed.".format(element_label(culprit)))
-    if made_links == 0:
-        forms.alert("{}\n\nNothing was created.".format(failure or "No conduit was created."), title=TITLE)
-        return
-    report(run, made_links, total_links, len(conduits), addressed, passed, notes)
+    return {"report": (made_links, total_links, len(conduits), addressed, passed, notes), "select": culprit}
 
 
 main()
