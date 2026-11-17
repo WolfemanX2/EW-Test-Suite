@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v11
-__title__ = "SLC\nRiser v11"
+# SLC Riser script - version v12
+__title__ = "SLC\nRiser v12"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -11,13 +11,13 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
-           "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
+           "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
            "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
-           "A device whose Panel # parameter has a value shows it above its symbol (3/32\" text).\n\n"
+           "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"
            "View scale, device spacing, devices per line and the label offset are set in SLC Riser - Config.\n\n"
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
 
@@ -52,8 +52,8 @@ VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
 PER_LINE = 5            # devices on one line before the row wraps underneath
 DEVICE_SPACING_FT = 4.5 # device centre to device centre, in feet in the view
 LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the view) below the riser line
-ABOVE_TEXT_SIZE_IN = 3.0 / 32.0     # text above a device (its Panel #): size on the sheet, in inches
-ABOVE_TEXT_TYPE_NAME = 'SLC Riser 3/32"'    # made from the default text type if no 3/32" type exists
+ABOVE_TEXT_SIZE_IN = 5.0 / 64.0     # text above a device (its Panel #): size on the sheet, in inches
+ABOVE_TEXT_TYPE_NAME = 'SLC Riser 5/64"'    # made from the default text type if no 5/64" type exists
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
 PAD = 0.125             # space above and below each line of devices
@@ -423,7 +423,7 @@ def text_type():
 
 
 def small_text_type(base_id):
-    """(TextNoteType id, line height in view feet) for the 3/32" text above devices: an existing text type of
+    """(TextNoteType id, line height in view feet) for the 5/64" text above devices: an existing text type of
     that size (the default one's font first), else a copy of the default type set to that size."""
     want = ABOVE_TEXT_SIZE_IN / 12.0
     base = doc.GetElement(base_id)

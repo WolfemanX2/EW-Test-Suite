@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v3
+# slc_riser module - version v4
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
@@ -109,15 +109,24 @@ def parse_address(text):
     return int(m.group(1)), int(m.group(2)), m.group(3).upper(), int(m.group(4))
 
 
+def loop_letter(n):
+    """Loop number as a letter: 1 = A, 2 = B ... 26 = Z, 27 = AA, 28 = AB ..."""
+    text = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        text = chr(ord("A") + r) + text
+    return text or str(n)
+
+
 def loop_label(address_lists):
-    """'L2' (or 'L1, L2') for the loops found in those devices' addresses; '' if none can be read."""
+    """'B' (L2), or 'A, B' for the loops found in those devices' addresses; '' if none can be read."""
     loops = set()
     for addresses in address_lists:
         for text in addresses:
             parsed = parse_address(text)
             if parsed:
                 loops.add(parsed[1])
-    return ", ".join("L%d" % n for n in sorted(loops))
+    return ", ".join(loop_letter(n) for n in sorted(loops))
 
 
 # ---------- Revit helpers ----------
