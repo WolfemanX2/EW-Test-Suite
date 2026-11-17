@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v13
-__title__ = "SLC\nRiser v13"
+# SLC Riser script - version v14
+__title__ = "SLC\nRiser v14"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
-           "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
-           "(a device or panel can also be picked by its tag) "
-           "(Esc when finished). Each loop is followed along its conduit starting at that device, away from "
-           "the panel, so the device you pick decides the order. Press Esc without picking any to follow "
-           "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
+           "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
+           "(either can be picked by its tag), choose the conduit types to trace, then check the device "
+           "count and adjust spacing / wrapping before the riser is drawn. The circuit is followed along "
+           "its conduit starting at the first device, away from the panel, so that device decides the "
+           "order. Press Esc instead of picking a first device to follow every conduit run leaving the "
+           "panel. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
            "in order of connection, one row per conduit run leaving the panel, with its full address "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
@@ -142,35 +143,34 @@ def starting_element():
         el = resolve(doc.GetElement(ids[0]), is_conduit_source)
         if el is not None:
             return el
+    forms.alert("Select Head End Panel", sub_msg="EX: FACU, NCP, APS, etc.", title=TITLE)
     try:
         ref = uidoc.Selection.PickObject(ObjectType.Element, ElementOrTagFilter(is_conduit_source),
-                                         "Pick the panel (or its tag) the SLC conduit starts from")
+                                         "Select Head End Panel (or its tag) - EX: FACU, NCP, APS, etc.")
     except OperationCanceledException:
         return None
     return resolve(doc.GetElement(ref.ElementId), is_conduit_source)
 
 
 def first_devices(root):
-    """Devices picked (directly or by their tags) as the first of each loop, in pick order.
-    Empty = follow every run from the panel."""
-    picked, seen = [], set([sr.eid_int(root.Id)])
+    """[the device picked (directly or by its tag) as the first in the circuit], or [] if the user pressed
+    Esc to follow every run from the panel. None = cancelled."""
+    choice = forms.alert("Select first Device in Circuit",
+                         sub_msg="Press Esc while picking to trace every conduit run leaving the panel instead.",
+                         title=TITLE, ok=True, cancel=True)
+    if not choice:
+        return None
     flt = ElementOrTagFilter(is_addressed_device)
     while True:
-        prompt = ("Pick the FIRST device (or its tag) of loop %d (Esc when finished%s)"
-                  % (len(picked) + 1, "" if picked else "; Esc now = follow every run from the panel"))
         try:
-            ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
+            ref = uidoc.Selection.PickObject(ObjectType.Element, flt,
+                                             "Select first Device in Circuit (or its tag) - Esc = every run "
+                                             "from the panel")
         except OperationCanceledException:
-            return picked
+            return []
         el = resolve(doc.GetElement(ref.ElementId), is_addressed_device)
-        if el is None:
-            continue
-        i = sr.eid_int(el.Id)
-        if i in seen:
-            forms.toast("Already picked.")
-            continue
-        seen.add(i)
-        picked.append(el)
+        if el is not None and sr.eid_int(el.Id) != sr.eid_int(root.Id):
+            return [el]
 
 
 def named_value(el, name):
@@ -354,16 +354,16 @@ def conduit_type_name(net, tid):
 
 
 def choose_conduit_types(net, root_id, start_ids):
-    """Conduit type ids to follow, or None if the user cancelled. Asks only when there is a choice."""
+    """Conduit type ids to follow, or None if the user cancelled."""
     in_network = net.all_conduit_types(root_id)
-    if len(in_network) <= 1:
+    if not in_network:
         return in_network
     ticked = (net.conduit_types_at(start_ids) & in_network) or in_network
     choices = sorted((ConduitTypeChoice(tid, conduit_type_name(net, tid)) for tid in in_network),
                      key=lambda c: c.name)
     items = [forms.TemplateListItem(c, checked=(c.tid in ticked), name_attr="name") for c in choices]
-    picked = forms.SelectFromList.show(items, title="Follow which conduit types? (ticked: at the first devices)",
-                                       button_name="Follow", multiselect=True)
+    picked = forms.SelectFromList.show(items, title="Which conduit type(s) should be traced? (ticked: at the first device)",
+                                       button_name="Trace", multiselect=True)
     if not picked:
         return None
     return set(c.tid for c in picked)
@@ -539,6 +539,142 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None):
 
 
 # ---------- Main ----------
+REVIEW_XAML = """
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SLC Riser"
+        SizeToContent="WidthAndHeight"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Topmost="True">
+    <StackPanel Margin="16" MinWidth="380">
+        <TextBlock x:Name="count_text" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4"/>
+        <TextBlock x:Name="detail_text" TextWrapping="Wrap" MaxWidth="400" Margin="0,0,0,12"/>
+        <TextBlock Text="Adjust the device spacing and wrapping if needed:" Margin="0,0,0,8"/>
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="230"/>
+                <ColumnDefinition Width="90"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Text="Spacing between devices (ft):" VerticalAlignment="Center" Margin="0,0,0,6"/>
+            <TextBox x:Name="spacing_box" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6" TextChanged="changed"/>
+            <TextBlock Grid.Row="1" Text="Devices before wrapping:" VerticalAlignment="Center" Margin="0,0,0,6"/>
+            <TextBox x:Name="per_line_box" Grid.Row="1" Grid.Column="1" Margin="0,0,0,6" TextChanged="changed"/>
+            <TextBlock Grid.Row="2" Text="Wrap rounding (devices):" VerticalAlignment="Center"/>
+            <TextBox x:Name="rounding_box" Grid.Row="2" Grid.Column="1" TextChanged="changed"/>
+        </Grid>
+        <TextBlock x:Name="lines_text" TextWrapping="Wrap" MaxWidth="400" Foreground="DimGray" Margin="0,0,0,8"/>
+        <CheckBox x:Name="save_check" Content="Save these as my defaults in SLC Riser - Config" Margin="0,0,0,8"/>
+        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="400" Margin="0,0,0,8"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Create Riser" Width="100" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
+            <Button Content="Cancel" Width="80" IsCancel="True" Click="cancel_click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
+"""
+
+
+def number_text(v):
+    """4.5 -> '4.5', 6.0 -> '6'"""
+    return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+
+class ReviewDialog(forms.WPFWindow):
+    """Device count, with the spacing and wrapping settings to adjust before the riser is drawn.
+    self.result = (spacing ft, devices per line, wrap rounding, save as default) or None if cancelled."""
+    def __init__(self, rows):
+        forms.WPFWindow.__init__(self, REVIEW_XAML, literal_string=True)
+        self.rows = rows
+        self.result = None
+        self._ready = False
+        total = sum(len(r["nodes"]) for r in rows)
+        runs = [r for r in rows if r["source"] is None]
+        taps = len(rows) - len(runs)
+        self.count_text.Text = "%d device(s) will be added to the riser." % total
+        parts = []
+        for r in runs:
+            parts.append("%s%d" % (("Loop %s: " % r["label"]) if r.get("label") else "", len(r["nodes"])))
+        detail = "%d run(s)" % len(runs)
+        if taps:
+            detail += " and %d T-tap(s)" % taps
+        self.detail_text.Text = detail + (" - " + ", ".join(parts) if parts else "")
+        self.spacing_box.Text = number_text(DEVICE_SPACING_FT)
+        self.per_line_box.Text = number_text(PER_LINE)
+        self.rounding_box.Text = number_text(WRAP_ROUNDING)
+        self._ready = True
+        self.changed(None, None)
+
+    def _values(self):
+        """(spacing, per line, rounding) typed in the window, or an error message."""
+        out = []
+        for key, box, what, kind in [("device_spacing_ft", self.spacing_box, "Spacing between devices", float),
+                                     ("devices_per_line", self.per_line_box, "Devices before wrapping", int),
+                                     ("wrap_rounding", self.rounding_box, "Wrap rounding", int)]:
+            lo, hi = sr.SETTING_LIMITS[key]
+            try:
+                value = kind((box.Text or "").strip())
+            except Exception:
+                value = None
+            if value is None or not lo <= value <= hi:
+                return "%s must be a %s from %s to %s." % (what, "whole number" if kind is int else "number",
+                                                          number_text(lo), number_text(hi))
+            out.append(value)
+        return tuple(out)
+
+    def changed(self, sender, args):
+        if not self._ready:
+            return
+        values = self._values()
+        if isinstance(values, str):
+            self.error_text.Text = values
+            self.lines_text.Text = ""
+            return
+        self.error_text.Text = ""
+        _, per, rounding = values
+        lines = sum(len(rl.split_lines(r["nodes"], per, rounding)) for r in self.rows)
+        self.lines_text.Text = "With these settings the riser has %d line(s) of devices." % lines
+
+    def ok_click(self, sender, args):
+        values = self._values()
+        if isinstance(values, str):
+            self.error_text.Text = values
+            return
+        self.result = values + (bool(self.save_check.IsChecked),)
+        self.Close()
+
+    def cancel_click(self, sender, args):
+        self.Close()
+
+
+def review_layout(rows):
+    """Show the device count and let the user adjust spacing and wrapping. False if cancelled."""
+    global DEVICE_SPACING_FT, PER_LINE, WRAP_ROUNDING
+    dlg = ReviewDialog(rows)
+    dlg.ShowDialog()
+    if dlg.result is None:
+        return False
+    DEVICE_SPACING_FT, PER_LINE, WRAP_ROUNDING, save = dlg.result
+    if save:
+        try:
+            settings = sr.load_settings()
+        except Exception:
+            settings = dict(sr.DEFAULT_SETTINGS)
+        settings.update({"device_spacing_ft": DEVICE_SPACING_FT, "devices_per_line": PER_LINE,
+                         "wrap_rounding": WRAP_ROUNDING})
+        try:
+            sr.save_settings(settings)
+        except Exception as ex:
+            forms.alert("These settings are used for this riser but could not be saved:\n%s\n\nPath: %s"
+                        % (ex, sr.settings_path()), title=TITLE)
+    return True
+
+
 def apply_settings():
     """Use the drawing settings saved in SLC Riser - Config. False if the file can't be read and the user
     chose to stop."""
@@ -566,6 +702,8 @@ def main():
     if root is None:
         return
     firsts = first_devices(root)
+    if firsts is None:
+        return
     traced = trace_from(root, firsts)
     if traced is None:
         return
@@ -636,6 +774,9 @@ def main():
             if not go_on:
                 return
     node_symbol = dict((n, available[chosen[keys[n]]]) for n in drawn if keys[n] in chosen)
+
+    if not review_layout(rows):
+        return
 
     t = Transaction(doc, "Create SLC riser")
     t.Start()
