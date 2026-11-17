@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v5
+# nac_voice_types module - version v6
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -55,7 +55,7 @@ DEFAULT_MAX_CURRENT = 1.2   # amps
 SOURCE_VOLTS = 20.4             # 24 V battery at end of discharge
 WIRE_OHMS_PER_1000FT = 3.07     # 14 AWG
 EOL_COMMENT_KINDS = ("N",)      # Voice circuits get no estimate
-MIN_DEVICE_VOLTS = 16.0         # warn when the estimate is below this
+MIN_DEVICE_VOLTS = 17.25         # warn when the estimate is below this
 _COMMENT_PATTERN = re.compile(r"^\s*\d+(\.\d+)?\s*A(\s*,\s*EOL\s+-?\d+(\.\d+)?\s*V)?\s*$", re.IGNORECASE)
 
 

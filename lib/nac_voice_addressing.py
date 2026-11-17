@@ -1,29 +1,10 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v7
-__title__ = "Address\nNAC / Voice v7"
-__doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
-           "(or a tag hosted to one), in order of selection.\n\n"
-           "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
-           "Voice Address = V#-#.#, Voice Circuit = V#-#\n\n"
-           "At the start, choose for NAC and for Voice whether to continue a circuit already in the project "
-           "(resumes after its highest device number), continue from a selected device (resumes after that "
-           "device's number), start a new one, or skip that kind for this run. "
-           "NAC and Voice are counted separately.\n\n"
-           "After the first device is addressed (or chosen with 'Continue from selected'), choose Manual or "
-           "Automatic. Manual: pick each device yourself. Automatic: the conduit leaving the device is followed "
-           "(you pick it if the device has more than one). You can also pick a conduit at any time. The devices connected downstream by that conduit type are found in order of connection, "
-           "and you choose how far to go: to a device you pick, up to a max device count for the circuit, or "
-           "up to a max current (amps, from each device's Current parameter; default 1.2 A). The conduit between "
-           "the devices of a run gets Notification Circuit = N12 (NAC, power supply 1, circuit 2) or V12 "
-           "(Voice); a conduit carrying both holds both, e.g. N16,V16.\n\n"
-           "When you finish, the last device of each circuit addressed gets NAC EOL / Voice EOL = Yes and every "
-           "other device on that circuit gets No. On NAC circuits the EOL device's Comments get the total "
-           "circuit current and the estimated EOL voltage (20.4 V source, 14 AWG at 3.07 ohms per 1000 ft, "
-           "point to point along the conduit, including the home run when it is connected).\n\n"
-           "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
-           "(Address NAC / Voice - Config). A type that isn't in the table is asked about once per run.\n\n"
-           "Shift+Click to define / remove table entries. Press Esc to finish picking.")
+# nac_voice_addressing module - version v1
+"""Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
+NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
+Voice Address = V#-#.#, Voice Circuit = V#-#
+Each button runs main() with its kind ("N" or "V")."""
 import os
 
 from System.Collections.Generic import List
@@ -41,15 +22,11 @@ doc = revit.doc
 uidoc = revit.uidoc
 output = script.get_output()
 
-TITLE = "Address NAC / Voice"
+TITLE = "Address NAC / Voice"   # set by main() to "Address NAC" / "Address Voice"
 BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
 PREVIEW_LIMIT = 25  # devices listed in the confirmation before a downstream run is addressed
 AMP_TOLERANCE = 1e-6
 
-try:
-    SHIFT_CLICKED = bool(__shiftclick__)
-except NameError:
-    SHIFT_CLICKED = False
 
 
 # ---------- Devices and tags ----------
@@ -100,6 +77,8 @@ class ConduitFilter(ISelectionFilter):
 
 MANUAL_LABEL = "Manual - pick each device"
 AUTOMATIC_LABEL = "Automatic - address downstream"
+FINISH_LABEL = "Finish"
+CONTINUE_LABEL = "Continue adding to %s"
 
 
 class DeviceOrTagFilter(ISelectionFilter):
@@ -284,7 +263,7 @@ def preselected_device():
     return list(devices.values())[0] if len(devices) == 1 else None
 
 
-def choose_circuit(kind, existing, preselected):
+def choose_circuit(kind, existing, preselected, allow_skip=False):
     """Ask what to do with one kind (NAC or Voice) this run.
     Returns {"source", "circuit", "next", "resumed"}, "SKIP", or None if cancelled."""
     name = nv.KIND_NAMES[kind]
@@ -305,7 +284,9 @@ def choose_circuit(kind, existing, preselected):
         ordered.append(label)
     new_label = "New %s circuit" % name
     skip_label = "Skip - do not address %s this run" % name
-    ordered.extend([new_label, skip_label])
+    ordered.append(new_label)
+    if allow_skip:
+        ordered.append(skip_label)
 
     while True:
         choice = choose(ordered, "%s: which circuit do you want to address?" % name)
@@ -542,7 +523,9 @@ def next_text(state):
 
 
 class Session(object):
-    def __init__(self):
+    def __init__(self, kinds=tuple(nv.KINDS)):
+        self.kinds = [k for k in nv.KINDS if k in kinds]
+        self.finished = False       # the user chose Finish after an automatic run
         self.state = {}             # kind -> {"source", "circuit", "next", "resumed", "start", "from"}
         self.table = {}
         self.session_types = {}     # types not in the table: key -> device type chosen this run
@@ -572,8 +555,8 @@ class Session(object):
     def choose_circuits(self):
         preselected = preselected_device()
         existing = scan_existing()
-        for kind in nv.KINDS:
-            picked = choose_circuit(kind, existing[kind], preselected)
+        for kind in self.kinds:
+            picked = choose_circuit(kind, existing[kind], preselected, allow_skip=len(self.kinds) > 1)
             if picked is None:
                 return False    # cancelled
             if picked == "SKIP":
@@ -738,7 +721,7 @@ class Session(object):
             if not again:
                 return
 
-        error = self.write([(el, key, targets)], "Address NAC / Voice device")
+        error = self.write([(el, key, targets)], "%s device" % TITLE)
         if error:
             self.problems.append("Element %d: %s" % (eid, error))
             forms.toast("That device was not addressed: %s" % error)
@@ -958,7 +941,7 @@ class Session(object):
 
         conduits, no_param = self.run_conduits(kind, conduit, [c["el"] for c in chosen])
         first = next_number
-        error = self.write([(c["el"], c["key"], c["targets"]) for c in chosen], "Address NAC / Voice downstream",
+        error = self.write([(c["el"], c["key"], c["targets"]) for c in chosen], "%s downstream" % TITLE,
                            conduits)
         if error:
             self.problems.append("Downstream of element %d: nothing was addressed (%s)" % (anchor_id, error))
@@ -979,6 +962,7 @@ class Session(object):
         for eid, key, reason in passed:
             self.problems.append("Element %d (%s): on the followed conduit but passed over (%s)." % (eid, key, reason))
         forms.toast("%d device(s) addressed downstream." % len(chosen))
+        return True
 
     # ---- Manual or automatic ----
     def ask_mode(self):
@@ -995,35 +979,38 @@ class Session(object):
             self.manual = True      # Manual, or the prompt was closed
 
     def start_automatic(self):
-        """Follows the conduit leaving the first device; asks which one if it has more than one."""
-        conduits, seen = [], set()
-        for group in ct.connected_elements(self.anchor):
-            for el in group:
-                i = nv.eid_int(el.Id)
-                if isinstance(el, Conduit) and i not in seen:
-                    seen.add(i)
-                    conduits.append(el)
-        if len(conduits) == 1:
-            self.follow_conduit(conduits[0])
-            return
-        if not conduits:
-            # Joined through a fitting or box: let the user pick the conduit on the run.
-            message = "Select the conduit of the run to address - Esc to pick devices manually"
-        else:
-            message = ("Element %d has %d conduits: select the one leaving it in the direction to address - Esc "
-                       "to pick devices manually" % (nv.eid_int(self.anchor.Id), len(conduits)))
+        """Explains the conduit pick, then follows the conduit the user picks from the first device."""
+        forms.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
+                    "the addresser to check. Devices are found by following that conduit (and only that conduit "
+                    "type) away from the device.\n\nPress Esc while selecting to pick devices manually instead."
+                    % nv.eid_int(self.anchor.Id), title=TITLE)
         try:
-            ref = uidoc.Selection.PickObject(ObjectType.Element, ConduitFilter(), message)
+            ref = uidoc.Selection.PickObject(
+                ObjectType.Element, ConduitFilter(),
+                "Select the conduit leaving the device in the direction to address - Esc to pick devices manually")
         except OperationCanceledException:
             self.manual = True
             return
-        self.follow_conduit(doc.GetElement(ref.ElementId))
+        self.run_automatic(doc.GetElement(ref.ElementId))
+
+    def run_automatic(self, conduit):
+        """A downstream run; afterwards asks whether to finish or keep adding to the circuit."""
+        if not self.follow_conduit(conduit):
+            return
+        circuits = ", ".join(self.circuit(k) for k in self.kinds if k in self.state)
+        choice = forms.CommandSwitchWindow.show(
+            [FINISH_LABEL, CONTINUE_LABEL % circuits],
+            message="Addressed up to %s. Finish, or keep adding devices to %s?"
+                    % (next_text(dict((k, dict(self.state[k], next=self.state[k]["next"] - 1))
+                                      for k in self.state)), circuits))
+        if choice == FINISH_LABEL:
+            self.finished = True
 
     # ---- Picking ----
     def pick_devices(self):
         flt = DeviceOrTagFilter(conduit=True)
         self.ask_mode()     # first device chosen with 'Continue from selected'
-        while True:
+        while not self.finished:
             prompt = ("Select device or its tag, or a conduit to address downstream (next: %s) - Esc to finish"
                       % next_text(self.state))
             try:
@@ -1032,7 +1019,9 @@ class Session(object):
                 return
             picked = doc.GetElement(ref.ElementId)
             if isinstance(picked, Conduit):
-                self.follow_conduit(picked)
+                self.run_automatic(picked)
+                if self.finished:
+                    return
                 continue
             el = resolve_device(picked)
             if el is None:
@@ -1040,11 +1029,13 @@ class Session(object):
                 continue
             if self.address_device(el):
                 self.ask_mode()
+                if self.finished:
+                    return
 
     # ---- Summary ----
     def report(self):
         output.print_md("### Addressing complete")
-        for kind in nv.KINDS:
+        for kind in self.kinds:
             name = nv.KIND_NAMES[kind]
             if kind not in self.state:
                 output.print_md("- %s: skipped this run" % name)
@@ -1277,7 +1268,11 @@ class Session(object):
             self.report()
 
 
-if SHIFT_CLICKED:
-    manage_table()
-else:
-    Session().run()
+def main(kind, shift_clicked=False):
+    """Runs Address NAC (kind "N") or Address Voice (kind "V")."""
+    global TITLE
+    TITLE = "Address %s" % nv.KIND_NAMES[kind]
+    if shift_clicked:
+        manage_table()
+    else:
+        Session(kinds=(kind,)).run()
