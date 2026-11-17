@@ -21,7 +21,7 @@ Every tool's settings window lives in the **Tool Configs** drop-down (its own pa
 | Tool Configs | Link Clash - Config | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
 | Tool Configs | Address SLC - Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
 | Tool Configs | Address NAC / Voice - Config | Lookup table for Address NAC and Address Voice: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
-| Tool Configs | SLC Riser - Config | Drawing settings (drafting view scale, spacing between devices, devices before wrapping, address text offset) and the lookup table of the Generic Annotation or Detail Item type drawn for each Family : Type. |
+| Tool Configs | SLC Riser - Config | Drawing settings (drafting view scale, spacing between devices, devices before wrapping, wrap rounding, address text offset) and the lookup table of the Generic Annotation or Detail Item type drawn for each Family : Type. |
 
 ## Install
 
@@ -131,9 +131,9 @@ Each script has its version on line 2.
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |
-| SLC Riser | v12 |
-| SLC Riser - Config | v3 |
-| lib/slc_riser.py | v4 |
-| lib/riser_layout.py | v8 |
+| SLC Riser | v13 |
+| SLC Riser - Config | v4 |
+| lib/slc_riser.py | v5 |
+| lib/riser_layout.py | v9 |
 | Line Nuke | v3 |
 | Consolidate Text Styles | v4 |

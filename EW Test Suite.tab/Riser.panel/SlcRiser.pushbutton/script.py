@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v12
-__title__ = "SLC\nRiser v12"
+# SLC Riser script - version v13
+__title__ = "SLC\nRiser v13"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -18,7 +18,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"
-           "View scale, device spacing, devices per line and the label offset are set in SLC Riser - Config.\n\n"
+           "View scale, device spacing, devices per line, wrap rounding and the label offset are set in SLC Riser - Config.\n\n"
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
 
 from Autodesk.Revit.DB import (
@@ -50,6 +50,7 @@ TITLE = "SLC Riser"
 # These four come from SLC Riser - Config (riser_settings.json); the values here are replaced in main().
 VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
 PER_LINE = 5            # devices on one line before the row wraps underneath
+WRAP_ROUNDING = 0       # a line only wraps when it would have more than PER_LINE + this
 DEVICE_SPACING_FT = 4.5 # device centre to device centre, in feet in the view
 LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the view) below the riser line
 ABOVE_TEXT_SIZE_IN = 5.0 / 64.0     # text above a device (its Panel #): size on the sheet, in inches
@@ -541,7 +542,7 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None):
 def apply_settings():
     """Use the drawing settings saved in SLC Riser - Config. False if the file can't be read and the user
     chose to stop."""
-    global VIEW_SCALE, PER_LINE, DEVICE_SPACING_FT, LABEL_OFFSET_IN
+    global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN
     try:
         settings = sr.load_settings()
     except Exception as ex:
@@ -552,6 +553,7 @@ def apply_settings():
         settings = dict(sr.DEFAULT_SETTINGS)
     VIEW_SCALE = settings["view_scale"]
     PER_LINE = settings["devices_per_line"]
+    WRAP_ROUNDING = settings["wrap_rounding"]
     DEVICE_SPACING_FT = settings["device_spacing_ft"]
     LABEL_OFFSET_IN = settings["label_offset_in"]
     return True
@@ -672,7 +674,7 @@ def main():
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
-        cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "char_w": char_w,
+        cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v8
+# riser_layout module - version v9
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -133,13 +133,28 @@ def build_rows(root, children):
     return rows
 
 
+def split_lines(nodes, per, rounding=0):
+    """Break a row into lines of per devices. A row (or the part left after earlier lines) only wraps when it
+    has more than per + rounding devices. With per 40 and rounding 5: 41 or 45 devices stay on one line,
+    46 become 40 + 6, and 85 become 40 + 45."""
+    per = max(1, int(per))
+    rounding = max(0, int(rounding or 0))
+    lines, i = [], 0
+    while len(nodes) - i > per + rounding:
+        lines.append(nodes[i:i + per])
+        i += per
+    if i < len(nodes):
+        lines.append(nodes[i:])
+    return lines
+
+
 def layout(rows, root, info, returns, cfg):
     """Positions for the whole diagram, in the same length unit as cfg and the extents.
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
                 "above": text written above the symbol, or "" (optional)}
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
-    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
+    cfg      = spacing, per_line, wrap_rounding (extra devices allowed before a line wraps; 0 if not given), pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
                text above a symbol; line_h if not given), label_offset (how far below
                the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
@@ -215,7 +230,7 @@ def layout(rows, root, info, returns, cfg):
 
     for row in rows:
         nodes = row["nodes"]
-        chunks = [nodes[i:i + per] for i in range(0, len(nodes), per)]
+        chunks = split_lines(nodes, per, cfg.get("wrap_rounding", 0))
         turn = None     # (x, y) where the previous line of this row ended, ready to turn down
         for ci, chunk in enumerate(chunks):
             last_chunk = ci == len(chunks) - 1

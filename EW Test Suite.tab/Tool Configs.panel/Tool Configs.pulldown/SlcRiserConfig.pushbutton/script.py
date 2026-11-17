@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-# SLC Riser - Config script - version v3
-__title__ = "SLC Riser - Config v3"
+# SLC Riser - Config script - version v4
+__title__ = "SLC Riser - Config v4"
 __doc__ = ("Drawing settings for SLC Riser (drafting view scale, spacing between devices, devices per line "
-           "before wrapping, address text offset) and the table of the symbol drawn for each Family : Type.\n\n"
+           "before wrapping, wrap rounding, address text offset) and the table of the symbol drawn for each Family : Type.\n\n"
            "The symbol is any loaded Generic Annotation or Detail Item type. 'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")
 
@@ -41,7 +41,7 @@ EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SLC Riser - Config"
-        Width="860" Height="640" MinWidth="680" MinHeight="480"
+        Width="860" Height="680" MinWidth="680" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">
     <Grid Margin="12">
@@ -65,6 +65,7 @@ EDITOR_XAML = """
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Drafting view scale:" VerticalAlignment="Center" Margin="0,0,8,6"/>
                 <ComboBox x:Name="scale_box" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6" IsEditable="False"
@@ -72,10 +73,17 @@ EDITOR_XAML = """
                 <TextBlock Grid.Row="0" Grid.Column="3" Text="Spacing between devices (ft):" VerticalAlignment="Center" Margin="0,0,8,6"/>
                 <TextBox x:Name="spacing_box" Grid.Row="0" Grid.Column="4" Margin="0,0,0,6" TextChanged="setting_changed"/>
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="Devices before wrapping:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="per_line_box" Grid.Row="1" Grid.Column="1" TextChanged="setting_changed"/>
-                <TextBlock Grid.Row="1" Grid.Column="3" Text="Address text below line (in):" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="offset_box" Grid.Row="1" Grid.Column="4" TextChanged="setting_changed"/>
-                <Button Grid.Row="1" Grid.Column="5" Content="Defaults" Width="80" HorizontalAlignment="Right"
+                <TextBox x:Name="per_line_box" Grid.Row="1" Grid.Column="1" Margin="0,0,0,6" TextChanged="setting_changed"/>
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="Address text below line (in):" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                <TextBox x:Name="offset_box" Grid.Row="1" Grid.Column="4" Margin="0,0,0,6" TextChanged="setting_changed"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Wrap rounding (devices):" VerticalAlignment="Center" Margin="0,0,8,0"
+                           ToolTip="A line only wraps when it would have more than Devices before wrapping + this many devices. 40 and 5: 41 to 45 devices stay on one line."/>
+                <TextBox x:Name="rounding_box" Grid.Row="2" Grid.Column="1" TextChanged="setting_changed"
+                         ToolTip="A line only wraps when it would have more than Devices before wrapping + this many devices. 40 and 5: 41 to 45 devices stay on one line."/>
+                <TextBlock Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" VerticalAlignment="Center" Margin="0,0,8,0"
+                           Foreground="Gray" TextWrapping="Wrap"
+                           Text="Wraps only past Devices before wrapping + rounding."/>
+                <Button Grid.Row="2" Grid.Column="5" Content="Defaults" Width="80" HorizontalAlignment="Right"
                         Click="defaults_click"/>
             </Grid>
         </GroupBox>
@@ -157,6 +165,7 @@ class TableEditor(forms.WPFWindow):
         self.scale_box.SelectedItem = labels[0]
         self.spacing_box.Text = number_text(settings["device_spacing_ft"])
         self.per_line_box.Text = number_text(settings["devices_per_line"])
+        self.rounding_box.Text = number_text(settings["wrap_rounding"])
         self.offset_box.Text = number_text(settings["label_offset_in"])
         self._loading = False
 
@@ -181,6 +190,7 @@ class TableEditor(forms.WPFWindow):
         out["view_scale"] = scale
         for key, box, what, kind in [("device_spacing_ft", self.spacing_box, "Spacing between devices", float),
                                      ("devices_per_line", self.per_line_box, "Devices before wrapping", int),
+                                     ("wrap_rounding", self.rounding_box, "Wrap rounding", int),
                                      ("label_offset_in", self.offset_box, "Address text below line", float)]:
             lo, hi = sr.SETTING_LIMITS[key]
             text = (box.Text or "").strip()

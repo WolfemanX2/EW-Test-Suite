@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v4
+# slc_riser module - version v5
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
@@ -52,12 +52,14 @@ DEFAULT_SETTINGS = {
     "view_scale": 96,           # 1/8" = 1'-0"
     "device_spacing_ft": 4.5,   # device centre to device centre, in feet in the view
     "devices_per_line": 5,      # devices on one line before the row wraps underneath
+    "wrap_rounding": 0,         # a line only wraps when it would have more than devices_per_line + this
     "label_offset_in": 1.0,     # address text starts this many inches (in the view) below the riser line
 }
 SETTING_LIMITS = {              # (smallest, largest) allowed
     "view_scale": (1, 1000),
     "device_spacing_ft": (0.25, 100.0),
     "devices_per_line": (1, 200),
+    "wrap_rounding": (0, 200),
     "label_offset_in": (0.0, 120.0),
 }
 
