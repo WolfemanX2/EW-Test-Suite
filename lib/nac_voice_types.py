@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v1
+# nac_voice_types module - version v2
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -33,6 +33,12 @@ VALUE_PATTERNS = {
     "N": re.compile(r"^N(\d+)-(\d+)\.(\d+)$", re.IGNORECASE),
     "V": re.compile(r"^V(\d+)-(\d+)\.(\d+)$", re.IGNORECASE),
 }
+
+# Device load, used by 'Max current' when addressing downstream. The first of these names found on the device
+# (instance first, then its type) is read. A number or electrical current parameter is in amps; a text value
+# such as "0.115 A" or "115 mA" is read too.
+CURRENT_PARAM_NAMES = ["Current"]
+DEFAULT_MAX_CURRENT = 1.2   # amps
 
 NAC_ONLY = "NAC Only"
 VOICE_ONLY = "Voice Only"
@@ -104,6 +110,60 @@ def get_param(el, name):
         if found is None:
             found = p
     return found
+
+
+_NUMBER = re.compile(r"([0-9]*\.?[0-9]+)\s*(m?A)?", re.IGNORECASE)
+
+
+def _param_amps(p):
+    """Amps held by a parameter, or None if it is empty or not a number."""
+    try:
+        if not p.HasValue:
+            return None
+    except Exception:
+        pass
+    st = p.StorageType
+    if st == StorageType.Double:
+        return p.AsDouble()     # electrical current is stored in amps
+    if st == StorageType.Integer:
+        return float(p.AsInteger())
+    if st == StorageType.String:
+        m = _NUMBER.search(p.AsString() or "")
+        if not m:
+            return None
+        value = float(m.group(1))
+        if m.group(2) and m.group(2).lower() == "ma":
+            value /= 1000.0
+        return value
+    return None
+
+
+def get_current(doc, el):
+    """The device's Current in amps, or None if it has no Current parameter or no value."""
+    owners = [el]
+    try:
+        etype = doc.GetElement(el.GetTypeId())
+        if etype is not None:
+            owners.append(etype)
+    except Exception:
+        pass
+    for owner in owners:
+        for name in CURRENT_PARAM_NAMES:
+            wanted = name.strip().lower()
+            for p in owner.Parameters:
+                try:
+                    if p.Definition.Name.strip().lower() != wanted:
+                        continue
+                    amps = _param_amps(p)
+                except Exception:
+                    continue
+                if amps is not None:
+                    return amps
+    return None
+
+
+def fmt_amps(amps):
+    return "%.3f A" % amps
 
 
 def kinds_on_element(el):

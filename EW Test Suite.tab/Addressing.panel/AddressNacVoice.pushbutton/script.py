@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v2
-__title__ = "Address\nNAC / Voice"
+# Address NAC / Voice script - version v3
+__title__ = "Address\nNAC / Voice v3"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
@@ -9,18 +9,26 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "(resumes after its highest device number), continue from a selected device (resumes after that "
            "device's number), start a new one, or skip that kind for this run. "
            "NAC and Voice are counted separately.\n\n"
+           "Address downstream: after a device is addressed (or after 'Continue from selected'), pick a conduit "
+           "leaving it. The devices connected downstream by that conduit type are found in order of connection, "
+           "and you choose how far to go: to a device you pick, up to a max device count for the circuit, or "
+           "up to a max current (amps, from each device's Current parameter; default 1.2 A).\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
            "(Address NAC / Voice - Config). A type that isn't in the table is asked about once per run.\n\n"
            "Shift+Click to define / remove table entries. Press Esc to finish picking.")
 
 import os
 
-from Autodesk.Revit.DB import Transaction, FilteredElementCollector, IndependentTag
+from System.Collections.Generic import List
+from Autodesk.Revit.DB import (Transaction, TransactionStatus, FilteredElementCollector, IndependentTag,
+                               ElementId)
+from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
 import nac_voice_types as nv
+import conduit_trace as ct
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -28,6 +36,8 @@ output = script.get_output()
 
 TITLE = "Address NAC / Voice"
 BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
+PREVIEW_LIMIT = 25  # devices listed in the confirmation before a downstream run is addressed
+AMP_TOLERANCE = 1e-6
 
 try:
     SHIFT_CLICKED = bool(__shiftclick__)
@@ -74,9 +84,14 @@ def resolve_device(elem):
 
 
 class DeviceOrTagFilter(ISelectionFilter):
-    """Allows devices, or tags hosted to a device."""
+    """Allows devices, or tags hosted to a device; with conduit=True also conduit (to address downstream)."""
+    def __init__(self, conduit=False):
+        self.conduit = conduit
+
     def AllowElement(self, elem):
         try:
+            if self.conduit and isinstance(elem, Conduit):
+                return True
             return resolve_device(elem) is not None
         except Exception:
             return False
@@ -278,7 +293,7 @@ def choose_circuit(kind, existing, preselected):
             return "SKIP"
 
         if choice == selected_label:
-            parsed = pre
+            parsed, el = pre, preselected
             if not parsed:
                 try:
                     ref = uidoc.Selection.PickObject(
@@ -294,7 +309,7 @@ def choose_circuit(kind, existing, preselected):
                     continue
             source, circuit, num = parsed
             return {"source": source, "circuit": circuit, "next": num + 1, "resumed": True,
-                    "from": nv.fmt_address(kind, source, circuit, num)}
+                    "from": nv.fmt_address(kind, source, circuit, num), "anchor": el}
 
         if choice == new_label:
             dlg = NewCircuitDialog(kind, existing)
@@ -399,86 +414,191 @@ def manage_table():
             forms.alert("Could not open the file:\n%s\n\nPath: %s" % (ex, nv.table_path()), title=TITLE)
 
 
-# ---------- Main ----------
+# ---------- Address downstream: how far to go ----------
+DOWNSTREAM_XAML = """
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Address downstream"
+        SizeToContent="WidthAndHeight"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Topmost="True">
+    <StackPanel Margin="16">
+        <TextBlock x:Name="msg_text" TextWrapping="Wrap" MaxWidth="440" Margin="0,0,0,14"/>
+        <RadioButton x:Name="end_radio" GroupName="mode" Margin="0,0,0,12"
+                     Content="To a selected device - pick the last device to address next"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+            <RadioButton x:Name="count_radio" GroupName="mode" Width="260" VerticalAlignment="Center"
+                         Content="Max device count for the circuit:"/>
+            <TextBox x:Name="count_box" Width="70" GotFocus="count_focus"/>
+        </StackPanel>
+        <TextBlock x:Name="count_note" Foreground="Gray" TextWrapping="Wrap" MaxWidth="420"
+                   Margin="20,0,0,12"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+            <RadioButton x:Name="current_radio" GroupName="mode" Width="260" VerticalAlignment="Center"
+                         Content="Address to max current (amps):"/>
+            <TextBox x:Name="current_box" Width="70" GotFocus="current_focus"/>
+        </StackPanel>
+        <CheckBox x:Name="existing_check" Margin="20,4,0,12"/>
+        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="440"
+                   Margin="0,0,0,10"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
+            <Button Content="Cancel" Width="80" IsCancel="True" Click="cancel_click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
+"""
+
+
+class DownstreamDialog(forms.WPFWindow):
+    """Asks how far down the conduit to address.
+    self.result = ("end",) | ("count", max devices on the circuit) | ("current", max amps, include existing),
+    or None if cancelled."""
+    def __init__(self, message, circuit_text, next_number, existing_amps, existing_count, defaults):
+        forms.WPFWindow.__init__(self, DOWNSTREAM_XAML, literal_string=True)
+        self.result = None
+        self.next_number = next_number
+        self.msg_text.Text = message
+        self.count_box.Text = defaults["count"]
+        self.count_note.Text = ("The next device on %s is .%d, so the count includes the %d device(s) already "
+                                "numbered before it." % (circuit_text, next_number, next_number - 1))
+        self.current_box.Text = defaults["current"]
+        self.existing_check.Content = ("Include the %d device(s) already on %s (%s)"
+                                       % (existing_count, circuit_text, nv.fmt_amps(existing_amps)))
+        self.existing_check.IsChecked = defaults["include_existing"]
+        {"end": self.end_radio, "count": self.count_radio,
+         "current": self.current_radio}[defaults["mode"]].IsChecked = True
+
+    def count_focus(self, sender, args):
+        self.count_radio.IsChecked = True
+
+    def current_focus(self, sender, args):
+        self.current_radio.IsChecked = True
+
+    def _fail(self, box, text):
+        self.error_text.Text = text
+        box.Focus()
+        box.SelectAll()
+
+    def ok_click(self, sender, args):
+        if self.end_radio.IsChecked:
+            self.result = ("end",)
+        elif self.count_radio.IsChecked:
+            text = (self.count_box.Text or "").strip()
+            if not text.isdigit() or int(text) < 1:
+                return self._fail(self.count_box, "The max device count must be a whole number, 1 or higher.")
+            if int(text) < self.next_number:
+                return self._fail(self.count_box, "The circuit already has %d device(s) numbered, so the max "
+                                                  "count has to be at least %d to address any more."
+                                  % (self.next_number - 1, self.next_number))
+            self.result = ("count", int(text))
+        elif self.current_radio.IsChecked:
+            text = (self.current_box.Text or "").strip().rstrip("aA").strip()
+            try:
+                amps = float(text)
+            except ValueError:
+                amps = 0.0
+            if amps <= 0:
+                return self._fail(self.current_box, "The max current must be a number of amps above 0, "
+                                                    "e.g. 1.2")
+            self.result = ("current", amps, bool(self.existing_check.IsChecked))
+        else:
+            self.error_text.Text = "Choose how far to address."
+            return
+        self.Close()
+
+    def cancel_click(self, sender, args):
+        self.result = None
+        self.Close()
+
+
+# ---------- One run ----------
 def next_text(state):
     return " | ".join(nv.fmt_address(k, state[k]["source"], state[k]["circuit"], state[k]["next"])
                       for k in nv.KINDS if k in state)
 
 
-def main():
-    if SHIFT_CLICKED:
-        manage_table()
-        return
+class Session(object):
+    def __init__(self):
+        self.state = {}             # kind -> {"source", "circuit", "next", "resumed", "start", "from"}
+        self.table = {}
+        self.session_types = {}     # types not in the table: key -> device type chosen this run
+        self.log = []               # (element id, type key, {kind: number})
+        self.addressed = {}         # element id -> {kind: number} written this run
+        self.problems = []
+        self.not_this_run = []      # (element id, type key, device type): no kind being addressed this run
+        self.anchor = None          # device a downstream run starts from: the last one addressed or continued
+        self.run_kinds = {}         # conduit type id -> kind chosen for it this run
+        self.runs = []              # summary lines of the downstream runs
+        self.downstream = {"mode": "end", "count": "", "current": str(nv.DEFAULT_MAX_CURRENT),
+                           "include_existing": True}    # last answers in the downstream dialog
 
-    # ---- For NAC and for Voice: continue a circuit, start a new one, or skip ----
-    preselected = preselected_device()
-    existing = scan_existing()
-    state = {}      # kind -> {"source", "circuit", "next", "resumed", "start"}
-    for kind in nv.KINDS:
-        picked = choose_circuit(kind, existing[kind], preselected)
-        if picked is None:
-            return      # cancelled
-        if picked == "SKIP":
-            continue
-        picked["start"] = picked["next"]
-        state[kind] = picked
-    if not state:
-        forms.alert("NAC and Voice were both skipped, so there is nothing to address.", title=TITLE)
-        return
+    def address(self, kind, number):
+        s = self.state[kind]
+        return nv.fmt_address(kind, s["source"], s["circuit"], number)
 
-    flt = DeviceOrTagFilter()
-    table = load_table()
-    session_types = {}      # types not in the table: key -> device type chosen this run
-    log = []                # (element id, type key, {kind: number})
-    addressed = {}          # element id -> {kind: number} written this run
-    problems = []
-    not_this_run = []       # (element id, type key, device type): nothing to fill with the kinds being addressed
+    def circuit(self, kind):
+        s = self.state[kind]
+        return nv.fmt_circuit(kind, s["source"], s["circuit"])
 
-    while True:
-        prompt = "Select device or its tag (next: %s) - Esc to finish" % next_text(state)
-        try:
-            ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
-        except OperationCanceledException:
-            break
-
-        el = resolve_device(doc.GetElement(ref.ElementId))
-        if el is None:
-            forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
-            continue
-        eid = nv.eid_int(el.Id)
-        key = nv.family_key(doc, el)
-
-        # ---- Device type: table, else asked once per run ----
-        label = table.get(key) or session_types.get(key)
-        if label is None:
-            available = nv.kinds_on_element(el)
-            options = [t for t in nv.TYPE_LABELS if all(k in available for k in nv.TYPE_KINDS[t])]
-            if not options:
-                problems.append("%s (element %d): no writable NAC Address or Voice Address parameter. Skipped."
-                                % (key, eid))
-                forms.toast("No writable NAC / Voice address parameters on that device.")
+    # ---- Start: for NAC and for Voice, continue a circuit, start a new one, or skip ----
+    def choose_circuits(self):
+        preselected = preselected_device()
+        existing = scan_existing()
+        for kind in nv.KINDS:
+            picked = choose_circuit(kind, existing[kind], preselected)
+            if picked is None:
+                return False    # cancelled
+            if picked == "SKIP":
                 continue
-            if len(options) == 1:
-                label = options[0]
-            else:
-                label = forms.CommandSwitchWindow.show(
-                    options, message="%s is not in the lookup table. What is it? (Asked once per run; "
-                                     "Shift+Click the tool button to define it permanently.)" % key)
-                if not label:
-                    forms.toast("Skipped - no addresses assigned.")
-                    continue
-            session_types[key] = label
+            picked["start"] = picked["next"]
+            if picked.get("anchor") is not None:
+                self.anchor = picked["anchor"]
+            self.state[kind] = picked
+        if not self.state:
+            forms.alert("NAC and Voice were both skipped, so there is nothing to address.", title=TITLE)
+            return False
+        self.table = load_table()
+        return True
 
-        todo = [k for k in nv.TYPE_KINDS[label] if k in state]
-        if not todo:
-            not_this_run.append((eid, key, label))
-            forms.toast("%s device - %s is not being addressed this run. Skipped."
-                        % (label, " / ".join(nv.KIND_NAMES[k] for k in nv.TYPE_KINDS[label])))
-            continue
+    # ---- Per device ----
+    def show(self, device):
+        """Select a device so the user can see which one a question is about."""
+        try:
+            uidoc.Selection.SetElementIds(List[ElementId]([device.Id]))
+            uidoc.RefreshActiveView()
+        except Exception:
+            pass
 
-        # ---- Parameters ----
+    def device_label(self, el, key, show=False):
+        """NAC Only / Voice Only / NAC and Voice for a device: from the table, else asked once per run.
+        Returns None if the device has no NAC / Voice parameters or the user skips it."""
+        label = self.table.get(key) or self.session_types.get(key)
+        if label:
+            return label
+        available = nv.kinds_on_element(el)
+        options = [t for t in nv.TYPE_LABELS if all(k in available for k in nv.TYPE_KINDS[t])]
+        if not options:
+            return None
+        if len(options) == 1:
+            label = options[0]
+        else:
+            message = ("%s is not in the lookup table. What is it? (Asked once per run; Shift+Click the tool "
+                       "button to define it permanently.)" % key)
+            if show:
+                self.show(el)   # found by the tool, not picked: show which one it is
+                message = "Element %d\n%s" % (nv.eid_int(el.Id), message)
+            label = forms.CommandSwitchWindow.show(options, message=message)
+            if not label:
+                return None
+        self.session_types[key] = label
+        return label
+
+    def targets_for(self, el, kinds):
+        """({kind: (address param, circuit param or None)}, [missing address parameter names])."""
         targets, missing = {}, []
-        for kind in todo:
+        for kind in kinds:
             names = nv.PARAM_NAMES[kind]
             addr_p = nv.get_param(el, names["address"])
             if addr_p is None or addr_p.IsReadOnly:
@@ -488,86 +608,374 @@ def main():
             if circ_p is not None and circ_p.IsReadOnly:
                 circ_p = None
             targets[kind] = (addr_p, circ_p)
+        return targets, missing
+
+    def write(self, items, name):
+        """Writes addresses in one transaction, numbering in order from the counters.
+        items = [(element, type key, {kind: (address param, circuit param or None)})].
+        Returns None, or the reason nothing was written."""
+        nexts = dict((k, self.state[k]["next"]) for k in self.state)
+        numbers = []
+        for _el, _key, targets in items:
+            assigned = {}
+            for kind in nv.KINDS:
+                if kind in targets:
+                    assigned[kind] = nexts[kind]
+                    nexts[kind] += 1
+            numbers.append(assigned)
+
+        error = None
+        t = Transaction(doc, name)
+        try:
+            t.Start()
+            for (_el, _key, targets), assigned in zip(items, numbers):
+                for kind, number in assigned.items():
+                    addr_p, circ_p = targets[kind]
+                    addr_p.Set(self.address(kind, number))
+                    if circ_p is not None:
+                        circ_p.Set(self.circuit(kind))
+            # The counters only move on if Revit really kept the change (a warning the user cancels rolls the
+            # transaction back without an exception).
+            if t.Commit() != TransactionStatus.Committed:
+                error = "the change was rolled back"
+        except Exception as ex:
+            try:
+                if t.GetStatus() == TransactionStatus.Started:
+                    t.RollBack()
+            except Exception:
+                pass
+            error = str(ex)
+        if error:
+            return error
+
+        for kind in nexts:
+            self.state[kind]["next"] = nexts[kind]
+        for (el, key, targets), assigned in zip(items, numbers):
+            eid = nv.eid_int(el.Id)
+            self.log.append((eid, key, assigned))
+            self.addressed.setdefault(eid, {}).update(assigned)
+            for kind in assigned:
+                if targets[kind][1] is None:
+                    self.problems.append("%s (element %d): no writable %s, so only the address was filled."
+                                         % (key, eid, nv.PARAM_NAMES[kind]["circuit"]))
+        self.anchor = items[-1][0]
+        return None
+
+    def address_device(self, el):
+        eid = nv.eid_int(el.Id)
+        key = nv.family_key(doc, el)
+        label = self.device_label(el, key)
+        if label is None:
+            if not nv.kinds_on_element(el):
+                self.problems.append("%s (element %d): no writable NAC Address or Voice Address parameter. "
+                                     "Skipped." % (key, eid))
+                forms.toast("No writable NAC / Voice address parameters on that device.")
+            else:
+                forms.toast("Skipped - no addresses assigned.")
+            return
+
+        todo = [k for k in nv.TYPE_KINDS[label] if k in self.state]
+        if not todo:
+            self.not_this_run.append((eid, key, label))
+            forms.toast("%s device - %s is not being addressed this run. Skipped."
+                        % (label, " / ".join(nv.KIND_NAMES[k] for k in nv.TYPE_KINDS[label])))
+            return
+
+        targets, missing = self.targets_for(el, todo)
         if missing:
-            problems.append("%s (element %d): defined as %s but has no writable %s. Skipped."
-                            % (key, eid, label, " / ".join(missing)))
+            self.problems.append("%s (element %d): defined as %s but has no writable %s. Skipped."
+                                 % (key, eid, label, " / ".join(missing)))
             forms.toast("Device has no writable %s. Skipped." % " / ".join(missing))
-            continue
+            return
 
         # Guard against picking the same device twice (directly or via its tag)
-        before = addressed.get(eid, {})
+        before = self.addressed.get(eid, {})
         repeats = [k for k in todo if k in before]
         if repeats:
-            again = forms.alert(
-                "This device was already addressed this run (%s).\n\nRe-address it with new numbers?"
-                % ", ".join(nv.fmt_address(k, state[k]["source"], state[k]["circuit"], before[k])
-                            for k in repeats),
-                title=TITLE, yes=True, no=True)
+            again = forms.alert("This device was already addressed this run (%s).\n\nRe-address it with new "
+                                "numbers?" % ", ".join(self.address(k, before[k]) for k in repeats),
+                                title=TITLE, yes=True, no=True)
             if not again:
+                return
+
+        error = self.write([(el, key, targets)], "Address NAC / Voice device")
+        if error:
+            self.problems.append("Element %d: %s" % (eid, error))
+            forms.toast("That device was not addressed: %s" % error)
+
+    # ---- Address downstream ----
+    def run_kind(self, conduit, type_name):
+        """Which circuit (NAC or Voice) a conduit carries, asked once per conduit type when both are addressed."""
+        kinds = [k for k in nv.KINDS if k in self.state]
+        if len(kinds) == 1:
+            return kinds[0]
+        tid = ct.eid_int(conduit.GetTypeId())
+        if tid in self.run_kinds:
+            return self.run_kinds[tid]
+        labels = dict(("%s circuit (%s)" % (nv.KIND_NAMES[k], self.circuit(k)), k) for k in kinds)
+        choice = forms.CommandSwitchWindow.show(
+            sorted(labels.keys()),
+            message="Which circuit does '%s' conduit carry? (Asked once per conduit type this run.)" % type_name)
+        if not choice:
+            return None
+        self.run_kinds[tid] = labels[choice]
+        return labels[choice]
+
+    def circuit_load(self, kind, leave_out):
+        """(amps, device count) of the devices already addressed on the circuit, leaving out element ids in
+        leave_out (the ones about to be addressed)."""
+        s = self.state[kind]
+        amps, count = 0.0, 0
+        for el in all_devices():
+            if nv.eid_int(el.Id) in leave_out:
                 continue
+            parsed = address_on(el, kind)
+            if parsed and parsed[0] == s["source"] and parsed[1] == s["circuit"]:
+                amps += nv.get_current(doc, el) or 0.0
+                count += 1
+        return amps, count
 
-        # ---- Write ----
-        t = Transaction(doc, "Address NAC / Voice device")
-        t.Start()
-        try:
-            for kind in todo:
-                s = state[kind]
-                addr_p, circ_p = targets[kind]
-                addr_p.Set(nv.fmt_address(kind, s["source"], s["circuit"], s["next"]))
-                if circ_p is not None:
-                    circ_p.Set(nv.fmt_circuit(kind, s["source"], s["circuit"]))
-            t.Commit()
-        except Exception as ex:
-            t.RollBack()
-            problems.append("Element %d: %s" % (eid, ex))
-            continue
+    def pick_end(self, candidates, type_name, kind):
+        """Asks for the last device. Returns the candidates up to and including it, or None on Esc."""
+        index = dict((c["id"], n) for n, c in enumerate(candidates))
+        while True:
+            try:
+                ref = uidoc.Selection.PickObject(
+                    ObjectType.Element, DeviceOrTagFilter(),
+                    "Select the LAST device to address (or its tag) - Esc to go back")
+            except OperationCanceledException:
+                return None
+            el = resolve_device(doc.GetElement(ref.ElementId))
+            n = index.get(nv.eid_int(el.Id)) if el is not None else None
+            if n is not None:
+                return candidates[:n + 1]
+            forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that take a %s "
+                        "address. Pick another, or press Esc to go back."
+                        % (len(candidates), type_name, nv.KIND_NAMES[kind]), title=TITLE)
 
-        written = {}
-        for kind in todo:
-            written[kind] = state[kind]["next"]
-            state[kind]["next"] += 1
-            if targets[kind][1] is None:
-                problems.append("%s (element %d): no writable %s, so only the address was filled."
-                                % (key, eid, nv.PARAM_NAMES[kind]["circuit"]))
-        log.append((eid, key, written))
-        addressed.setdefault(eid, {}).update(written)
-
-    # ---- Report ----
-    output.print_md("### Addressing complete")
-    for kind in nv.KINDS:
+    def follow_conduit(self, conduit):
+        """Addresses devices downstream of the anchor device along the picked conduit's type."""
+        if self.anchor is None:
+            forms.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
+                        "followed away from the last device addressed (or the device chosen with "
+                        "'Continue from selected').", title=TITLE)
+            return
+        anchor_id = nv.eid_int(self.anchor.Id)
+        type_name = ct.element_type_name(doc, conduit) or "the picked"
+        kind = self.run_kind(conduit, type_name)
+        if kind is None:
+            return
         name = nv.KIND_NAMES[kind]
-        if kind not in state:
-            output.print_md("- %s: skipped this run" % name)
-            continue
-        s = state[kind]
-        circuit = nv.fmt_circuit(kind, s["source"], s["circuit"])
-        how = "continued" if s["resumed"] else "new"
-        if s.get("from"):
-            how = "continued from %s" % s["from"]
-        if s["next"] > s["start"]:
-            output.print_md("- %s circuit **%s** (%s): %s to **%s**"
-                            % (name, circuit, how,
-                               nv.fmt_address(kind, s["source"], s["circuit"], s["start"]),
-                               nv.fmt_address(kind, s["source"], s["circuit"], s["next"] - 1)))
-        else:
-            output.print_md("- %s circuit **%s** (%s): nothing addressed" % (name, circuit, how))
-    output.print_md("- Devices addressed: **%d**" % len(log))
-    for eid, key, written in log:
-        output.print_md("    - %d : %s - %s"
-                        % (eid, key,
-                           ", ".join(nv.fmt_address(k, state[k]["source"], state[k]["circuit"], written[k])
-                                     for k in nv.KINDS if k in written)))
-    if not_this_run:
-        output.print_md("- Picked but skipped (their kind was not being addressed this run):")
-        for eid, key, label in not_this_run:
-            output.print_md("    - %d : %s (%s)" % (eid, key, label))
-    if session_types:
-        output.print_md("- Types not defined in the lookup table (used for this run only):")
-        for k in sorted(session_types):
-            output.print_md("    - %s -> %s" % (k, session_types[k]))
-    output.print_md("- Lookup table: `%s`" % nv.table_path())
-    for msg in problems:
-        output.print_md("- Issue: %s" % msg)
+
+        found, problem = ct.follow(doc, self.anchor, conduit, nv.is_device)
+        if problem:
+            forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
+                        "Pick a conduit on the run leaving the last device addressed, or pick a device."
+                        % (anchor_id, type_name), title=TITLE)
+            return
+
+        # Which of the devices found take an address of this kind
+        candidates, passed, done, declined = [], [], 0, set()
+        for el in found:
+            eid = nv.eid_int(el.Id)
+            if kind in self.addressed.get(eid, {}):
+                done += 1
+                continue
+            key = nv.family_key(doc, el)
+            label = None if key in declined else self.device_label(el, key, show=True)
+            if label is None:
+                declined.add(key)
+                passed.append((eid, key, "not a NAC / Voice device, or skipped"))
+                continue
+            if kind not in nv.TYPE_KINDS[label]:
+                passed.append((eid, key, label))
+                continue
+            targets, missing = self.targets_for(el, [kind])
+            if missing:
+                passed.append((eid, key, "no writable %s" % missing[0]))
+                continue
+            candidates.append({"el": el, "id": eid, "key": key, "targets": targets,
+                               "amps": nv.get_current(doc, el), "had": address_on(el, kind)})
+        if not candidates:
+            forms.alert("No devices that take a %s address were found downstream of element %d on '%s' conduit."
+                        "%s" % (name, anchor_id, type_name,
+                                ("\n\n%d device(s) on the run were passed over." % len(passed)) if passed else ""),
+                        title=TITLE)
+            return
+
+        circuit_text = self.circuit(kind)
+        next_number = self.state[kind]["next"]
+        existing_amps, existing_count = self.circuit_load(kind, set(c["id"] for c in candidates))
+        message = ("Following '%s' conduit from element %d on %s circuit %s.\n%d device(s) downstream take a "
+                   "%s address. The next address is %s.\n\nHow far do you want to address?"
+                   % (type_name, anchor_id, name, circuit_text, len(candidates), name,
+                      self.address(kind, next_number)))
+
+        while True:
+            dlg = DownstreamDialog(message, circuit_text, next_number, existing_amps, existing_count,
+                                   self.downstream)
+            dlg.ShowDialog()
+            if dlg.result is None:
+                return
+            mode = dlg.result[0]
+            self.downstream["mode"] = mode
+            stop_note, total = None, None
+
+            if mode == "end":
+                chosen = self.pick_end(candidates, type_name, kind)
+                if chosen is None:
+                    continue    # Esc: back to the dialog
+                how = "to element %d" % chosen[-1]["id"]
+
+            elif mode == "count":
+                max_count = dlg.result[1]
+                self.downstream["count"] = str(max_count)
+                chosen = candidates[:max_count - next_number + 1]
+                how = "to max device count %d" % max_count
+                if len(chosen) < len(candidates):
+                    stop_note = ("Stops at %s, the max device count. %d more device(s) downstream are not "
+                                 "addressed." % (self.address(kind, max_count), len(candidates) - len(chosen)))
+
+            else:
+                max_amps, include = dlg.result[1], dlg.result[2]
+                self.downstream["current"] = "%g" % max_amps
+                self.downstream["include_existing"] = include
+                total = existing_amps if include else 0.0
+                chosen = []
+                for c in candidates:
+                    amps = c["amps"] or 0.0
+                    if total + amps > max_amps + AMP_TOLERANCE:
+                        stop_note = ("Stops before element %d (%s, %s): it would bring the total to %s, over "
+                                     "the max %s. %d device(s) downstream are not addressed."
+                                     % (c["id"], c["key"], nv.fmt_amps(amps), nv.fmt_amps(total + amps),
+                                        nv.fmt_amps(max_amps), len(candidates) - len(chosen)))
+                        break
+                    total += amps
+                    chosen.append(c)
+                how = "to max current %s" % nv.fmt_amps(max_amps)
+                if not chosen:
+                    forms.alert("Nothing can be added: %s" % stop_note, title=TITLE)
+                    continue
+            break
+
+        # Confirm
+        lines = []
+        for n, c in enumerate(chosen[:PREVIEW_LIMIT]):
+            line = "%s  %s" % (self.address(kind, next_number + n), c["key"])
+            if mode == "current":
+                line += "  (%s)" % (nv.fmt_amps(c["amps"]) if c["amps"] is not None else "no Current - 0 A")
+            lines.append(line)
+        if len(chosen) > PREVIEW_LIMIT:
+            lines.append("... and %d more" % (len(chosen) - PREVIEW_LIMIT))
+        notes = []
+        if stop_note:
+            notes.append(stop_note)
+        if mode == "current":
+            notes.append("Circuit total: %s%s." % (nv.fmt_amps(total),
+                                                  (" (including %s already on %s)"
+                                                   % (nv.fmt_amps(existing_amps), circuit_text))
+                                                  if self.downstream["include_existing"] else ""))
+            no_current = len([c for c in chosen if c["amps"] is None])
+            if no_current:
+                notes.append("%d device(s) have no Current value and are counted as 0 A." % no_current)
+        readdress = len([c for c in chosen if c["had"]])
+        if readdress:
+            notes.append("%d of them already have a %s, which will be replaced."
+                         % (readdress, nv.PARAM_NAMES[kind]["address"]))
+        if passed:
+            notes.append("%d device(s) on the run don't take a %s address and are passed over." % (len(passed), name))
+        if done:
+            notes.append("%d device(s) already addressed this run are left as they are." % done)
+        go_on = forms.alert("Address %d device(s) downstream of element %d on '%s' conduit?\n\n%s\n\n%s"
+                            % (len(chosen), anchor_id, type_name, "\n".join(lines), "\n".join(notes)),
+                            title=TITLE, yes=True, no=True)
+        if not go_on:
+            return
+
+        first = next_number
+        error = self.write([(c["el"], c["key"], c["targets"]) for c in chosen], "Address NAC / Voice downstream")
+        if error:
+            self.problems.append("Downstream of element %d: nothing was addressed (%s)" % (anchor_id, error))
+            forms.toast("Nothing was addressed: %s" % error)
+            return
+        line = ("Followed '%s' conduit from element %d %s: %s to %s (%d device(s))"
+                % (type_name, anchor_id, how, self.address(kind, first), self.address(kind, first + len(chosen) - 1),
+                   len(chosen)))
+        if total is not None:
+            line += ", circuit total %s" % nv.fmt_amps(total)
+        self.runs.append(line)
+        for eid, key, reason in passed:
+            self.problems.append("Element %d (%s): on the followed conduit but passed over (%s)." % (eid, key, reason))
+        forms.toast("%d device(s) addressed downstream." % len(chosen))
+
+    # ---- Picking ----
+    def pick_devices(self):
+        flt = DeviceOrTagFilter(conduit=True)
+        while True:
+            prompt = ("Select device or its tag, or a conduit to address downstream (next: %s) - Esc to finish"
+                      % next_text(self.state))
+            try:
+                ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
+            except OperationCanceledException:
+                return
+            picked = doc.GetElement(ref.ElementId)
+            if isinstance(picked, Conduit):
+                self.follow_conduit(picked)
+                continue
+            el = resolve_device(picked)
+            if el is None:
+                forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
+                continue
+            self.address_device(el)
+
+    # ---- Summary ----
+    def report(self):
+        output.print_md("### Addressing complete")
+        for kind in nv.KINDS:
+            name = nv.KIND_NAMES[kind]
+            if kind not in self.state:
+                output.print_md("- %s: skipped this run" % name)
+                continue
+            s = self.state[kind]
+            how = "continued" if s["resumed"] else "new"
+            if s.get("from"):
+                how = "continued from %s" % s["from"]
+            if s["next"] > s["start"]:
+                output.print_md("- %s circuit **%s** (%s): %s to **%s**"
+                                % (name, self.circuit(kind), how, self.address(kind, s["start"]),
+                                   self.address(kind, s["next"] - 1)))
+            else:
+                output.print_md("- %s circuit **%s** (%s): nothing addressed" % (name, self.circuit(kind), how))
+        for line in self.runs:
+            output.print_md("- %s" % line)
+        output.print_md("- Devices addressed: **%d**" % len(self.log))
+        for eid, key, written in self.log:
+            output.print_md("    - %d : %s - %s"
+                            % (eid, key, ", ".join(self.address(k, written[k]) for k in nv.KINDS if k in written)))
+        if self.not_this_run:
+            output.print_md("- Picked but skipped (their kind was not being addressed this run):")
+            for eid, key, label in self.not_this_run:
+                output.print_md("    - %d : %s (%s)" % (eid, key, label))
+        if self.session_types:
+            output.print_md("- Types not defined in the lookup table (used for this run only):")
+            for k in sorted(self.session_types):
+                output.print_md("    - %s -> %s" % (k, self.session_types[k]))
+        output.print_md("- Lookup table: `%s`" % nv.table_path())
+        for msg in self.problems:
+            output.print_md("- Issue: %s" % msg)
+
+    def run(self):
+        if not self.choose_circuits():
+            return
+        try:
+            self.pick_devices()
+        except Exception as ex:
+            self.problems.append("Stopped by an unexpected error: %s" % ex)
+        if self.log or self.problems or self.not_this_run:
+            self.report()
 
 
-main()
+if SHIFT_CLICKED:
+    manage_table()
+else:
+    Session().run()
