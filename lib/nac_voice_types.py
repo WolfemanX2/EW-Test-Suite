@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v4
+# nac_voice_types module - version v5
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -48,6 +48,34 @@ VALUE_PATTERNS = {
 # such as "0.115 A" or "115 mA" is read too.
 CURRENT_PARAM_NAMES = ["Current"]
 DEFAULT_MAX_CURRENT = 1.2   # amps
+
+# EOL estimate written to the Comments of the last NAC device: total circuit current and the voltage left at the
+# end of the line, point to point. Each conduit segment carries the current of every device past it, through
+# two conductors (out and back). Conduit length only: no allowance for fittings, boxes or slack.
+SOURCE_VOLTS = 20.4             # 24 V battery at end of discharge
+WIRE_OHMS_PER_1000FT = 3.07     # 14 AWG
+EOL_COMMENT_KINDS = ("N",)      # Voice circuits get no estimate
+MIN_DEVICE_VOLTS = 16.0         # warn when the estimate is below this
+_COMMENT_PATTERN = re.compile(r"^\s*\d+(\.\d+)?\s*A(\s*,\s*EOL\s+-?\d+(\.\d+)?\s*V)?\s*$", re.IGNORECASE)
+
+
+def fmt_eol_comment(amps, volts):
+    """1.150 A, EOL 19.82 V  (or just the amps when the voltage couldn't be worked out)."""
+    text = "%.3f A" % amps
+    if volts is not None:
+        text += ", EOL %.2f V" % volts
+    return text
+
+
+def is_eol_comment(text):
+    """True for a comment this tool wrote (safe to clear when the device is no longer the EOL)."""
+    return bool(text) and bool(_COMMENT_PATTERN.match(text))
+
+
+def conduit_tokens(text):
+    """'N12,V16' -> ['N12', 'V16']"""
+    return [x.strip().upper() for x in (text or "").split(",") if x.strip()]
+
 
 NAC_ONLY = "NAC Only"
 VOICE_ONLY = "Voice Only"

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v6
-__title__ = "Address\nNAC / Voice v6"
+# Address NAC / Voice script - version v7
+__title__ = "Address\nNAC / Voice v7"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
@@ -17,7 +17,9 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "the devices of a run gets Notification Circuit = N12 (NAC, power supply 1, circuit 2) or V12 "
            "(Voice); a conduit carrying both holds both, e.g. N16,V16.\n\n"
            "When you finish, the last device of each circuit addressed gets NAC EOL / Voice EOL = Yes and every "
-           "other device on that circuit gets No.\n\n"
+           "other device on that circuit gets No. On NAC circuits the EOL device's Comments get the total "
+           "circuit current and the estimated EOL voltage (20.4 V source, 14 AWG at 3.07 ohms per 1000 ft, "
+           "point to point along the conduit, including the home run when it is connected).\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
            "(Address NAC / Voice - Config). A type that isn't in the table is asked about once per run.\n\n"
            "Shift+Click to define / remove table entries. Press Esc to finish picking.")
@@ -26,7 +28,7 @@ import os
 
 from System.Collections.Generic import List
 from Autodesk.Revit.DB import (Transaction, TransactionStatus, FilteredElementCollector, IndependentTag,
-                               ElementId)
+                               ElementId, BuiltInParameter, BuiltInCategory)
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -1078,6 +1080,123 @@ class Session(object):
             output.print_md("- Issue: %s" % msg)
 
     # ---- End of line ----
+    def eol_estimate(self, source, circuit, members, eol_el):
+        """(total amps, EOL volts or None, [notes]) for a NAC circuit."""
+        notes = []
+        amps_by_id, total = {}, 0.0
+        no_current = 0
+        for _n, el in members:
+            amps = nv.get_current(doc, el)
+            if amps is None:
+                no_current += 1
+                amps = 0.0
+            amps_by_id[nv.eid_int(el.Id)] = amps
+            total += amps
+        if no_current:
+            notes.append("%d device(s) have no Current value (counted as 0 A)" % no_current)
+
+        pname = nv.CONDUIT_PARAM_NAMES.get("N")
+        token = nv.fmt_conduit("N", source, circuit)
+
+        def tagged(el):
+            p = nv.get_param(el, pname) if pname else None
+            return p is not None and token in nv.conduit_tokens(p.AsString())
+
+        # The circuit: conduit marked with this circuit (e.g. N12), through fittings, boxes and devices.
+        root = min(members, key=lambda m: m[0])[1]
+        parent, els, order = ct.walk(root, lambda el: tagged(el) if isinstance(el, Conduit) else True)
+        eol_id = nv.eid_int(eol_el.Id)
+        if eol_id not in parent:
+            notes.append("EOL voltage not worked out: the conduit from the first device to the EOL device isn't "
+                         "all marked %s in %s (address the circuit with Automatic)" % (token, pname))
+            return total, None, notes
+        unreached = len([i for i in amps_by_id if i not in parent])
+        if unreached:
+            notes.append("%d device(s) on the circuit aren't connected by %s conduit; their current is counted "
+                         "for the home run only" % (unreached, token))
+
+        # Point to point: each conduit carries the current of every device past it, out and back.
+        ohms_per_ft = 2 * nv.WIRE_OHMS_PER_1000FT / 1000.0
+        beyond = dict.fromkeys(order, 0.0)
+        for i in reversed(order):
+            beyond[i] += amps_by_id.get(i, 0.0)
+            if parent[i] is not None:
+                beyond[parent[i]] += beyond[i]
+        drop, i = 0.0, eol_id
+        while i is not None:
+            if isinstance(els[i], Conduit):
+                drop += beyond[i] * ct.conduit_length(els[i]) * ohms_per_ft
+            i = parent[i]
+
+        # Home run: conduit of the same type from the first device back to the power supply.
+        types = set(ct.eid_int(els[i].GetTypeId()) for i in order if isinstance(els[i], Conduit))
+        home = self.home_run_length(root, types, tagged)
+        if home is None:
+            notes.append("home run to the power supply not found (not connected?), so it is not included")
+        else:
+            drop += total * home * ohms_per_ft
+        return total, nv.SOURCE_VOLTS - drop, notes
+
+    def home_run_length(self, root, types, tagged):
+        """Feet of conduit from the first device back to the nearest power supply, or None if not connected."""
+        def is_supply(el):
+            try:
+                cid = nv.eid_int(el.Category.Id)
+            except Exception:
+                return False
+            if cid == int(BuiltInCategory.OST_ElectricalEquipment):
+                return True
+            # a fire alarm family that isn't a NAC device (no NAC Address): booster / power supply
+            return nv.is_device(el) and nv.get_param(el, nv.PARAM_NAMES["N"]["address"]) is None
+
+        def enter(el):
+            if isinstance(el, Conduit):
+                return ct.eid_int(el.GetTypeId()) in types and not tagged(el)
+            if nv.is_device(el):
+                return is_supply(el)    # never pass through another device
+            return True                 # fittings, boxes, panels
+
+        parent, els, order = ct.walk(root, enter)
+        for i in order[1:]:
+            if is_supply(els[i]):
+                feet = 0.0
+                while i is not None:
+                    if isinstance(els[i], Conduit):
+                        feet += ct.conduit_length(els[i])
+                    i = parent[i]
+                return feet
+        return None
+
+    def eol_comments(self, source, circuit, members, last):
+        """Comments changes: the estimate on the EOL device(s); an old estimate cleared from the rest."""
+        changes = []
+        eols = [el for n, el in members if n == last]
+        total, volts, notes = self.eol_estimate(source, circuit, members, eols[0])
+        text = nv.fmt_eol_comment(total, volts)
+        circuit_text = nv.fmt_circuit("N", source, circuit)
+        for n, el in members:
+            try:
+                p = el.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+            except Exception:
+                p = None
+            if p is None or p.IsReadOnly:
+                if n == last:
+                    self.problems.append("%s: the EOL device (element %d) has no writable Comments parameter."
+                                         % (circuit_text, nv.eid_int(el.Id)))
+                continue
+            current = p.AsString() or ""
+            if n == last:
+                if current != text:
+                    changes.append((p, text))
+            elif nv.is_eol_comment(current):
+                changes.append((p, ""))     # no longer the EOL: clear the estimate this tool wrote
+        self.eol_lines.append("%s: Comments = %s%s" % (circuit_text, text,
+                                                       ("  (%s)" % "; ".join(notes)) if notes else ""))
+        if volts is not None and volts < nv.MIN_DEVICE_VOLTS:
+            self.problems.append("%s: estimated EOL voltage %.2f V is below %g V."
+                                 % (circuit_text, volts, nv.MIN_DEVICE_VOLTS))
+        return changes
+
     def set_eol(self):
         """Last device of each circuit touched this run: EOL = Yes; every other device on it: No."""
         if not self.touched:
@@ -1098,6 +1217,8 @@ class Session(object):
             last = max(n for n, _el in members)
             name = nv.EOL_PARAM_NAMES[kind]
             ends, missing = [], 0
+            if kind in nv.EOL_COMMENT_KINDS:
+                changes.extend(self.eol_comments(source, circuit, members, last))
             for n, el in members:
                 p = nv.get_yes_no(el, name)
                 if p is None:
@@ -1124,7 +1245,7 @@ class Session(object):
 
         if not changes:
             return
-        t = Transaction(doc, "Set NAC / Voice EOL")
+        t = Transaction(doc, "Set NAC / Voice EOL and estimate")
         try:
             t.Start()
             for p, value in changes:

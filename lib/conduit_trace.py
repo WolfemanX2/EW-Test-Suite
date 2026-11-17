@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# conduit_trace module - version v2
+# conduit_trace module - version v3
 """Follows conduit from one device to the devices downstream of it, in order of connection.
 
 Used by Address NAC / Voice. Same method as Address SLC's 'follow the conduit': only conduit of the picked type
@@ -222,3 +222,46 @@ def conduits_between(anchor, conduit, devices):
     if picked not in seen and picked in parent:
         found.append(g.elements[picked])
     return found
+
+
+def conduit_length(el):
+    """Length of a conduit in feet (0 if it can't be read)."""
+    try:
+        p = el.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH)
+        if p is not None and p.HasValue:
+            return p.AsDouble()
+    except Exception:
+        pass
+    try:
+        return el.Location.Curve.Length
+    except Exception:
+        return 0.0
+
+
+def walk(start, can_enter, limit=5000):
+    """Breadth-first walk over physically joined elements from start.
+    can_enter(element) -> False keeps the walk out of an element (it is not passed through).
+    Returns (parent {id: parent id}, elements {id: element}, ids in the order reached)."""
+    root = eid_int(start.Id)
+    parent, elements, order = {root: None}, {root: start}, [root]
+    frontier = [start]
+    while frontier and len(order) < limit:
+        following = []
+        for el in frontier:
+            i = eid_int(el.Id)
+            for group in connected_elements(el):
+                for n in group:
+                    j = eid_int(n.Id)
+                    if j in parent:
+                        continue
+                    try:
+                        ok = can_enter(n)
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        continue
+                    parent[j], elements[j] = i, n
+                    order.append(j)
+                    following.append(n)
+        frontier = following
+    return parent, elements, order
