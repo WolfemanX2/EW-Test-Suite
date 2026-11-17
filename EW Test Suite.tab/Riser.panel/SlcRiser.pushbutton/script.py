@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v14
-__title__ = "SLC\nRiser v14"
+# SLC Riser script - version v15
+__title__ = "SLC\nRiser v15"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
            "(either can be picked by its tag), choose the conduit types to trace, then check the device "
-           "count and adjust spacing / wrapping before the riser is drawn. The circuit is followed along "
+           "count and adjust spacing / wrapping, then choose to generate a new drafting view or add the circuit to "
+           "an existing one (it goes 10' above what is already there) before the riser is drawn. The circuit is followed along "
            "its conduit starting at the first device, away from the panel, so that device decides the "
            "order. Press Esc instead of picking a first device to follow every conduit run leaving the "
            "panel. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
@@ -25,8 +26,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter, IndependentTag
+    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils
 )
+from System.Collections.Generic import List
 try:
     from Autodesk.Revit.DB import VerticalTextAlignment
 except ImportError:
@@ -65,6 +67,10 @@ PANEL_BOX = (0.75, 0.5) # width, height of the box drawn for a panel that has no
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
+STACK_GAP_FT = 10.0     # adding to an existing view: lowest point of the new circuit to the highest point
+                        # of what is already in the view, in feet
+NEW_VIEW = "Generate New Drafting View"
+EXISTING_VIEW = "Add to Existing Drafting View"
 LABEL_ANGLE = math.pi / 4.0         # device address text: 45 degrees
 
 
@@ -409,6 +415,65 @@ def new_drafting_view(name):
     except Exception:
         pass    # keeps the name Revit gave it
     return view
+
+
+def drafting_views():
+    """{name: ViewDrafting} for every drafting view that isn't a template."""
+    found = {}
+    for v in FilteredElementCollector(doc).OfClass(ViewDrafting).ToElements():
+        try:
+            if not v.IsTemplate:
+                found[v.Name] = v
+        except Exception:
+            pass
+    return found
+
+
+def choose_target_view(default_name):
+    """None = generate a new view, a ViewDrafting = add to it, False = cancelled."""
+    views = drafting_views()
+    options = [NEW_VIEW, EXISTING_VIEW] if views else [NEW_VIEW]
+    choice = forms.CommandSwitchWindow.show(options, message="Where should this circuit be drawn?")
+    if not choice:
+        return False
+    if choice == NEW_VIEW:
+        return None
+    # SLC riser views first, then the rest, each alphabetical.
+    names = sorted(views, key=lambda n: (0 if "SLC RISER" in n.upper() else 1, n.upper()))
+    picked = forms.SelectFromList.show(names, title="Add the circuit to which drafting view?",
+                                       button_name="Add to View", multiselect=False)
+    if not picked:
+        return False
+    return views[picked]
+
+
+def view_element_ids(view):
+    """{id number: ElementId} of every element drawn in the view."""
+    try:
+        return dict((sr.eid_int(i), i) for i in FilteredElementCollector(doc, view.Id).ToElementIds())
+    except Exception:
+        return {}
+
+
+def y_range(view, ids):
+    """(lowest, highest) Y of those elements (ElementIds) in the view, or None if none of them has a size."""
+    lo = hi = None
+    for i in ids:
+        try:
+            el = doc.GetElement(i)
+        except Exception:
+            el = None
+        if el is None:
+            continue
+        try:
+            bb = el.get_BoundingBox(view)
+        except Exception:
+            bb = None
+        if bb is None:
+            continue
+        lo = bb.Min.Y if lo is None else min(lo, bb.Min.Y)
+        hi = bb.Max.Y if hi is None else max(hi, bb.Max.Y)
+    return None if lo is None else (lo, hi)
 
 
 def text_type():
@@ -777,11 +842,21 @@ def main():
 
     if not review_layout(rows):
         return
+    target = choose_target_view(view_name(root))
+    if target is False:
+        return
 
-    t = Transaction(doc, "Create SLC riser")
+    global VIEW_SCALE
+    t = Transaction(doc, "Create SLC riser" if target is None else "Add circuit to SLC riser")
     t.Start()
     try:
-        view = new_drafting_view(view_name(root))
+        before = {}
+        if target is None:
+            view = new_drafting_view(view_name(root))
+        else:
+            view = target
+            VIEW_SCALE = view.Scale     # sizes on the sheet follow the view being added to
+            before = view_element_ids(view)
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
         if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n != root_id):
@@ -820,6 +895,17 @@ def main():
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
         failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id)
+        if target is not None:
+            # Move the new circuit so its lowest point is STACK_GAP_FT above the highest point already there.
+            doc.Regenerate()
+            existing = y_range(view, before.values())
+            now = view_element_ids(view)
+            new_ids = [eid for k, eid in now.items() if k not in before]
+            added = y_range(view, new_ids)
+            if existing is not None and added is not None and new_ids:
+                dy = existing[1] + STACK_GAP_FT - added[0]
+                ids = List[ElementId](new_ids)
+                ElementTransformUtils.MoveElements(doc, ids, XYZ(0, dy, 0))
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
@@ -835,7 +921,8 @@ def main():
     count = sum(len(row["nodes"]) for row in rows)
     runs = len([row for row in rows if row["source"] is None])
     taps = len(rows) - runs
-    msg = "Created '%s': %d device(s) on %d run(s)" % (view.Name, count, runs)
+    msg = "%s '%s': %d device(s) on %d run(s)" % ("Created" if target is None else "Added to",
+                                                   view.Name, count, runs)
     if taps:
         msg += " and %d T-tap(s)" % taps
     msg += "."
