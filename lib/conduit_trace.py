@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# conduit_trace module - version v1
+# conduit_trace module - version v2
 """Follows conduit from one device to the devices downstream of it, in order of connection.
 
 Used by Address NAC / Voice. Same method as Address SLC's 'follow the conduit': only conduit of the picked type
@@ -159,28 +159,66 @@ def trace_downstream(conduit, anchor, ports, allowed, is_device):
     return order, None
 
 
+class _Graph(object):
+    """Elements joined by conduit, read on demand. Only conduit of one type is followed."""
+    def __init__(self, conduit):
+        self.type_id = eid_int(conduit.GetTypeId())
+        self.elements, self.port_cache = {}, {}
+
+    def remember(self, el):
+        i = eid_int(el.Id)
+        self.elements.setdefault(i, el)
+        return i
+
+    def ports(self, i):
+        if i not in self.port_cache:
+            self.port_cache[i] = [[self.remember(e) for e in group]
+                                  for group in connected_elements(self.elements[i])]
+        return self.port_cache[i]
+
+    def allowed(self, i):
+        el = self.elements[i]
+        return not isinstance(el, Conduit) or eid_int(el.GetTypeId()) == self.type_id
+
+
 def follow(doc, anchor, conduit, is_device):
     """Devices downstream of the anchor device along the picked conduit's type, in order.
     Returns ([elements], None), or (None, reason)."""
-    type_id = eid_int(conduit.GetTypeId())
-    elements, port_cache = {}, {}
-
-    def remember(el):
-        i = eid_int(el.Id)
-        elements.setdefault(i, el)
-        return i
-
-    def ports(i):
-        if i not in port_cache:
-            port_cache[i] = [[remember(e) for e in group] for group in connected_elements(elements[i])]
-        return port_cache[i]
-
-    def allowed(i):
-        el = elements[i]
-        return not isinstance(el, Conduit) or eid_int(el.GetTypeId()) == type_id
-
-    order, problem = trace_downstream(remember(conduit), remember(anchor), ports, allowed,
-                                      lambda i: is_device(elements[i]))
+    g = _Graph(conduit)
+    order, problem = trace_downstream(g.remember(conduit), g.remember(anchor), g.ports, g.allowed,
+                                      lambda i: is_device(g.elements[i]))
     if problem:
         return None, problem
-    return [elements[i] for i in order], None
+    return [g.elements[i] for i in order], None
+
+
+def conduits_between(anchor, conduit, devices):
+    """Conduits of the picked conduit's type on the way from the anchor device to each of the devices.
+    The anchor's other side (towards the panel) is not included."""
+    g = _Graph(conduit)
+    start, picked = g.remember(anchor), g.remember(conduit)
+    wanted = set(g.remember(d) for d in devices)
+    # Way from the anchor to every element (conduit runs are trees, so there is one way to each device).
+    parent, frontier = {start: None}, [start]
+    while frontier and not wanted.issubset(parent):
+        following = []
+        for i in frontier:
+            for group in g.ports(i):
+                for n in group:
+                    if n in parent or not g.allowed(n):
+                        continue
+                    parent[n] = i
+                    following.append(n)
+        frontier = following
+    found = []
+    seen = set()
+    for d in wanted:
+        i = d
+        while i is not None and i not in seen:
+            seen.add(i)
+            if isinstance(g.elements[i], Conduit):
+                found.append(g.elements[i])
+            i = parent.get(i)
+    if picked not in seen and picked in parent:
+        found.append(g.elements[picked])
+    return found

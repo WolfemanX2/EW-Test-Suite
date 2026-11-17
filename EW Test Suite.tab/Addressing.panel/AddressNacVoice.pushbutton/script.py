@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v3
-__title__ = "Address\nNAC / Voice v3"
+# Address NAC / Voice script - version v4
+__title__ = "Address\nNAC / Voice v4"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
@@ -12,7 +12,10 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "Address downstream: after a device is addressed (or after 'Continue from selected'), pick a conduit "
            "leaving it. The devices connected downstream by that conduit type are found in order of connection, "
            "and you choose how far to go: to a device you pick, up to a max device count for the circuit, or "
-           "up to a max current (amps, from each device's Current parameter; default 1.2 A).\n\n"
+           "up to a max current (amps, from each device's Current parameter; default 1.2 A). The conduit between "
+           "the devices of a NAC run gets Notification Circuit = N12 (power supply 1, circuit 2).\n\n"
+           "When you finish, the last device of each circuit addressed gets NAC EOL / Voice EOL = Yes and every "
+           "other device on that circuit gets No.\n\n"
            "Each Family : Type is NAC Only, Voice Only, or NAC and Voice, from the lookup table "
            "(Address NAC / Voice - Config). A type that isn't in the table is asked about once per run.\n\n"
            "Shift+Click to define / remove table entries. Press Esc to finish picking.")
@@ -163,7 +166,7 @@ NEW_CIRCUIT_XAML = """
         </StackPanel>
         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="Circuit number:" Width="240" VerticalAlignment="Center"/>
-            <TextBox x:Name="circuit_box" Width="90"/>
+            <ComboBox x:Name="circuit_box" Width="90"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="Starting device number:" Width="240" VerticalAlignment="Center"/>
@@ -195,7 +198,9 @@ class NewCircuitDialog(forms.WPFWindow):
         label = "%s number:" % nv.SOURCE_NAMES[kind]
         self.source_label.Text = label[0].upper() + label[1:]
         self.source_box.Text = "1"
-        self.circuit_box.Text = "1"
+        for n in nv.CIRCUIT_RANGES[kind]:
+            self.circuit_box.Items.Add(str(n))
+        self.circuit_box.SelectedIndex = 0
         self.start_box.Text = "1"
         self.source_box.Focus()
         self.source_box.SelectAll()
@@ -213,9 +218,10 @@ class NewCircuitDialog(forms.WPFWindow):
         source = self._read(self.source_box, "The %s number" % nv.SOURCE_NAMES[self.kind], 0)
         if source is None:
             return
-        circuit = self._read(self.circuit_box, "The circuit number", 0)
-        if circuit is None:
+        if self.circuit_box.SelectedItem is None:
+            self.error_text.Text = "Choose a circuit number."
             return
+        circuit = int(str(self.circuit_box.SelectedItem))
         start = self._read(self.start_box, "The starting device number", 1)
         if start is None:
             return
@@ -531,6 +537,9 @@ class Session(object):
         self.anchor = None          # device a downstream run starts from: the last one addressed or continued
         self.run_kinds = {}         # conduit type id -> kind chosen for it this run
         self.runs = []              # summary lines of the downstream runs
+        self.touched = set()        # (kind, source, circuit) given or losing a device this run: EOL is redone
+        self.conduits_set = 0       # conduit segments given a circuit this run
+        self.eol_lines = []         # summary lines of the EOL devices
         self.downstream = {"mode": "end", "count": "", "current": str(nv.DEFAULT_MAX_CURRENT),
                            "include_existing": True}    # last answers in the downstream dialog
 
@@ -610,9 +619,10 @@ class Session(object):
             targets[kind] = (addr_p, circ_p)
         return targets, missing
 
-    def write(self, items, name):
+    def write(self, items, name, conduits=()):
         """Writes addresses in one transaction, numbering in order from the counters.
         items = [(element, type key, {kind: (address param, circuit param or None)})].
+        conduits = [(conduit parameter, text)] written in the same transaction.
         Returns None, or the reason nothing was written."""
         nexts = dict((k, self.state[k]["next"]) for k in self.state)
         numbers = []
@@ -624,10 +634,21 @@ class Session(object):
                     nexts[kind] += 1
             numbers.append(assigned)
 
+        touched = set()
+        for (el, _key, _targets), assigned in zip(items, numbers):
+            for kind in assigned:
+                s = self.state[kind]
+                touched.add((kind, s["source"], s["circuit"]))
+                old = address_on(el, kind)      # the circuit the device leaves needs its EOL redone too
+                if old:
+                    touched.add((kind, old[0], old[1]))
+
         error = None
         t = Transaction(doc, name)
         try:
             t.Start()
+            for p, text in conduits:
+                p.Set(text)
             for (_el, _key, targets), assigned in zip(items, numbers):
                 for kind, number in assigned.items():
                     addr_p, circ_p = targets[kind]
@@ -650,6 +671,8 @@ class Session(object):
 
         for kind in nexts:
             self.state[kind]["next"] = nexts[kind]
+        self.touched.update(touched)
+        self.conduits_set += len(conduits)
         for (el, key, targets), assigned in zip(items, numbers):
             eid = nv.eid_int(el.Id)
             self.log.append((eid, key, assigned))
@@ -752,6 +775,28 @@ class Session(object):
             forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that take a %s "
                         "address. Pick another, or press Esc to go back."
                         % (len(candidates), type_name, nv.KIND_NAMES[kind]), title=TITLE)
+
+    def run_conduits(self, kind, conduit, devices):
+        """([(conduit parameter, text)], conduits without the parameter) for the conduit between the anchor and
+        the devices of a downstream run."""
+        name = nv.CONDUIT_PARAM_NAMES.get(kind)
+        if not name:
+            return [], 0
+        s = self.state[kind]
+        text = nv.fmt_conduit(kind, s["source"], s["circuit"])
+        sets, missing = [], 0
+        try:
+            found = ct.conduits_between(self.anchor, conduit, devices)
+        except Exception as ex:
+            self.problems.append("Could not find the conduit of the run to fill %s: %s" % (name, ex))
+            return [], 0
+        for c in found:
+            p = nv.get_param(c, name)
+            if p is None or p.IsReadOnly:
+                missing += 1
+            else:
+                sets.append((p, text))
+        return sets, missing
 
     def follow_conduit(self, conduit):
         """Addresses devices downstream of the anchor device along the picked conduit's type."""
@@ -892,8 +937,10 @@ class Session(object):
         if not go_on:
             return
 
+        conduits, no_param = self.run_conduits(kind, conduit, [c["el"] for c in chosen])
         first = next_number
-        error = self.write([(c["el"], c["key"], c["targets"]) for c in chosen], "Address NAC / Voice downstream")
+        error = self.write([(c["el"], c["key"], c["targets"]) for c in chosen], "Address NAC / Voice downstream",
+                           conduits)
         if error:
             self.problems.append("Downstream of element %d: nothing was addressed (%s)" % (anchor_id, error))
             forms.toast("Nothing was addressed: %s" % error)
@@ -903,6 +950,11 @@ class Session(object):
                    len(chosen)))
         if total is not None:
             line += ", circuit total %s" % nv.fmt_amps(total)
+        if conduits:
+            line += "; %d conduit(s) set to %s" % (len(conduits), conduits[0][1])
+        if no_param:
+            self.problems.append("%d conduit(s) on the run from element %d have no writable %s parameter."
+                                 % (no_param, anchor_id, nv.CONDUIT_PARAM_NAMES[kind]))
         self.runs.append(line)
         for eid, key, reason in passed:
             self.problems.append("Element %d (%s): on the followed conduit but passed over (%s)." % (eid, key, reason))
@@ -948,6 +1000,8 @@ class Session(object):
                 output.print_md("- %s circuit **%s** (%s): nothing addressed" % (name, self.circuit(kind), how))
         for line in self.runs:
             output.print_md("- %s" % line)
+        for line in self.eol_lines:
+            output.print_md("- EOL %s" % line)
         output.print_md("- Devices addressed: **%d**" % len(self.log))
         for eid, key, written in self.log:
             output.print_md("    - %d : %s - %s"
@@ -964,6 +1018,70 @@ class Session(object):
         for msg in self.problems:
             output.print_md("- Issue: %s" % msg)
 
+    # ---- End of line ----
+    def set_eol(self):
+        """Last device of each circuit touched this run: EOL = Yes; every other device on it: No."""
+        if not self.touched:
+            return
+        circuits = {}       # (kind, source, circuit) -> [(number, element)]
+        for el in all_devices():
+            for kind in nv.KINDS:
+                parsed = address_on(el, kind)
+                if parsed and (kind, parsed[0], parsed[1]) in self.touched:
+                    circuits.setdefault((kind, parsed[0], parsed[1]), []).append((parsed[2], el))
+
+        changes = []        # (parameter, value)
+        for key in sorted(self.touched):
+            kind, source, circuit = key
+            members = circuits.get(key, [])
+            if not members:
+                continue
+            last = max(n for n, _el in members)
+            name = nv.EOL_PARAM_NAMES[kind]
+            ends, missing = [], 0
+            for n, el in members:
+                p = nv.get_yes_no(el, name)
+                if p is None:
+                    missing += 1
+                    if n == last:
+                        self.problems.append("%s: the last device (element %d) has no writable %s parameter."
+                                             % (nv.fmt_address(kind, source, circuit, n), nv.eid_int(el.Id), name))
+                    continue
+                value = 1 if n == last else 0
+                if n == last:
+                    ends.append(nv.eid_int(el.Id))
+                if p.AsInteger() != value:
+                    changes.append((p, value))
+            circuit_text = nv.fmt_circuit(kind, source, circuit)
+            if len(ends) > 1:
+                self.problems.append("%s: %d devices share the last address %s; all are set to %s = Yes."
+                                     % (circuit_text, len(ends), nv.fmt_address(kind, source, circuit, last), name))
+            if ends:
+                self.eol_lines.append("%s: %s = Yes on %s (element %s)"
+                                      % (circuit_text, name, nv.fmt_address(kind, source, circuit, last),
+                                         ", ".join(str(i) for i in ends)))
+            if missing:
+                self.problems.append("%s: %d device(s) have no writable %s parameter." % (circuit_text, missing, name))
+
+        if not changes:
+            return
+        t = Transaction(doc, "Set NAC / Voice EOL")
+        try:
+            t.Start()
+            for p, value in changes:
+                p.Set(value)
+            if t.Commit() != TransactionStatus.Committed:
+                self.problems.append("EOL parameters were not set: the change was rolled back.")
+                self.eol_lines = []
+        except Exception as ex:
+            try:
+                if t.GetStatus() == TransactionStatus.Started:
+                    t.RollBack()
+            except Exception:
+                pass
+            self.problems.append("EOL parameters were not set: %s" % ex)
+            self.eol_lines = []
+
     def run(self):
         if not self.choose_circuits():
             return
@@ -971,6 +1089,10 @@ class Session(object):
             self.pick_devices()
         except Exception as ex:
             self.problems.append("Stopped by an unexpected error: %s" % ex)
+        try:
+            self.set_eol()
+        except Exception as ex:
+            self.problems.append("EOL parameters were not set: %s" % ex)
         if self.log or self.problems or self.not_this_run:
             self.report()
 

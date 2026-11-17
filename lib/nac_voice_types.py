@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v2
+# nac_voice_types module - version v3
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -28,6 +28,14 @@ PARAM_NAMES = {
     "N": {"address": "NAC Address", "circuit": "NAC Circuit"},
     "V": {"address": "Voice Address", "circuit": "Voice Circuit"},
 }
+# Yes/No parameter on the device: Yes on the last device of its circuit, No on every other device of the circuit.
+EOL_PARAM_NAMES = {"N": "NAC EOL", "V": "Voice EOL"}
+# Text parameter on the conduit between the devices of a downstream run: N12 = power supply 1, circuit 2.
+# Set a kind to None to leave its conduit alone.
+CONDUIT_PARAM_NAMES = {"N": "Notification Circuit", "V": None}
+# Circuit numbers offered when starting a new circuit.
+CIRCUIT_RANGES = {"N": range(1, 7), "V": range(1, 9)}
+
 # A written address: N2-3.14 = power supply 2, circuit 3, 14th device on the circuit.
 VALUE_PATTERNS = {
     "N": re.compile(r"^N(\d+)-(\d+)\.(\d+)$", re.IGNORECASE),
@@ -58,6 +66,11 @@ def table_path():
 def fmt_circuit(kind, source, circuit):
     """N2-3"""
     return "%s%d-%d" % (kind, source, circuit)
+
+
+def fmt_conduit(kind, source, circuit):
+    """N12 - written on the conduit of a downstream run."""
+    return "%s%d%d" % (kind, source, circuit)
 
 
 def fmt_address(kind, source, circuit, num):
@@ -110,6 +123,19 @@ def get_param(el, name):
         if found is None:
             found = p
     return found
+
+
+def get_yes_no(el, name):
+    """The writable Yes/No parameter with that name (case ignored), or None."""
+    wanted = name.strip().lower()
+    for p in el.Parameters:
+        try:
+            if p.Definition.Name.strip().lower() == wanted and p.StorageType == StorageType.Integer \
+                    and not p.IsReadOnly:
+                return p
+        except Exception:
+            continue
+    return None
 
 
 _NUMBER = re.compile(r"([0-9]*\.?[0-9]+)\s*(m?A)?", re.IGNORECASE)
