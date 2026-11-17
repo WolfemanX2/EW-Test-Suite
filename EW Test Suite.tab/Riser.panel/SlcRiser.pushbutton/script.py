@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v8
-__title__ = "SLC\nRiser v8"
+# SLC Riser script - version v9
+__title__ = "SLC\nRiser v9"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -12,6 +12,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop (L#), read from those addresses. "
            "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
+           "Only conduit of the types you choose is followed (the types connected to the first devices are "
+           "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
            "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
@@ -25,6 +27,7 @@ try:
     from Autodesk.Revit.DB import VerticalTextAlignment
 except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
+from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
@@ -205,37 +208,134 @@ def view_name(root):
 
 
 # ---------- Tracing ----------
-def trace_from(root, firsts):
-    """(rows, returns, elements, addresses, unaddressed devices) for the conduit connected to root.
-    firsts: the first device of each loop (empty = every run leaving root)."""
-    elements = {}       # id -> element
-    addresses = {}      # id -> [SLC addresses] for fire alarm devices
-    port_cache = {}
+class Network(object):
+    """The conduit connections around the panel, read from the model as they are needed.
+    allowed: conduit type ids (ints) that may be followed; None = any conduit."""
+    def __init__(self):
+        self.elements = {}      # id -> element
+        self.addresses = {}     # id -> [SLC addresses] for fire alarm devices
+        self.conduit_type = {}  # id -> conduit type id, for conduit
+        self.type_elem_ids = {} # conduit type id -> its ElementId
+        self._cache = {}
+        self.allowed = None
 
-    def remember(el):
+    def remember(self, el):
         i = sr.eid_int(el.Id)
-        if i not in elements:
-            elements[i] = el
+        if i not in self.elements:
+            self.elements[i] = el
             if sr.is_device(el):
-                addresses[i] = sr.slc_addresses(el)
+                self.addresses[i] = sr.slc_addresses(el)
+            elif isinstance(el, Conduit):
+                tid = el.GetTypeId()
+                self.conduit_type[i] = sr.eid_int(tid)
+                self.type_elem_ids[sr.eid_int(tid)] = tid
         return i
 
-    def ports(i):
-        if i not in port_cache:
-            port_cache[i] = [[remember(e) for e in group] for group in sr.connected_elements(elements[i])]
-        return port_cache[i]
+    def raw_ports(self, i):
+        if i not in self._cache:
+            self._cache[i] = [[self.remember(e) for e in group]
+                              for group in sr.connected_elements(self.elements[i])]
+        return self._cache[i]
 
-    def is_node(i):
-        return bool(addresses.get(i))
+    def followed(self, i):
+        t = self.conduit_type.get(i)
+        return t is None or self.allowed is None or t in self.allowed
 
-    root_id = remember(root)
-    starts = [remember(el) for el in firsts]
-    children, returns, passed = rl.trace(root_id, ports, is_node, starts or None)
+    def ports(self, i):
+        groups = self.raw_ports(i)
+        if self.allowed is None:
+            return groups
+        return [[e for e in g if self.followed(e)] for g in groups]
+
+    def is_node(self, i):
+        return bool(self.addresses.get(i))
+
+    def conduit_types_at(self, ids):
+        """Conduit type ids joined to these elements, directly or through one fitting / box."""
+        found = set()
+        for i in ids:
+            for g in self.raw_ports(i):
+                for e in g:
+                    if e in self.conduit_type:
+                        found.add(self.conduit_type[e])
+                    elif e not in self.addresses:
+                        for g2 in self.raw_ports(e):
+                            for e2 in g2:
+                                if e2 in self.conduit_type:
+                                    found.add(self.conduit_type[e2])
+        return found
+
+    def all_conduit_types(self, root_id):
+        """Conduit type ids used anywhere in the conduit connected to the panel (followed without a filter)."""
+        found, seen, queue = set(), set([root_id]), [root_id]
+        while queue:
+            i = queue.pop()
+            if i in self.conduit_type:
+                found.add(self.conduit_type[i])
+            for g in self.raw_ports(i):
+                for e in g:
+                    if e not in seen:
+                        seen.add(e)
+                        queue.append(e)
+        return found
+
+
+class ConduitTypeChoice(object):
+    """One conduit type in the list of types to follow."""
+    def __init__(self, tid, name):
+        self.tid = tid
+        self.name = name
+
+    def __str__(self):
+        return self.name
+
+
+def conduit_type_name(net, tid):
+    t = None
+    try:
+        t = doc.GetElement(net.type_elem_ids[tid])
+    except Exception:
+        pass
+    if t is None:
+        return "Conduit type %d" % tid
+    try:
+        return "%s : %s" % (t.FamilyName, sr.type_name(t))
+    except Exception:
+        return sr.type_name(t)
+
+
+def choose_conduit_types(net, root_id, start_ids):
+    """Conduit type ids to follow, or None if the user cancelled. Asks only when there is a choice."""
+    in_network = net.all_conduit_types(root_id)
+    if len(in_network) <= 1:
+        return in_network
+    ticked = (net.conduit_types_at(start_ids) & in_network) or in_network
+    choices = sorted((ConduitTypeChoice(tid, conduit_type_name(net, tid)) for tid in in_network),
+                     key=lambda c: c.name)
+    items = [forms.TemplateListItem(c, checked=(c.tid in ticked), name_attr="name") for c in choices]
+    picked = forms.SelectFromList.show(items, title="Follow which conduit types? (ticked: at the first devices)",
+                                       button_name="Follow", multiselect=True)
+    if not picked:
+        return None
+    return set(c.tid for c in picked)
+
+
+def trace_from(root, firsts):
+    """(rows, returns, elements, addresses, unaddressed devices) for the conduit connected to root, or None
+    if the user cancelled. firsts: the first device of each loop (empty = every run leaving root)."""
+    net = Network()
+    root_id = net.remember(root)
+    starts = [net.remember(el) for el in firsts]
+    allowed = choose_conduit_types(net, root_id, starts or [root_id])
+    if allowed is None:
+        return None
+    net.allowed = allowed
+    children, returns, passed = rl.trace(root_id, net.ports, net.is_node, starts or None)
     rows = rl.build_rows(root_id, children)
     for row in rows:
-        row["label"] = sr.loop_label([addresses[n] for n in row["nodes"]])
-    unaddressed = [elements[i] for i in passed if i in addresses]
-    return rows, returns, elements, addresses, unaddressed
+        row["label"] = sr.loop_label([net.addresses[n] for n in row["nodes"]])
+    unaddressed = [net.elements[i] for i in passed if i in net.addresses]
+    return rows, returns, net.elements, net.addresses, unaddressed
 
 
 # ---------- Drawing ----------
@@ -361,10 +461,14 @@ def main():
     if root is None:
         return
     firsts = first_devices(root)
-    rows, returns, elements, addresses, unaddressed = trace_from(root, firsts)
+    traced = trace_from(root, firsts)
+    if traced is None:
+        return
+    rows, returns, elements, addresses, unaddressed = traced
     root_id = sr.eid_int(root.Id)
     if not rows:
-        msg = "No devices with an SLC address are connected by conduit to the selected element."
+        msg = ("No devices with an SLC address are connected to the selected element by conduit of the "
+               "chosen type(s).")
         if unaddressed:
             msg += ("\n\n%d Fire Alarm Device(s) on that conduit have no value in SLC Address "
                     "(or SLC Address 2 ... %d)." % (len(unaddressed), sr.SLC_ADDRESS_COUNT))
