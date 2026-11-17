@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice script - version v5
-__title__ = "Address\nNAC / Voice v5"
+# Address NAC / Voice script - version v6
+__title__ = "Address\nNAC / Voice v6"
 __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on each picked Fire Alarm Device "
            "(or a tag hosted to one), in order of selection.\n\n"
            "NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#\n"
@@ -9,8 +9,9 @@ __doc__ = ("Fills NAC Address / NAC Circuit and Voice Address / Voice Circuit on
            "(resumes after its highest device number), continue from a selected device (resumes after that "
            "device's number), start a new one, or skip that kind for this run. "
            "NAC and Voice are counted separately.\n\n"
-           "Address downstream: after a device is addressed (or after 'Continue from selected'), pick a conduit "
-           "leaving it. The devices connected downstream by that conduit type are found in order of connection, "
+           "After the first device is addressed (or chosen with 'Continue from selected'), choose Manual or "
+           "Automatic. Manual: pick each device yourself. Automatic: the conduit leaving the device is followed "
+           "(you pick it if the device has more than one). You can also pick a conduit at any time. The devices connected downstream by that conduit type are found in order of connection, "
            "and you choose how far to go: to a device you pick, up to a max device count for the circuit, or "
            "up to a max current (amps, from each device's Current parameter; default 1.2 A). The conduit between "
            "the devices of a run gets Notification Circuit = N12 (NAC, power supply 1, circuit 2) or V12 "
@@ -85,6 +86,18 @@ def resolve_device(elem):
             if host is not None and nv.is_device(host):
                 return host
     return None
+
+
+class ConduitFilter(ISelectionFilter):
+    def AllowElement(self, elem):
+        return isinstance(elem, Conduit)
+
+    def AllowReference(self, ref, pt):
+        return False
+
+
+MANUAL_LABEL = "Manual - pick each device"
+AUTOMATIC_LABEL = "Automatic - address downstream"
 
 
 class DeviceOrTagFilter(ISelectionFilter):
@@ -541,6 +554,7 @@ class Session(object):
         self.touched = set()        # (kind, source, circuit) given or losing a device this run: EOL is redone
         self.conduits_set = 0       # conduit segments given a circuit this run
         self.eol_lines = []         # summary lines of the EOL devices
+        self.manual = False         # True once the user chooses Manual: no more Manual / Automatic prompts
         self.downstream = {"mode": "end", "count": "", "current": str(nv.DEFAULT_MAX_CURRENT),
                            "include_existing": True}    # last answers in the downstream dialog
 
@@ -726,6 +740,8 @@ class Session(object):
         if error:
             self.problems.append("Element %d: %s" % (eid, error))
             forms.toast("That device was not addressed: %s" % error)
+            return False
+        return True
 
     # ---- Address downstream ----
     def run_kind(self, conduit, type_name):
@@ -962,9 +978,49 @@ class Session(object):
             self.problems.append("Element %d (%s): on the followed conduit but passed over (%s)." % (eid, key, reason))
         forms.toast("%d device(s) addressed downstream." % len(chosen))
 
+    # ---- Manual or automatic ----
+    def ask_mode(self):
+        """After the first device: Manual (keep picking devices) or Automatic (address downstream)."""
+        if self.manual or self.anchor is None:
+            return
+        choice = forms.CommandSwitchWindow.show(
+            [MANUAL_LABEL, AUTOMATIC_LABEL],
+            message="Element %d is the first device. How do you want to address the rest of the circuit?"
+                    % nv.eid_int(self.anchor.Id))
+        if choice == AUTOMATIC_LABEL:
+            self.start_automatic()
+        else:
+            self.manual = True      # Manual, or the prompt was closed
+
+    def start_automatic(self):
+        """Follows the conduit leaving the first device; asks which one if it has more than one."""
+        conduits, seen = [], set()
+        for group in ct.connected_elements(self.anchor):
+            for el in group:
+                i = nv.eid_int(el.Id)
+                if isinstance(el, Conduit) and i not in seen:
+                    seen.add(i)
+                    conduits.append(el)
+        if len(conduits) == 1:
+            self.follow_conduit(conduits[0])
+            return
+        if not conduits:
+            # Joined through a fitting or box: let the user pick the conduit on the run.
+            message = "Select the conduit of the run to address - Esc to pick devices manually"
+        else:
+            message = ("Element %d has %d conduits: select the one leaving it in the direction to address - Esc "
+                       "to pick devices manually" % (nv.eid_int(self.anchor.Id), len(conduits)))
+        try:
+            ref = uidoc.Selection.PickObject(ObjectType.Element, ConduitFilter(), message)
+        except OperationCanceledException:
+            self.manual = True
+            return
+        self.follow_conduit(doc.GetElement(ref.ElementId))
+
     # ---- Picking ----
     def pick_devices(self):
         flt = DeviceOrTagFilter(conduit=True)
+        self.ask_mode()     # first device chosen with 'Continue from selected'
         while True:
             prompt = ("Select device or its tag, or a conduit to address downstream (next: %s) - Esc to finish"
                       % next_text(self.state))
@@ -980,7 +1036,8 @@ class Session(object):
             if el is None:
                 forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
                 continue
-            self.address_device(el)
+            if self.address_device(el):
+                self.ask_mode()
 
     # ---- Summary ----
     def report(self):
