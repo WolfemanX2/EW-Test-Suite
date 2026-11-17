@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-# SLC Riser - Config script - version v2
-__title__ = "SLC Riser - Config v2"
-__doc__ = ("Editable table of the symbol the riser tools draw for each Family : Type.\n\n"
+# SLC Riser - Config script - version v3
+__title__ = "SLC Riser - Config v3"
+__doc__ = ("Drawing settings for SLC Riser (drafting view scale, spacing between devices, devices per line "
+           "before wrapping, address text offset) and the table of the symbol drawn for each Family : Type.\n\n"
            "The symbol is any loaded Generic Annotation or Detail Item type. 'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")
 
@@ -40,20 +41,49 @@ EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SLC Riser - Config"
-        Width="860" Height="520" MinWidth="680" MinHeight="380"
+        Width="860" Height="640" MinWidth="680" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
+        <GroupBox Grid.Row="0" Header="Riser drawing" Margin="0,0,0,10" Padding="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="32"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="90"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Drafting view scale:" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                <ComboBox x:Name="scale_box" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6" IsEditable="False"
+                          SelectionChanged="setting_changed"/>
+                <TextBlock Grid.Row="0" Grid.Column="3" Text="Spacing between devices (ft):" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                <TextBox x:Name="spacing_box" Grid.Row="0" Grid.Column="4" Margin="0,0,0,6" TextChanged="setting_changed"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Devices before wrapping:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="per_line_box" Grid.Row="1" Grid.Column="1" TextChanged="setting_changed"/>
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="Address text below line (in):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="offset_box" Grid.Row="1" Grid.Column="4" TextChanged="setting_changed"/>
+                <Button Grid.Row="1" Grid.Column="5" Content="Defaults" Width="80" HorizontalAlignment="Right"
+                        Click="defaults_click"/>
+            </Grid>
+        </GroupBox>
+
+        <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8"
                    Text="Choose the symbol drawn on riser diagrams for each Family Type. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
 
-        <DataGrid x:Name="grid" Grid.Row="1"
+        <DataGrid x:Name="grid" Grid.Row="2"
                   AutoGenerateColumns="False"
                   CanUserAddRows="True" CanUserDeleteRows="True"
                   SelectionMode="Extended" SelectionUnit="FullRow"
@@ -67,7 +97,7 @@ EDITOR_XAML = """
             </DataGrid.Columns>
         </DataGrid>
 
-        <DockPanel Grid.Row="2" Margin="0,10,0,0" LastChildFill="False">
+        <DockPanel Grid.Row="3" Margin="0,10,0,0" LastChildFill="False">
             <Button Content="Add Types From Project..." Width="170"
                     Margin="0,0,8,0" Click="add_click" DockPanel.Dock="Left"/>
             <Button Content="Set Symbol For Selected..." Width="170"
@@ -86,9 +116,18 @@ EDITOR_XAML = """
 """
 
 
+def number_text(v):
+    """4.5 -> '4.5', 6.0 -> '6'"""
+    return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+
 class TableEditor(forms.WPFWindow):
-    def __init__(self, table):
+    def __init__(self, table, settings):
         forms.WPFWindow.__init__(self, EDITOR_XAML, literal_string=True)
+        self._loading = True
+        self.settings_dirty = False
+        self.scale_box.ItemsSource = [label for label, _ in sr.SCALES]
+        self._show_settings(settings)
 
         # Symbols loaded now, plus any saved ones that aren't loaded in this project (so they aren't lost).
         self.symbols = sorted(set(sr.available_symbols(doc).keys()) | set(v for v in table.values() if v))
@@ -104,6 +143,56 @@ class TableEditor(forms.WPFWindow):
         self.dt.AcceptChanges()
         self.grid.ItemsSource = self.dt.DefaultView
         self.status_text.Text = "%d type(s) loaded" % len(table)
+        self._loading = False
+
+    # ---- Drawing settings ----
+    def _show_settings(self, settings):
+        self._loading = True
+        scale = settings["view_scale"]
+        labels = [label for label, num in sr.SCALES if num == scale]
+        if not labels:     # a scale saved by hand that isn't in the list
+            label = "1 : %d" % scale
+            self.scale_box.ItemsSource = [l for l, _ in sr.SCALES] + [label]
+            labels = [label]
+        self.scale_box.SelectedItem = labels[0]
+        self.spacing_box.Text = number_text(settings["device_spacing_ft"])
+        self.per_line_box.Text = number_text(settings["devices_per_line"])
+        self.offset_box.Text = number_text(settings["label_offset_in"])
+        self._loading = False
+
+    def setting_changed(self, sender, args):
+        if not self._loading:
+            self.settings_dirty = True
+
+    def defaults_click(self, sender, args):
+        self._show_settings(sr.DEFAULT_SETTINGS)
+        self.settings_dirty = True
+        self.status_text.Text = "Default drawing settings shown (unsaved)"
+
+    def _read_settings(self, errors):
+        """The settings typed in the window, adding a message to errors for each one that isn't valid."""
+        out = {}
+        label = self.scale_box.SelectedItem
+        scale = dict(sr.SCALES).get(label)
+        if scale is None and label and str(label).startswith("1 : "):
+            scale = int(str(label)[4:])
+        if scale is None:
+            errors.append("Choose a drafting view scale.")
+        out["view_scale"] = scale
+        for key, box, what, kind in [("device_spacing_ft", self.spacing_box, "Spacing between devices", float),
+                                     ("devices_per_line", self.per_line_box, "Devices before wrapping", int),
+                                     ("label_offset_in", self.offset_box, "Address text below line", float)]:
+            lo, hi = sr.SETTING_LIMITS[key]
+            text = (box.Text or "").strip()
+            try:
+                value = kind(text)
+            except Exception:
+                value = None
+            if value is None or not lo <= value <= hi:
+                errors.append("%s must be a %s from %s to %s." % (what, "whole number" if kind is int else "number",
+                                                                  number_text(lo), number_text(hi)))
+            out[key] = value
+        return out
 
     def _add_row(self, key, symbol):
         row = self.dt.NewRow()
@@ -163,6 +252,7 @@ class TableEditor(forms.WPFWindow):
     def save_click(self, sender, args):
         self.grid.CommitEdit()
         table, errors, seen, blank = {}, [], set(), 0
+        settings = self._read_settings(errors)
         for idx, row in enumerate(self._live_rows(), start=1):
             key = cell_text(row["FamilyType"])
             symbol = cell_text(row["Symbol"])
@@ -183,6 +273,13 @@ class TableEditor(forms.WPFWindow):
             forms.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors), title=TITLE)
             return
         try:
+            sr.save_settings(settings)
+        except Exception as ex:
+            forms.alert("Could not save the drawing settings:\n%s\n\nPath: %s" % (ex, sr.settings_path()),
+                        title=TITLE)
+            return
+        self.settings_dirty = False
+        try:
             sr.save_table(table)
         except Exception as ex:
             forms.alert("Could not save the symbol table:\n%s\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
@@ -200,7 +297,7 @@ class TableEditor(forms.WPFWindow):
             self.grid.CommitEdit()
         except Exception:
             pass
-        if self.dt.GetChanges() is not None:
+        if self.dt.GetChanges() is not None or self.settings_dirty:
             discard = forms.alert("You have unsaved changes.\n\nClose without saving?",
                                   title=TITLE, yes=True, no=True)
             if not discard:
@@ -213,7 +310,13 @@ def main():
     except Exception as ex:
         forms.alert("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
         return
-    TableEditor(table).ShowDialog()
+    try:
+        settings = sr.load_settings()
+    except Exception as ex:
+        forms.alert("Could not read the drawing settings, so the defaults are shown:\n%s\n\nPath: %s"
+                    % (ex, sr.settings_path()), title=TITLE)
+        settings = dict(sr.DEFAULT_SETTINGS)
+    TableEditor(table, settings).ShowDialog()
 
 
 main()

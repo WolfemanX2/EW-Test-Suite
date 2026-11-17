@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v9
-__title__ = "SLC\nRiser v9"
+# SLC Riser script - version v10
+__title__ = "SLC\nRiser v10"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
@@ -16,6 +16,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
            "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
+           "A device whose Panel # parameter has a value shows it above its symbol (3/32\" text).\n\n"
+           "View scale, device spacing, devices per line and the label offset are set in SLC Riser - Config.\n\n"
            "Devices on the conduit without an SLC address are passed through and listed afterwards.")
 
 from Autodesk.Revit.DB import (
@@ -44,10 +46,13 @@ output = script.get_output()
 TITLE = "SLC Riser"
 
 # ---------------- Settings ----------------
+# These four come from SLC Riser - Config (riser_settings.json); the values here are replaced in main().
 VIEW_SCALE = 96         # scale of the new drafting view (96 = 1/8" = 1'-0")
-PER_LINE = 5           # devices on one line before the row wraps underneath
-DEVICE_SPACING_FT = 4.5# device centre to device centre, in feet in the view
-LABEL_OFFSET_IN = 1.0       # device address text starts this many inches (in the view) below the riser line
+PER_LINE = 5            # devices on one line before the row wraps underneath
+DEVICE_SPACING_FT = 4.5 # device centre to device centre, in feet in the view
+LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the view) below the riser line
+ABOVE_TEXT_SIZE_IN = 3.0 / 32.0     # text above a device (its Panel #): size on the sheet, in inches
+ABOVE_TEXT_TYPE_NAME = 'SLC Riser 3/32"'    # made from the default text type if no 3/32" type exists
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
 PAD = 0.125             # space above and below each line of devices
@@ -374,6 +379,35 @@ def text_type():
     return tt.Id, size * VIEW_SCALE * LINE_SPACING
 
 
+def small_text_type(base_id):
+    """(TextNoteType id, line height in view feet) for the 3/32" text above devices: an existing text type of
+    that size (the default one's font first), else a copy of the default type set to that size."""
+    want = ABOVE_TEXT_SIZE_IN / 12.0
+    base = doc.GetElement(base_id)
+
+    def font(t):
+        try:
+            return t.get_Parameter(BuiltInParameter.TEXT_FONT).AsString()
+        except Exception:
+            return None
+
+    found = None
+    for t in FilteredElementCollector(doc).OfClass(TextNoteType).ToElements():
+        try:
+            size = t.get_Parameter(BuiltInParameter.TEXT_SIZE).AsDouble()
+        except Exception:
+            continue
+        if abs(size - want) < 1e-6:
+            if found is None or font(t) == font(base):
+                found = t
+            if font(t) == font(base):
+                break
+    if found is None:
+        found = base.Duplicate(ABOVE_TEXT_TYPE_NAME)
+        found.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(want)
+    return found.Id, want * VIEW_SCALE * LINE_SPACING
+
+
 def device_label(view, x, y, text, type_id):
     """A device's address text: 45 degrees, right justified, hanging down to the left, with its uppermost
     corner (the top right one) on the riser line at the device centreline (x, y)."""
@@ -416,7 +450,7 @@ def measure_symbols(view, symbols):
     return sizes
 
 
-def draw(view, plan, node_symbol, type_id, line_h):
+def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None):
     """Create everything in the layout. Returns the number of things that could not be created."""
     failed = [0]
     min_len = doc.Application.ShortCurveTolerance
@@ -447,6 +481,11 @@ def draw(view, plan, node_symbol, type_id, line_h):
             if how == "D":
                 device_label(view, x, y, text, type_id)
                 continue
+            if how == "A":
+                opts = TextNoteOptions(above_type_id or type_id)
+                opts.HorizontalAlignment = HorizontalTextAlignment.Center
+                TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+                continue
             opts = TextNoteOptions(type_id)
             opts.HorizontalAlignment = align[how]
             TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
@@ -456,7 +495,28 @@ def draw(view, plan, node_symbol, type_id, line_h):
 
 
 # ---------- Main ----------
+def apply_settings():
+    """Use the drawing settings saved in SLC Riser - Config. False if the file can't be read and the user
+    chose to stop."""
+    global VIEW_SCALE, PER_LINE, DEVICE_SPACING_FT, LABEL_OFFSET_IN
+    try:
+        settings = sr.load_settings()
+    except Exception as ex:
+        go_on = forms.alert("Could not read the riser settings, so the defaults will be used:\n%s\n\nPath: %s"
+                            "\n\nContinue?" % (ex, sr.settings_path()), title=TITLE, yes=True, no=True)
+        if not go_on:
+            return False
+        settings = dict(sr.DEFAULT_SETTINGS)
+    VIEW_SCALE = settings["view_scale"]
+    PER_LINE = settings["devices_per_line"]
+    DEVICE_SPACING_FT = settings["device_spacing_ft"]
+    LABEL_OFFSET_IN = settings["label_offset_in"]
+    return True
+
+
 def main():
+    if not apply_settings():
+        return
     root = starting_element()
     if root is None:
         return
@@ -537,6 +597,9 @@ def main():
     try:
         view = new_drafting_view(view_name(root))
         type_id, line_h = text_type()
+        above_type_id, above_h = None, line_h
+        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n != root_id):
+            above_type_id, above_h = small_text_type(type_id)
         used = {}
         for sym in node_symbol.values():
             used[sr.eid_int(sym.Id)] = sym
@@ -562,14 +625,15 @@ def main():
             else:
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
-            info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines}
+            above = named_value(elements[n], PANEL_NUMBER_PARAM) if n != root_id else ""
+            info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "char_w": char_w,
-               "label_offset": LABEL_OFFSET_IN / 12.0,
+               "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
-        failed = draw(view, plan, node_symbol, type_id, line_h)
+        failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id)
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():

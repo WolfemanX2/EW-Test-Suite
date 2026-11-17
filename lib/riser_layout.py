@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v7
+# riser_layout module - version v8
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -136,14 +136,17 @@ def build_rows(root, children):
 def layout(rows, root, info, returns, cfg):
     """Positions for the whole diagram, in the same length unit as cfg and the extents.
 
-    info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text]}
+    info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
+                "above": text written above the symbol, or "" (optional)}
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
-    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap, label_offset (how far below
+    cfg      = spacing, per_line, pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
+               text above a symbol; line_h if not given), label_offset (how far below
                the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
              "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)]}
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
+         "A" = the small text above a device symbol, level, with (x, y) at its top centre.
          "D" = a device's label: text at 45 degrees, right justified, hanging down to the left of the
                device. (x, y) is where the text's uppermost corner (its top right corner) goes: on the
                device centreline, label_offset below the riser line.
@@ -154,6 +157,13 @@ def layout(rows, root, info, returns, cfg):
     pad, text_gap, lh, row_gap = cfg["pad"], cfg["text_gap"], cfg["line_h"], cfg["row_gap"]
     char_w = cfg["char_w"]
     offset = cfg.get("label_offset", 0.0)
+    above_h = cfg.get("above_h", lh)
+
+    def above_up(n):
+        """How far a symbol and the text above it reach above the riser line."""
+        u = info[n]["ext"][2]
+        text = info[n].get("above")
+        return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
     out = {"symbols": [], "boxes": [], "lines": [], "texts": []}
 
@@ -184,6 +194,9 @@ def layout(rows, root, info, returns, cfg):
             out["symbols"].append((x, y, n))
         else:
             out["boxes"].append((x, y, l, r, u, d))
+        above = info[n].get("above")
+        if above and n != root:
+            out["texts"].append((x, y + above_up(n), above, "A"))
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])
@@ -206,7 +219,7 @@ def layout(rows, root, info, returns, cfg):
         turn = None     # (x, y) where the previous line of this row ended, ready to turn down
         for ci, chunk in enumerate(chunks):
             last_chunk = ci == len(chunks) - 1
-            up = max(info[n]["ext"][2] for n in chunk)
+            up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             if ci == 0:
                 if row["source"] is None:

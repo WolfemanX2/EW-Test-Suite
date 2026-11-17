@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v2
+# slc_riser module - version v3
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\riser_symbols.json. It is changed with the
-SLC Riser - Config tool. Updates never overwrite it."""
+SLC Riser - Config tool. Updates never overwrite it.
+
+The drawing settings (view scale, device spacing, devices per line, label offset) are the user's own file,
+%APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed with SLC Riser - Config."""
 import os
 import re
 import json
@@ -15,6 +18,7 @@ from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, StorageType, D
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
 TABLE_PATH = None
+SETTINGS_PATH = None    # same idea, for the drawing settings (e.g. r"\\server\share\riser_settings.json")
 
 LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
 
@@ -33,6 +37,65 @@ SYMBOL_CATEGORIES = [BuiltInCategory.OST_GenericAnnotation, BuiltInCategory.OST_
 
 def table_path():
     return TABLE_PATH or os.path.join(LOCAL_DIR, "riser_symbols.json")
+
+
+def settings_path():
+    return SETTINGS_PATH or os.path.join(LOCAL_DIR, "riser_settings.json")
+
+
+# ---------- Drawing settings ----------
+# Drafting view scales offered in the config window: (label, scale number).
+SCALES = [('1/16" = 1\'-0"', 192), ('3/32" = 1\'-0"', 128), ('1/8" = 1\'-0"', 96), ('3/16" = 1\'-0"', 64),
+          ('1/4" = 1\'-0"', 48), ('3/8" = 1\'-0"', 32), ('1/2" = 1\'-0"', 24), ('3/4" = 1\'-0"', 16),
+          ('1" = 1\'-0"', 12)]
+DEFAULT_SETTINGS = {
+    "view_scale": 96,           # 1/8" = 1'-0"
+    "device_spacing_ft": 4.5,   # device centre to device centre, in feet in the view
+    "devices_per_line": 5,      # devices on one line before the row wraps underneath
+    "label_offset_in": 1.0,     # address text starts this many inches (in the view) below the riser line
+}
+SETTING_LIMITS = {              # (smallest, largest) allowed
+    "view_scale": (1, 1000),
+    "device_spacing_ft": (0.25, 100.0),
+    "devices_per_line": (1, 200),
+    "label_offset_in": (0.0, 120.0),
+}
+
+
+def clean_settings(data):
+    """DEFAULT_SETTINGS with every valid value from data in place of the default."""
+    out = dict(DEFAULT_SETTINGS)
+    for key, default in DEFAULT_SETTINGS.items():
+        try:
+            value = data.get(key)
+            if value is None:
+                continue
+            value = int(value) if isinstance(default, int) else float(value)
+            lo, hi = SETTING_LIMITS[key]
+            if lo <= value <= hi:
+                out[key] = value
+        except Exception:
+            pass
+    return out
+
+
+def load_settings():
+    """The drawing settings, with the defaults for anything missing. Raises if the file can't be read."""
+    path = settings_path()
+    if not os.path.isfile(path):
+        return dict(DEFAULT_SETTINGS)
+    with open(path, "r") as f:
+        return clean_settings(json.load(f))
+
+
+def save_settings(settings):
+    """Write the drawing settings, creating the folder if needed. Raises if they can't be written."""
+    path = settings_path()
+    folder = os.path.dirname(path)
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder)
+    with open(path, "w") as f:
+        json.dump(clean_settings(settings), f, indent=2, sort_keys=True)
 
 
 # ---------- Address text ----------
