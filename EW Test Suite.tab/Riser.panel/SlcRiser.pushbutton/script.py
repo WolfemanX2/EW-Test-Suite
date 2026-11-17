@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v10
-__title__ = "SLC\nRiser v10"
+# SLC Riser script - version v11
+__title__ = "SLC\nRiser v11"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Select (or pick) the panel the conduit starts from, then pick the first device of each loop "
+           "(a device or panel can also be picked by its tag) "
            "(Esc when finished). Each loop is followed along its conduit starting at that device, away from "
            "the panel, so the device you pick decides the order. Press Esc without picking any to follow "
            "every conduit run leaving the panel instead. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
@@ -23,7 +24,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter
+    ElementId, BuiltInParameter, IndependentTag
 )
 try:
     from Autodesk.Revit.DB import VerticalTextAlignment
@@ -71,11 +72,62 @@ def paper(inches):
 
 
 # ---------- Starting element ----------
-class ConduitSourceFilter(ISelectionFilter):
-    """Allows family instances that conduit can connect to."""
+def tagged_hosts(tag):
+    """Local elements a tag is hosted to (version tolerant)."""
+    ids = []
+    try:
+        ids = list(tag.GetTaggedLocalElementIds())      # Revit 2022+
+    except Exception:
+        try:
+            ids = [tag.TaggedLocalElementId]            # older Revit
+        except Exception:
+            ids = []
+    hosts = []
+    for eid in ids:
+        try:
+            el = doc.GetElement(eid)
+        except Exception:
+            el = None
+        if el is not None:
+            hosts.append(el)
+    return hosts
+
+
+def resolve(elem, ok):
+    """elem itself if ok(elem), or the first element a picked tag is hosted to that is ok; else None."""
+    if elem is None:
+        return None
+    try:
+        if ok(elem):
+            return elem
+    except Exception:
+        pass
+    if isinstance(elem, IndependentTag):
+        for host in tagged_hosts(elem):
+            try:
+                if ok(host):
+                    return host
+            except Exception:
+                pass
+    return None
+
+
+def is_conduit_source(el):
+    return isinstance(el, FamilyInstance) and len(sr.conduit_connectors(el)) > 0
+
+
+def is_addressed_device(el):
+    return sr.is_device(el) and len(sr.slc_addresses(el)) > 0
+
+
+class ElementOrTagFilter(ISelectionFilter):
+    """Allows elements that pass ok, or tags hosted to one."""
+    def __init__(self, ok):
+        self.ok = ok
+
     def AllowElement(self, elem):
         try:
-            return isinstance(elem, FamilyInstance) and len(sr.conduit_connectors(elem)) > 0
+            return resolve(elem, self.ok) is not None
         except Exception:
             return False
 
@@ -86,41 +138,32 @@ class ConduitSourceFilter(ISelectionFilter):
 def starting_element():
     ids = list(uidoc.Selection.GetElementIds())
     if len(ids) == 1:
-        el = doc.GetElement(ids[0])
-        if isinstance(el, FamilyInstance) and sr.conduit_connectors(el):
+        el = resolve(doc.GetElement(ids[0]), is_conduit_source)
+        if el is not None:
             return el
     try:
-        ref = uidoc.Selection.PickObject(ObjectType.Element, ConduitSourceFilter(),
-                                         "Pick the panel the SLC conduit starts from")
+        ref = uidoc.Selection.PickObject(ObjectType.Element, ElementOrTagFilter(is_conduit_source),
+                                         "Pick the panel (or its tag) the SLC conduit starts from")
     except OperationCanceledException:
         return None
-    return doc.GetElement(ref.ElementId)
-
-
-class AddressedDeviceFilter(ISelectionFilter):
-    """Allows Fire Alarm Devices that have an SLC address."""
-    def AllowElement(self, elem):
-        try:
-            return sr.is_device(elem) and len(sr.slc_addresses(elem)) > 0
-        except Exception:
-            return False
-
-    def AllowReference(self, ref, pt):
-        return False
+    return resolve(doc.GetElement(ref.ElementId), is_conduit_source)
 
 
 def first_devices(root):
-    """Devices picked as the first of each loop, in pick order. Empty = follow every run from the panel."""
+    """Devices picked (directly or by their tags) as the first of each loop, in pick order.
+    Empty = follow every run from the panel."""
     picked, seen = [], set([sr.eid_int(root.Id)])
-    flt = AddressedDeviceFilter()
+    flt = ElementOrTagFilter(is_addressed_device)
     while True:
-        prompt = ("Pick the FIRST device of loop %d (Esc when finished%s)"
+        prompt = ("Pick the FIRST device (or its tag) of loop %d (Esc when finished%s)"
                   % (len(picked) + 1, "" if picked else "; Esc now = follow every run from the panel"))
         try:
             ref = uidoc.Selection.PickObject(ObjectType.Element, flt, prompt)
         except OperationCanceledException:
             return picked
-        el = doc.GetElement(ref.ElementId)
+        el = resolve(doc.GetElement(ref.ElementId), is_addressed_device)
+        if el is None:
+            continue
         i = sr.eid_int(el.Id)
         if i in seen:
             forms.toast("Already picked.")
