@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v20
-__title__ = "SLC\nRiser v20"
+# SLC Riser script - version v21
+__title__ = "SLC\nRiser v21"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -18,8 +18,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
            "device one device spacing away. Each loop leaves the panel in line with the family's reference line "
-           "whose subcategory is that loop number (N1L3 -> reference line 3); when there is no such reference line "
-           "(or no panel detail), you pick where that loop's one-line starts. "
+           "(reference line or reference plane) named for that loop number - 3, L3, Loop 3 or Ref Line 3 in its subcategory, "
+           "line style or name (N1L3 -> 3). With no match you choose one of the family's reference lines or "
+           "pick a start point. The first line of the one-line is locked in alignment with its reference line. "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
@@ -33,7 +34,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane
+    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane,
+    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType
 )
 from System.Collections.Generic import List
 try:
@@ -47,6 +49,10 @@ from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
 import math
+import re
+
+import clr
+import System
 
 import slc_riser as sr
 import riser_layout as rl
@@ -533,36 +539,103 @@ def set_text_param(inst, name, value):
         return False
 
 
+LOOP_LABEL = re.compile(r"^(?:N\s*\d+\s*)?(?:LOOP|L)?\s*[-_.#]?\s*0*(\d+)$", re.IGNORECASE)
+
+
+LOOP_LABEL_END = re.compile(r"(?:LOOP|REF[A-Z]*(?:\s*LINE)?)\s*[-_.#]?\s*0*(\d+)$", re.IGNORECASE)
+
+
+def label_loop(text):
+    """3 for '3', 'L3', 'Loop 3', 'LOOP-03', 'N1L3', 'Ref Line 3', 'SLC Loop 3'; None otherwise."""
+    text = (text or "").strip()
+    m = LOOP_LABEL.match(text) or LOOP_LABEL_END.search(text)
+    return int(m.group(1)) if m else None
+
+
+def _labels(fam_doc, el):
+    """Every name the element goes by: its name, subcategory and line style."""
+    out = []
+
+    def add(text):
+        text = (text or "").strip()
+        if text and text not in out:
+            out.append(text)
+    try:
+        add(el.Name)
+    except Exception:
+        pass
+    try:
+        add(el.LineStyle.Name)
+    except Exception:
+        pass
+    for bip in (BuiltInParameter.FAMILY_ELEM_SUBCATEGORY, BuiltInParameter.DATUM_TEXT):
+        try:
+            p = el.get_Parameter(bip)
+            if p is None:
+                continue
+            add(p.AsValueString())
+            add(p.AsString())
+            sub = fam_doc.GetElement(p.AsElementId())
+            if sub is not None:
+                add(sub.Name)
+        except Exception:
+            pass
+    for pname in ("Subcategory", "Name"):
+        try:
+            p = el.LookupParameter(pname)
+            if p is not None:
+                add(p.AsValueString())
+                add(p.AsString())
+        except Exception:
+            pass
+    return out
+
+
 def panel_reference_lines(sym):
-    """{loop number: Y in the family} for the family's reference lines whose subcategory is a number.
-    Read by opening the family, so it must run outside a transaction. {} if none can be read."""
-    found = {}
+    """The horizontal reference lines and reference planes in the panel family, each
+    {"kind", "labels", "y" (in the family), "loop" (number its labels name, or None), "name"}.
+    Read by opening the family, so it must run outside a transaction. [] if none can be read."""
+    found = []
     fam_doc = None
     try:
         fam_doc = doc.EditFamily(sym.Family)
         for c in FilteredElementCollector(fam_doc).OfClass(CurveElement).ToElements():
             try:
-                if not c.IsReferenceLine:
-                    continue
+                is_ref = bool(c.IsReferenceLine)
             except Exception:
-                continue
-            name = ""
+                is_ref = False
+            labels = _labels(fam_doc, c)
+            loop = None
+            for text in labels:
+                loop = label_loop(text)
+                if loop is not None:
+                    break
+            if not is_ref and loop is None:
+                continue        # an ordinary line of the panel drawing
             try:
-                name = c.LineStyle.Name
+                curve = c.GeometryCurve
+                p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
             except Exception:
-                pass
-            if not name.strip().isdigit():
-                try:
-                    p = c.get_Parameter(BuiltInParameter.FAMILY_ELEM_SUBCATEGORY)
-                    name = p.AsValueString() if p is not None else name
-                except Exception:
-                    pass
-            name = (name or "").strip()
-            if not name.isdigit():
                 continue
-            curve = c.GeometryCurve
-            y = (curve.GetEndPoint(0).Y + curve.GetEndPoint(1).Y) / 2.0
-            found[int(name)] = y
+            if abs(p0.Y - p1.Y) > 1e-6:
+                continue        # not horizontal
+            found.append({"kind": "Reference Line" if is_ref else "Line", "labels": labels,
+                          "y": (p0.Y + p1.Y) / 2.0, "loop": loop, "name": None})
+        for rp in FilteredElementCollector(fam_doc).OfClass(ReferencePlane).ToElements():
+            try:
+                p0, p1 = rp.BubbleEnd, rp.FreeEnd
+            except Exception:
+                continue
+            if abs(p0.Y - p1.Y) > 1e-6:
+                continue
+            labels = _labels(fam_doc, rp)
+            loop = None
+            for text in labels:
+                loop = label_loop(text)
+                if loop is not None:
+                    break
+            found.append({"kind": "Reference Plane", "labels": labels, "y": (p0.Y + p1.Y) / 2.0,
+                          "loop": loop, "name": (rp.Name or "").strip() or None})
     except Exception as ex:
         output.print_md("Could not read the reference lines of %s: %s" % (PANEL_FAMILY, ex))
     finally:
@@ -571,7 +644,27 @@ def panel_reference_lines(sym):
                 fam_doc.Close(False)
             except Exception:
                 pass
+    # Reference lines first, then reference planes, then plain lines with a loop name; top to bottom.
+    order = {"Reference Line": 0, "Reference Plane": 1, "Line": 2}
+    found.sort(key=lambda c: (order.get(c["kind"], 3), -c["y"]))
     return found
+
+
+def report_reference_lines(placed, top):
+    """List what was found in the family, in the output window. placed: [(candidate, y in the view)]."""
+    output.print_md("### %s - reference lines found in the family" % PANEL_FAMILY)
+    if not placed:
+        output.print_md("- none (no horizontal reference lines or reference planes)")
+    for c, y in placed:
+        output.print_md("- %s at %s below the top - names: %s - loop: %s"
+                        % (c["kind"], feet_text(top - y), ", ".join(c["labels"]) or "(none)",
+                           c["loop"] if c["loop"] is not None else "not recognised"))
+
+
+def feet_text(ft):
+    """12.5 -> 12'-6\""""
+    inches = int(round(abs(ft) * 12))
+    return "%d'-%d\"" % (inches // 12, inches % 12)
 
 
 def place_panel(view, sym, root):
@@ -725,21 +818,110 @@ def find_view_panel(view, root):
     return names.get(picked) if picked else None
 
 
-def panel_exit_points(view, panel, refs):
-    """(x of the panel's right side, {loop number: y of its reference line}) in the view, or (None, {})."""
+def panel_exit_points(view, panel, cands):
+    """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, [])."""
     if panel is None:
-        return None, {}
+        return None, None, []
     bb = panel.get_BoundingBox(view)
     if bb is None:
-        return None, {}
+        return None, None, []
     tf = panel.GetTransform()
-    ys = {}
-    for loop, y in refs.items():
+    out = []
+    for c in cands:
         try:
-            ys[loop] = tf.OfPoint(XYZ(0, y, 0)).Y
+            out.append((c, tf.OfPoint(XYZ(0, c["y"], 0)).Y))
         except Exception:
             pass
-    return bb.Max.X, ys
+    return bb.Max.X, bb.Max.Y, out
+
+
+def choose_reference(name, reason, placed, top):
+    """A reference line chosen by the user for a loop: (candidate, y), "pick" to pick a point, or None."""
+    PICK = "Pick a start point in the view instead"
+    options, by_label = [], {}
+    for c, y in placed:
+        if c["kind"] == "Line":
+            continue
+        label = "%s - %s below the top  (%s)" % (", ".join(c["labels"][:3]) or "unnamed", feet_text(top - y),
+                                                c["kind"])
+        while label in by_label:
+            label += " "
+        by_label[label] = (c, y)
+        options.append(label)
+    if not options:
+        return "pick"
+    picked = forms.SelectFromList.show(options + [PICK],
+                                       title="%s - %s Which reference line should it start from?" % (name, reason),
+                                       button_name="Use", multiselect=False)
+    if not picked:
+        return None
+    return "pick" if picked == PICK else by_label[picked]
+
+
+def reference_in_instance(panel, view, cand, y):
+    """A Reference to the candidate's line or plane as it sits in the placed panel, or None."""
+    if cand.get("name"):
+        try:
+            r = panel.GetReferenceByName(cand["name"])
+            if r is not None:
+                return r
+        except Exception:
+            pass
+    if cand["kind"] == "Reference Plane":
+        # Unnamed plane: any of the panel's references whose name is one of its labels.
+        for rtype in System.Enum.GetValues(clr.GetClrType(FamilyInstanceReferenceType)):
+            try:
+                for r in panel.GetReferences(rtype):
+                    if panel.GetReferenceName(r) in cand["labels"]:
+                        return r
+            except Exception:
+                pass
+        return None
+    # A line: find it in the panel's geometry (reference lines are there as non-visible curves).
+    opts = Options()
+    opts.ComputeReferences = True
+    opts.IncludeNonVisibleObjects = True
+    opts.View = view
+    best = None
+    try:
+        geom = panel.get_Geometry(opts)
+    except Exception:
+        return None
+    for g in geom:
+        items = []
+        if isinstance(g, GeometryInstance):
+            try:
+                items = list(g.GetInstanceGeometry())
+            except Exception:
+                items = []
+        else:
+            items = [g]
+        for item in items:
+            try:
+                p0, p1 = item.GetEndPoint(0), item.GetEndPoint(1)
+            except Exception:
+                continue
+            if abs(p0.Y - p1.Y) > 1e-6 or abs((p0.Y + p1.Y) / 2.0 - y) > 1e-4 or item.Reference is None:
+                continue
+            hidden = str(getattr(item, "Visibility", "")) != "Visible"
+            if best is None or hidden:
+                best = item.Reference
+                if hidden:
+                    return best
+    return best
+
+
+def lock_to_reference(view, ref, curve):
+    """Lock the detail curve in alignment with the reference. Returns '' or the reason it couldn't."""
+    st = SubTransaction(doc)
+    st.Start()
+    try:
+        doc.Create.NewAlignment(view, ref, curve.GeometryCurve.Reference)
+        st.Commit()
+        return ""
+    except Exception as ex:
+        st.RollBack()
+        return str(ex)
 
 
 def ensure_sketch_plane(view):
@@ -813,8 +995,9 @@ def measure_symbols(view, symbols):
     return sizes
 
 
-def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None):
-    """Create everything in the layout. Returns the number of things that could not be created."""
+def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None):
+    """Create everything in the layout. Returns the number of things that could not be created.
+    created: a list that gets (start, end, detail curve) for every line drawn."""
     failed = [0]
     min_len = doc.Application.ShortCurveTolerance
 
@@ -822,7 +1005,9 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None):
         if abs(p[0] - q[0]) + abs(p[1] - q[1]) <= min_len:
             return
         try:
-            doc.Create.NewDetailCurve(view, Line.CreateBound(XYZ(p[0], p[1], 0), XYZ(q[0], q[1], 0)))
+            curve = doc.Create.NewDetailCurve(view, Line.CreateBound(XYZ(p[0], p[1], 0), XYZ(q[0], q[1], 0)))
+            if created is not None:
+                created.append((p, q, curve))
         except Exception:
             failed[0] += 1
 
@@ -1046,7 +1231,7 @@ def main():
 
     # The panel is the NEX2-DETAIL-RISER detail item; the devices use the symbols from the table.
     panel_sym = panel_family_symbol()
-    panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else {}
+    panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else []
     drawn = [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
     chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
@@ -1150,31 +1335,53 @@ def main():
 
     if target is not None:
         panel_inst = find_view_panel(view, root)
-    exit_x, exit_ys = panel_exit_points(view, panel_inst, panel_refs)
+    exit_x, panel_top, placed_refs = panel_exit_points(view, panel_inst, panel_refs)
 
-    # 2. Where each loop's one-line starts.
-    origins = []
+    # 2. Where each loop's one-line starts, and the reference line it is locked to.
+    origins, lock_refs, reported = [], [], False
     for i, run in enumerate(runs, start=1):
         name = run_name(panel_name, run, i)
         loop = row_loop(addresses, run[0]["nodes"])
-        if exit_x is not None and loop in exit_ys:
-            origins.append((exit_x, exit_ys[loop]))
+        match = None
+        if exit_x is not None and loop is not None:
+            for c, y in placed_refs:
+                if c["loop"] == loop:
+                    match = (c, y)
+                    break
+        if match is None and panel_inst is not None:
+            if not reported:
+                report_reference_lines(placed_refs, panel_top)
+                reported = True
+            reason = ("Its loop number could not be read from the device addresses." if loop is None else
+                      "No reference line named %d (or L%d / Loop %d) was found in %s." % (loop, loop, loop,
+                                                                                          PANEL_FAMILY))
+            match = choose_reference(name, reason, placed_refs, panel_top)
+            if match is None:
+                undo_view()
+                return
+            if match == "pick":
+                match = None
+                point = pick_origin(view, name, reason)
+                if point is None:
+                    undo_view()
+                    return
+                origins.append(point)
+                lock_refs.append(None)
+                continue
+        if match is not None:
+            origins.append((exit_x, match[1]))
+            lock_refs.append(match)
             continue
-        if panel_inst is None:
-            reason = "There is no %s panel detail to join it to." % PANEL_FAMILY
-        elif loop is None:
-            reason = "Its loop number could not be read from the device addresses."
-        else:
-            reason = "%s has no reference line for loop %d." % (PANEL_FAMILY, loop)
-        point = pick_origin(view, name, reason)
+        point = pick_origin(view, name, "There is no %s panel detail to join it to." % PANEL_FAMILY)
         if point is None:
             undo_view()
             return
         origins.append(point)
+        lock_refs.append(None)
 
     # 3. Draw each loop and group it.
     failed = 0
-    groups = []
+    groups, not_locked = [], []
     t = Transaction(doc, "Create SLC riser" if target is None else "Add circuit to SLC riser")
     t.Start()
     try:
@@ -1212,22 +1419,41 @@ def main():
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
 
-        for i, (run, origin) in enumerate(zip(runs, origins), start=1):
+        for i, (run, origin, lock) in enumerate(zip(runs, origins, lock_refs), start=1):
             plan = rl.layout(run, root_id, info, returns, cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
-            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id)
+            curves = []
+            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves)
             doc.Regenerate()
             new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
+            group = None
             if new_ids:
                 group = doc.Create.NewGroup(List[ElementId](new_ids))
-                name = unique_group_name(run_name(panel_name, run, i))
+                gname = unique_group_name(run_name(panel_name, run, i))
                 try:
-                    group.GroupType.Name = name
+                    group.GroupType.Name = gname
                 except Exception:
                     pass
                 groups.append(group.GroupType.Name)
+            if lock is not None:
+                # The first line of the one-line: horizontal, starting at the origin.
+                first = None
+                for p, q, curve in curves:
+                    if abs(p[1] - origin[1]) < 1e-6 and abs(q[1] - origin[1]) < 1e-6 and \
+                            abs(min(p[0], q[0]) - origin[0]) < 1e-6:
+                        first = curve
+                        break
+                ref = reference_in_instance(panel_inst, view, lock[0], lock[1])
+                gname = run_name(panel_name, run, i)
+                if first is None or ref is None:
+                    not_locked.append("%s: the reference line could not be found in the placed panel "
+                                      "(set its Is Reference to anything but Not a Reference)" % gname)
+                else:
+                    why = lock_to_reference(view, ref, first)
+                    if why:
+                        not_locked.append("%s: %s" % (gname, why))
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
@@ -1254,6 +1480,8 @@ def main():
         msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if not_locked:
+        msg += "\n\nNot locked to the reference line:\n" + "\n".join(not_locked)
     if panel_skipped:
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))
