@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v10
+# riser_layout module - version v11
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -153,12 +153,15 @@ def layout(rows, root, info, returns, cfg):
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
                 "above": text written above the symbol, or "" (optional)}
+    info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
+                the point where the first run leaves its right side, ext measured from there). It is drawn
+                once; every run comes out of its right side, and the rows sit beside it.
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
     cfg      = spacing, per_line, wrap_rounding (extra devices allowed before a line wraps; 0 if not given), pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
                text above a symbol; line_h if not given), label_offset (how far below
                the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
-             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)]}
+             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None}
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
          "A" = the small text above a device symbol, level, with (x, y) at its top centre.
@@ -180,7 +183,8 @@ def layout(rows, root, info, returns, cfg):
         text = info[n].get("above")
         return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
-    out = {"symbols": [], "boxes": [], "lines": [], "texts": []}
+    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None}
+    custom_panel = bool(info[root].get("panel"))
 
     def label_size(n):
         """(length, height) of a device's label before it is turned."""
@@ -205,6 +209,9 @@ def layout(rows, root, info, returns, cfg):
 
     def place(n, x, y):
         l, r, u, d = info[n]["ext"]
+        if n == root and custom_panel:
+            out["panel"] = (x, y)
+            return
         if info[n]["mapped"]:
             out["symbols"].append((x, y, n))
         else:
@@ -227,6 +234,7 @@ def layout(rows, root, info, returns, cfg):
     x_first = root_r + max(sp, back_gap + pad)      # first device of every line
     x_back = x_first - back_gap     # where a wrapped line turns at the left, and where a tap row starts
     cursor = None                   # bottom of what has been drawn so far
+    panel_bottom = None             # bottom of the panel once it is placed
 
     for row in rows:
         nodes = row["nodes"]
@@ -262,10 +270,10 @@ def layout(rows, root, info, returns, cfg):
                     up = max(up, info[root]["ext"][2])
                     if row.get("label"):
                         up = max(up, lh * 1.4)
-                    below = max(below, root_depth())
+                    if not custom_panel:
+                        below = max(below, root_depth())
                 else:
-                    up = max(up, lh * 1.2)
-                    below = max(below, lh * 1.2)
+                    up = max(up, lh * 2.6)      # room for the T-TAP label above the start of the row
             if last_chunk and nodes[-1] in returns:
                 up = max(up, lh)
             up += pad
@@ -280,8 +288,17 @@ def layout(rows, root, info, returns, cfg):
 
             if ci == 0:
                 if row["source"] is None:
-                    place(root, 0.0, y)
                     start = root_r
+                    if panel_bottom is None or not custom_panel:
+                        place(root, 0.0, y)
+                        panel_bottom = y - info[root]["ext"][3]
+                    elif y < panel_bottom + pad:
+                        # Below the panel: out of its right side near the bottom, then down to this row.
+                        exit_y = panel_bottom + min(info[root]["ext"][3], max(pad, info[root].get("exit_low", pad)))
+                        bus_x = root_r + sp * 0.04
+                        out["lines"].append(((root_r, exit_y), (bus_x, exit_y)))
+                        out["lines"].append(((bus_x, exit_y), (bus_x, y)))
+                        start = bus_x
                     if row.get("label"):
                         out["texts"].append((root_r + sp * 0.08, y + lh * 1.25, row["label"], "L"))
                 else:
@@ -289,7 +306,7 @@ def layout(rows, root, info, returns, cfg):
                     label = "T-TAP FROM\n%s" % (src_lines[0].rstrip("-") if src_lines else "DEVICE")
                     if row.get("label"):
                         label = "%s %s" % (row["label"], label)
-                    out["texts"].append((x_back - sp * 0.05, y + lh, label, "R"))
+                    out["texts"].append((x_back, y + lh * 2.4, label, "L"))
                     start = x_back
             else:
                 start = turn_x(ci - 1)

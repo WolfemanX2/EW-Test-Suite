@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v16
-__title__ = "SLC\nRiser v16"
+# SLC Riser script - version v17
+__title__ = "SLC\nRiser v17"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -14,6 +14,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
+           "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
+           "room name and number - filled in from the panel); every run comes out of its right side, the first "
+           "device one device spacing away. "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
@@ -35,6 +38,7 @@ try:
 except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.DB.Electrical import Conduit
+from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
@@ -68,6 +72,10 @@ PANEL_BOX = (0.75, 0.5) # width, height of the box drawn for a panel that has no
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
+PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
+PANEL_EXIT_FROM_TOP_FT = 10.0       # the riser leaves the panel's right side this far below its top
+PANEL_EXIT_LOW_FT = 6.0             # extra runs below the panel leave its right side this far above its bottom
+NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 STACK_GAP_FT = 10.0     # adding to an existing view: lowest point of the new circuit to the highest point
                         # of what is already in the view, in feet
 NEW_VIEW = "Generate New Drafting View"
@@ -477,6 +485,77 @@ def y_range(view, ids):
     return None if lo is None else (lo, hi)
 
 
+def panel_family_symbol():
+    """The first type of the NEX2-DETAIL-RISER detail item, or None if it isn't loaded."""
+    found = []
+    for sym in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_DetailComponents)
+                .OfClass(FamilySymbol).ToElements()):
+        try:
+            if sym.FamilyName.strip().upper() == PANEL_FAMILY.upper():
+                found.append(sym)
+        except Exception:
+            pass
+    found.sort(key=lambda t: sr.type_name(t))
+    return found[0] if found else None
+
+
+def room_text(el):
+    """'ROOM NAME NUMBER' of the room the element is in, or NO_ROOM_TEXT."""
+    room = None
+    try:
+        room = el.Room
+    except Exception:
+        room = None
+    if room is None:
+        try:
+            room = doc.GetRoomAtPoint(el.Location.Point)
+        except Exception:
+            room = None
+    if room is None:
+        return NO_ROOM_TEXT
+    try:
+        name = (room.get_Parameter(BuiltInParameter.ROOM_NAME).AsString() or "").strip()
+    except Exception:
+        name = ""
+    number = (getattr(room, "Number", "") or "").strip()
+    return " ".join(p for p in (name, number) if p) or NO_ROOM_TEXT
+
+
+def set_text_param(inst, name, value):
+    """Set a text parameter on the instance. False if it is missing or read-only."""
+    p = inst.LookupParameter(name)
+    if p is None or p.IsReadOnly:
+        return False
+    try:
+        return bool(p.Set(value))
+    except Exception:
+        return False
+
+
+def place_panel(view, sym, root):
+    """Place the panel detail item at the origin and fill it in.
+    Returns (instance, (left, right, up, down) measured from the point where the riser leaves its right
+    side, (dx, dy) from that point to the instance's insertion point, [parameters that couldn't be set])."""
+    if not sym.IsActive:
+        sym.Activate()
+        doc.Regenerate()
+    inst = doc.Create.NewFamilyInstance(XYZ(0, 0, 0), sym, view)
+    skipped = []
+    if not set_text_param(inst, PANEL_NUMBER_PARAM, named_value(root, PANEL_NUMBER_PARAM)):
+        skipped.append(PANEL_NUMBER_PARAM)
+    if not set_text_param(inst, "Location", room_text(root)):
+        skipped.append("Location")
+    doc.Regenerate()
+    bb = inst.get_BoundingBox(view)
+    if bb is None:
+        raise Exception("Could not measure the %s detail item." % PANEL_FAMILY)
+    height = bb.Max.Y - bb.Min.Y
+    ex = bb.Max.X
+    ey = bb.Max.Y - min(PANEL_EXIT_FROM_TOP_FT, height * 0.5)
+    ext = (ex - bb.Min.X, 0.0, bb.Max.Y - ey, ey - bb.Min.Y)
+    return inst, ext, (-ex, -ey), skipped
+
+
 def text_type():
     """(TextNoteType id, line height in view feet) of the project's default text type."""
     tid = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType)
@@ -791,11 +870,20 @@ def main():
         return
     available = sr.available_symbols(doc)
 
-    # Symbol for each thing drawn.
+    # Symbol for each thing drawn. The panel is the NEX2-DETAIL-RISER detail item when it is loaded.
+    panel_sym = panel_family_symbol()
+    if panel_sym is None:
+        go_on = forms.alert("The %s detail item is not loaded in this project, so the head end panel will be "
+                            "drawn with the symbol set for it in SLC Riser - Config instead.\n\nContinue?"
+                            % PANEL_FAMILY, title=TITLE, yes=True, no=True)
+        if not go_on:
+            return
     drawn = [root_id] + [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
     chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
     for n in drawn:
+        if n == root_id and panel_sym is not None:
+            continue
         key = keys[n]
         wanted = table.get(key, "")
         if wanted in available:
@@ -870,6 +958,10 @@ def main():
                 sym.Activate()
         doc.Regenerate()
         sizes = measure_symbols(view, used)
+        panel_inst = panel_ext = panel_shift = None
+        panel_skipped = []
+        if panel_sym is not None:
+            panel_inst, panel_ext, panel_shift, panel_skipped = place_panel(view, panel_sym, root)
 
         box = paper(BOX_SIZE) / 2.0
         info = {}
@@ -878,8 +970,10 @@ def main():
             if len(lines) > 1:
                 lines = [lines[0] + "-", lines[-1]]     # several addresses: first- / last, on two lines
             if n == root_id:
-                lines = [element_name(root)]
-            if n in node_symbol:
+                lines = [] if panel_inst is not None else [element_name(root)]
+            if n == root_id and panel_inst is not None:
+                ext = panel_ext
+            elif n in node_symbol:
                 ext = sizes[sr.eid_int(node_symbol[n].Id)]
             elif n == root_id:
                 w, h = paper(PANEL_BOX[0]) / 2.0, paper(PANEL_BOX[1]) / 2.0
@@ -889,6 +983,9 @@ def main():
                 lines.insert(0, keys[n].split(" : ")[-1])
             above = named_value(elements[n], PANEL_NUMBER_PARAM) if n != root_id else ""
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
+        if panel_inst is not None:
+            info[root_id]["panel"] = True
+            info[root_id]["exit_low"] = PANEL_EXIT_LOW_FT
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
@@ -896,6 +993,13 @@ def main():
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
         plan = rl.layout(rows, root_id, info, returns, cfg)
         failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id)
+        if panel_inst is not None:
+            if plan["panel"] is None:
+                doc.Delete(panel_inst.Id)
+            else:
+                px, py = plan["panel"]
+                ElementTransformUtils.MoveElement(doc, panel_inst.Id,
+                                                  XYZ(px + panel_shift[0], py + panel_shift[1], 0))
         if target is not None:
             # Move the new circuit so its lowest point is STACK_GAP_FT above the highest point already there.
             doc.Regenerate()
@@ -929,6 +1033,9 @@ def main():
     msg += "."
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if panel_skipped:
+        msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
+                % (PANEL_FAMILY, " / ".join(panel_skipped)))
     if unaddressed:
         msg += ("\n\n%d Fire Alarm Device(s) on the conduit have no SLC address and were left off. "
                 "They are listed in the output window." % len(unaddressed))
