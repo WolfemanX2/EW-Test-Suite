@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v9
+# riser_layout module - version v10
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -225,15 +225,36 @@ def layout(rows, root, info, returns, cfg):
     root_r = info[root]["ext"][1]
     back_gap = max(sp * 0.5, reach + pad)   # a wrapped line comes back clear of the first label
     x_first = root_r + max(sp, back_gap + pad)      # first device of every line
-    x_back = x_first - back_gap     # where a wrapped line comes back to, and where a tap row starts
+    x_back = x_first - back_gap     # where a wrapped line turns at the left, and where a tap row starts
     cursor = None                   # bottom of what has been drawn so far
 
     for row in rows:
         nodes = row["nodes"]
         chunks = split_lines(nodes, per, cfg.get("wrap_rounding", 0))
-        turn = None     # (x, y) where the previous line of this row ended, ready to turn down
+
+        # Lines run back and forth: the first left to right, the next right to left, and so on. A right to
+        # left line starts under the last device of the line above (further right if it has more devices).
+        xs_all, prev_len = [], 0
+        for ci, chunk in enumerate(chunks):
+            if ci % 2 == 0:
+                xs_all.append([x_first + k * sp for k in range(len(chunk))])
+            else:
+                start_col = max(prev_len - 1, len(chunk) - 1)
+                xs_all.append([x_first + (start_col - k) * sp for k in range(len(chunk))])
+            prev_len = len(chunk)
+
+        def turn_x(ci):
+            """x of the vertical line from line ci down to line ci + 1."""
+            if ci % 2 == 0:     # turning right, then running back to the left
+                a, b = chunks[ci][-1], chunks[ci + 1][0]
+                return max(xs_all[ci][-1], xs_all[ci + 1][0]) + max(info[a]["ext"][1], info[b]["ext"][1]) + sp * 0.5
+            return x_back       # turning left, clear of the address text, then running right again
+
+        prev_y = None
         for ci, chunk in enumerate(chunks):
             last_chunk = ci == len(chunks) - 1
+            forward = ci % 2 == 0
+            xs = xs_all[ci]
             up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             if ci == 0:
@@ -271,23 +292,23 @@ def layout(rows, root, info, returns, cfg):
                     out["texts"].append((x_back - sp * 0.05, y + lh, label, "R"))
                     start = x_back
             else:
-                tx, ty = turn
-                out["lines"].append(((tx, ty), (tx, cursor)))
-                out["lines"].append(((tx, cursor), (x_back, cursor)))
-                out["lines"].append(((x_back, cursor), (x_back, y)))
-                start = x_back
+                start = turn_x(ci - 1)
+                out["lines"].append(((start, prev_y), (start, y)))     # down from the line above
 
-            x = x_first
-            for k, n in enumerate(chunk):
-                x = x_first + k * sp
+            for n, x in zip(chunk, xs):
                 place(n, x, y)
-            end = x                                     # the last device's centre
+            end = xs[-1]                                # the last device's centre
             if not last_chunk:
-                end = x + info[chunk[-1]]["ext"][1] + sp * 0.5
-                turn = (end, y)
+                end = turn_x(ci)
             elif nodes[-1] in returns:
-                end = x + info[chunk[-1]]["ext"][1] + sp * 0.4
-                out["texts"].append((end + sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "L"))
-            out["lines"].append(((start, y), (end, y)))   # one unbroken line through the devices
+                ext = info[chunk[-1]]["ext"]
+                if forward:
+                    end = xs[-1] + ext[1] + sp * 0.4
+                    out["texts"].append((end + sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "L"))
+                else:
+                    end = xs[-1] - ext[0] - sp * 0.4
+                    out["texts"].append((end - sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "R"))
+            out["lines"].append(((min(start, end), y), (max(start, end), y)))   # one unbroken line
+            prev_y = y
             cursor = y - below
     return out

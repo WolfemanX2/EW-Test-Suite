@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v15
-__title__ = "SLC\nRiser v15"
+# SLC Riser script - version v16
+__title__ = "SLC\nRiser v16"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -14,7 +14,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
-           "Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
+           "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
+           "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
            "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
