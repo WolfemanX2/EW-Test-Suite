@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v3
-__title__ = "Address\nSLC v3"
+# Address SLC script - version v4
+__title__ = "Address\nSLC v4"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -12,7 +12,8 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "After the first device (or after 'Continue From Selected'), choose Manual (pick each device) or "
            "Automatic: select the conduit leaving the device in the direction to check. Every device connected "
            "downstream by that conduit type is found, listed for confirmation and addressed in order of "
-           "connection. Conduit of any other type is not followed. After an automatic run, choose Finish or keep "
+           "connection, either to the end of the run or to an end device you select. Conduit of any other type is "
+           "not followed. After an automatic run, choose Finish or keep "
            "adding to the loop. In Manual you can still pick a conduit at any time to address downstream.\n\n"
            "Shift+Click opens Address SLC - Config. Press Esc to finish picking.")
 
@@ -99,6 +100,8 @@ MANUAL_LABEL = "Manual - pick each device"
 AUTOMATIC_LABEL = "Automatic - address downstream"
 FINISH_LABEL = "Finish"
 CONTINUE_LABEL = "Continue adding to %s"
+ENTIRE_LABEL = "Address the entire run (%d device(s))"
+END_LABEL = "Select an end device"
 
 
 def preselected_device():
@@ -532,11 +535,31 @@ class Session(object):
                         "conduit." % (anchor_id, type_name), title=TITLE)
             return True
 
+        # How far: the entire run, or up to an end device the user selects.
+        found_count = len(todo)
+        while True:
+            how = forms.CommandSwitchWindow.show(
+                [ENTIRE_LABEL % found_count, END_LABEL],
+                message="Found %d device(s) downstream of element %d on '%s' conduit. Address the entire run, or "
+                        "select the last device to address?" % (found_count, anchor_id, type_name))
+            if not how:
+                return True
+            if how == END_LABEL:
+                chosen = self.pick_end(todo, type_name)
+                if chosen is None:
+                    continue    # Esc: back to the choice
+                todo = chosen
+            break
+        how_text = "to element %d" % slc.eid_int(todo[-1].Id) if how == END_LABEL else "to the end of the run"
+
         lines = ["%d. %s" % (n, slc.family_key(doc, el)) for n, el in enumerate(todo[:PREVIEW_LIMIT], start=1)]
         if len(todo) > PREVIEW_LIMIT:
             lines.append("... and %d more" % (len(todo) - PREVIEW_LIMIT))
         readdress = len([el for el in todo if self.device_addresses(el)])
         notes = []
+        if len(todo) < found_count:
+            notes.append("Stops at element %d. %d more device(s) downstream are not addressed."
+                         % (slc.eid_int(todo[-1].Id), found_count - len(todo)))
         if readdress:
             notes.append("%d of them already have an address, which will be replaced." % readdress)
         if no_params:
@@ -545,7 +568,7 @@ class Session(object):
         if done:
             notes.append("%d device(s) already addressed this run are left as they are." % done)
         go_on = forms.alert(
-            "Found %d device(s) downstream of element %d on '%s' conduit, in this order:\n\n%s\n\n%s"
+            "Address %d device(s) downstream of element %d on '%s' conduit, in this order:\n\n%s\n\n%s"
             "Address them starting at %s | %s?"
             % (len(todo), anchor_id, type_name, "\n".join(lines),
                ("\n".join(notes) + "\n\n") if notes else "",
@@ -566,13 +589,30 @@ class Session(object):
         finally:
             self.following = False
         count = len(self.log) - before
-        self.runs.append("Followed '%s' conduit from element %d: %d of %d device(s) addressed"
-                         % (type_name, anchor_id, count, len(todo)))
+        self.runs.append("Followed '%s' conduit from element %d %s: %d of %d device(s) addressed"
+                         % (type_name, anchor_id, how_text, count, len(todo)))
         for i in no_params:
             self.problems.append("Element %d (%s): on the followed conduit but has no writable SLC Address "
                                  "parameter. Passed over." % (i, slc.family_key(doc, elements[i])))
         forms.toast("%d device(s) addressed along the conduit." % count)
         return keep_going
+
+    def pick_end(self, todo, type_name):
+        """Asks for the last device. Returns the devices up to and including it, or None on Esc."""
+        index = dict((slc.eid_int(el.Id), n) for n, el in enumerate(todo))
+        while True:
+            try:
+                ref = uidoc.Selection.PickObject(
+                    ObjectType.Element, DeviceOrTagFilter(),
+                    "Select the LAST device to address (or its tag) - Esc to go back")
+            except OperationCanceledException:
+                return None
+            el = resolve_device(doc.GetElement(ref.ElementId))
+            n = index.get(slc.eid_int(el.Id)) if el is not None else None
+            if n is not None:
+                return todo[:n + 1]
+            forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that will be "
+                        "addressed. Pick another, or press Esc to go back." % (len(todo), type_name), title=TITLE)
 
     def show(self, device):
         """Select a device so the user can see which one a question is about."""
