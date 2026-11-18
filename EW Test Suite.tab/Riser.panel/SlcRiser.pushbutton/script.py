@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v19
-__title__ = "SLC\nRiser v19"
+# SLC Riser script - version v20
+__title__ = "SLC\nRiser v20"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -743,14 +743,17 @@ def panel_exit_points(view, panel, refs):
 
 
 def ensure_sketch_plane(view):
-    """PickPoint needs a work plane in the view."""
+    """PickPoint needs a work plane. Drafting views have their own and refuse a new one, so this only
+    sets one on other views, and never stops the tool if it can't."""
+    if isinstance(view, ViewDrafting):
+        return
     try:
         if view.SketchPlane is not None:
             return
+        plane = Plane.CreateByNormalAndOrigin(view.ViewDirection, view.Origin)
+        view.SketchPlane = SketchPlane.Create(doc, plane)
     except Exception:
         pass
-    plane = Plane.CreateByNormalAndOrigin(view.ViewDirection, view.Origin)
-    view.SketchPlane = SketchPlane.Create(doc, plane)
 
 
 def pick_origin(view, name, reason):
@@ -766,6 +769,9 @@ def pick_origin(view, name, reason):
                                       ObjectSnapTypes.Intersections,
                                       "Pick the start of the one-line for %s" % name)
     except OperationCanceledException:
+        return None
+    except Exception as ex:
+        forms.alert("Could not pick a point in '%s':\n%s" % (view.Name, ex), title=TITLE)
         return None
     return (p.X, p.Y)
 
