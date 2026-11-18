@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v22
-__title__ = "SLC\nRiser v22"
+# SLC Riser script - version v23
+__title__ = "SLC\nRiser v23"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -17,7 +17,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
-           "device one device spacing away. Each loop leaves the panel in line with the family's reference line "
+           "device one device spacing away from the right end of its reference line. Each loop leaves the panel in line with the family's reference line "
            "(reference line or reference plane) named for that loop number - 3, L3, Loop 3 or Ref Line 3 in its subcategory, "
            "line style or name (N1L3 -> 3). With no match you choose one of the family's reference lines or "
            "pick a start point. The first line of the one-line is locked in alignment with its reference line. "
@@ -593,7 +593,8 @@ def _labels(fam_doc, el):
 
 def panel_reference_lines(sym):
     """The horizontal reference lines and reference planes in the panel family, each
-    {"kind", "labels", "y" (in the family), "loop" (number its labels name, or None), "name"}.
+    {"kind", "labels", "y" (in the family), "x" (its right end, in the family), "loop" (number its
+    labels name, or None), "name"}.
     Read by opening the family, so it must run outside a transaction. [] if none can be read."""
     found = []
     fam_doc = None
@@ -620,7 +621,7 @@ def panel_reference_lines(sym):
             if abs(p0.Y - p1.Y) > 1e-6:
                 continue        # not horizontal
             found.append({"kind": "Reference Line" if is_ref else "Line", "labels": labels,
-                          "y": (p0.Y + p1.Y) / 2.0, "loop": loop, "name": None})
+                          "y": (p0.Y + p1.Y) / 2.0, "x": max(p0.X, p1.X), "loop": loop, "name": None})
         for rp in FilteredElementCollector(fam_doc).OfClass(ReferencePlane).ToElements():
             try:
                 p0, p1 = rp.BubbleEnd, rp.FreeEnd
@@ -635,6 +636,7 @@ def panel_reference_lines(sym):
                 if loop is not None:
                     break
             found.append({"kind": "Reference Plane", "labels": labels, "y": (p0.Y + p1.Y) / 2.0,
+                          "x": max(p0.X, p1.X),
                           "loop": loop, "name": (rp.Name or "").strip() or None})
     except Exception as ex:
         output.print_md("Could not read the reference lines of %s: %s" % (PANEL_FAMILY, ex))
@@ -819,7 +821,8 @@ def find_view_panel(view, root):
 
 
 def panel_exit_points(view, panel, cands):
-    """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, [])."""
+    """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, []).
+    Each candidate also gets "vx": the x of its right end in the view, where its one-line starts."""
     if panel is None:
         return None, None, []
     bb = panel.get_BoundingBox(view)
@@ -829,7 +832,9 @@ def panel_exit_points(view, panel, cands):
     out = []
     for c in cands:
         try:
-            out.append((c, tf.OfPoint(XYZ(0, c["y"], 0)).Y))
+            p = tf.OfPoint(XYZ(c["x"], c["y"], 0))
+            c["vx"] = p.X
+            out.append((c, p.Y))
         except Exception:
             pass
     return bb.Max.X, bb.Max.Y, out
@@ -1395,7 +1400,7 @@ def main():
                 lock_refs.append(None)
                 continue
         if match is not None:
-            origins.append((exit_x, match[1]))
+            origins.append((match[0].get("vx", exit_x), match[1]))   # the right end of the reference line
             lock_refs.append(match)
             continue
         point = pick_origin(view, name, "There is no %s panel detail to join it to." % PANEL_FAMILY)
