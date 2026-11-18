@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v18
-__title__ = "SLC\nRiser v18"
+# SLC Riser script - version v19
+__title__ = "SLC\nRiser v19"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
            "(either can be picked by its tag), choose the conduit types to trace, then check the device "
-           "count and adjust spacing / wrapping, then choose to generate a new drafting view or add the circuit to "
-           "an existing one (it goes 10' above what is already there) before the riser is drawn. The circuit is followed along "
+           "count and adjust spacing / wrapping, then choose to generate a new drafting view (with the panel detail) or add the circuit to "
+           "an existing one (joined to the panel detail already there; no new panel is placed) before the riser is drawn. "
+           "Each loop's one-line is made into a detail group named <PANEL #> - Loop <letter>. The circuit is followed along "
            "its conduit starting at the first device, away from the panel, so that device decides the "
            "order. Press Esc instead of picking a first device to follow every conduit run leaving the "
            "panel. The tool draws every Fire Alarm Device that has an SLC address (SLC Address, SLC Address 2 ... 24) "
@@ -17,7 +18,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
            "device one device spacing away. Each loop leaves the panel in line with the family's reference line "
-           "whose subcategory is that loop number (N1L3 -> reference line 3). "
+           "whose subcategory is that loop number (N1L3 -> reference line 3); when there is no such reference line "
+           "(or no panel detail), you pick where that loop's one-line starts. "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
@@ -31,7 +33,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils
+    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane
 )
 from System.Collections.Generic import List
 try:
@@ -40,7 +42,7 @@ except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol, CurveElement
-from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
+from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter, ObjectSnapTypes
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
@@ -69,7 +71,6 @@ ROW_GAP = 0.5           # extra space between rows
 PAD = 0.125             # space above and below each line of devices
 TEXT_GAP = 0.06         # between a symbol and the addresses under it
 BOX_SIZE = 0.375        # box drawn for a type that has no symbol
-PANEL_BOX = (0.75, 0.5) # width, height of the box drawn for a panel that has no symbol
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
@@ -78,8 +79,6 @@ PANEL_EXIT_FROM_TOP_FT = 10.0       # a loop with no reference line leaves the p
                                     # below its top
 PANEL_EXIT_LOW_FT = 6.0             # extra runs below the panel leave its right side this far above its bottom
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
-STACK_GAP_FT = 10.0     # adding to an existing view: lowest point of the new circuit to the highest point
-                        # of what is already in the view, in feet
 NEW_VIEW = "Generate New Drafting View"
 EXISTING_VIEW = "Add to Existing Drafting View"
 LABEL_ANGLE = math.pi / 4.0         # device address text: 45 degrees
@@ -662,6 +661,124 @@ def device_label(view, x, y, text, type_id):
     TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
+def split_runs(rows):
+    """Rows grouped per run: each run row with the T-tap rows that follow it."""
+    runs = []
+    for row in rows:
+        if row["source"] is None or not runs:
+            runs.append([])
+        runs[-1].append(row)
+    return runs
+
+
+def run_name(panel_name, run, index):
+    """'FACU-01 - Loop A' (or '... - Run 2' when the loop can't be read from the addresses)."""
+    label = run[0].get("label")
+    return "%s - %s" % (panel_name, ("Loop %s" % label) if label else ("Run %d" % index))
+
+
+def unique_group_name(name):
+    taken = set()
+    for gt in FilteredElementCollector(doc).OfClass(GroupType).ToElements():
+        try:
+            taken.add(gt.Name)
+        except Exception:
+            pass
+    candidate, n = name, 1
+    while candidate in taken:
+        n += 1
+        candidate = "%s (%d)" % (name, n)
+    return candidate
+
+
+def panels_in_view(view):
+    """NEX2-DETAIL-RISER instances drawn in the view."""
+    found = []
+    for el in FilteredElementCollector(doc, view.Id).OfClass(FamilyInstance).ToElements():
+        try:
+            if el.Symbol.FamilyName.strip().upper() == PANEL_FAMILY.upper():
+                found.append(el)
+        except Exception:
+            pass
+    return found
+
+
+def find_view_panel(view, root):
+    """The panel detail already in the view for this panel (its Panel # matches), the only one there, or
+    one the user chooses. None if there is none (or the user chose not to use one)."""
+    panels = panels_in_view(view)
+    if not panels:
+        return None
+    number = named_value(root, PANEL_NUMBER_PARAM).strip().upper()
+    matching = [p for p in panels if number and named_value(p, PANEL_NUMBER_PARAM).strip().upper() == number]
+    if len(matching) == 1:
+        return matching[0]
+    if len(panels) == 1 and not matching:
+        return panels[0]
+    pool = matching or panels
+    names = {}
+    for p in pool:
+        label = "%s  (id %d)" % (named_value(p, PANEL_NUMBER_PARAM) or "no Panel #", sr.eid_int(p.Id))
+        names[label] = p
+    picked = forms.SelectFromList.show(sorted(names), title="Join the circuit to which panel detail?",
+                                       button_name="Use Panel", multiselect=False)
+    return names.get(picked) if picked else None
+
+
+def panel_exit_points(view, panel, refs):
+    """(x of the panel's right side, {loop number: y of its reference line}) in the view, or (None, {})."""
+    if panel is None:
+        return None, {}
+    bb = panel.get_BoundingBox(view)
+    if bb is None:
+        return None, {}
+    tf = panel.GetTransform()
+    ys = {}
+    for loop, y in refs.items():
+        try:
+            ys[loop] = tf.OfPoint(XYZ(0, y, 0)).Y
+        except Exception:
+            pass
+    return bb.Max.X, ys
+
+
+def ensure_sketch_plane(view):
+    """PickPoint needs a work plane in the view."""
+    try:
+        if view.SketchPlane is not None:
+            return
+    except Exception:
+        pass
+    plane = Plane.CreateByNormalAndOrigin(view.ViewDirection, view.Origin)
+    view.SketchPlane = SketchPlane.Create(doc, plane)
+
+
+def pick_origin(view, name, reason):
+    """Point picked by the user where a loop's one-line starts, or None if cancelled."""
+    try:
+        if uidoc.ActiveView.Id != view.Id:
+            uidoc.ActiveView = view
+    except Exception:
+        pass
+    forms.alert("Select where the one-line diagram for %s should start." % name, sub_msg=reason, title=TITLE)
+    try:
+        p = uidoc.Selection.PickPoint(ObjectSnapTypes.Endpoints | ObjectSnapTypes.Nearest |
+                                      ObjectSnapTypes.Intersections,
+                                      "Pick the start of the one-line for %s" % name)
+    except OperationCanceledException:
+        return None
+    return (p.X, p.Y)
+
+
+def shift_plan(plan, dx, dy):
+    """The plan moved by (dx, dy)."""
+    out = {"symbols": [(x + dx, y + dy, n) for x, y, n in plan["symbols"]],
+           "boxes": [(x + dx, y + dy, l, r, u, d) for x, y, l, r, u, d in plan["boxes"]],
+           "lines": [((p[0] + dx, p[1] + dy), (q[0] + dx, q[1] + dy)) for p, q in plan["lines"]],
+           "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]]}
+    return out
+
+
 def measure_symbols(view, symbols):
     """{symbol id: (left, right, up, down)} - how far each symbol reaches from its insertion point,
     found by placing one, measuring it and deleting it again."""
@@ -921,21 +1038,13 @@ def main():
         return
     available = sr.available_symbols(doc)
 
-    # Symbol for each thing drawn. The panel is the NEX2-DETAIL-RISER detail item when it is loaded.
+    # The panel is the NEX2-DETAIL-RISER detail item; the devices use the symbols from the table.
     panel_sym = panel_family_symbol()
-    if panel_sym is None:
-        go_on = forms.alert("The %s detail item is not loaded in this project, so the head end panel will be "
-                            "drawn with the symbol set for it in SLC Riser - Config instead.\n\nContinue?"
-                            % PANEL_FAMILY, title=TITLE, yes=True, no=True)
-        if not go_on:
-            return
     panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else {}
-    drawn = [root_id] + [n for row in rows for n in row["nodes"]]
+    drawn = [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
     chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
     for n in drawn:
-        if n == root_id and panel_sym is not None:
-            continue
         key = keys[n]
         wanted = table.get(key, "")
         if wanted in available:
@@ -986,21 +1095,86 @@ def main():
     target = choose_target_view(view_name(root))
     if target is False:
         return
+    if target is None and panel_sym is None:
+        go_on = forms.alert("The %s detail item is not loaded in this project, so no panel will be drawn and "
+                            "you will pick where each loop's one-line starts.\n\nContinue?" % PANEL_FAMILY,
+                            title=TITLE, yes=True, no=True)
+        if not go_on:
+            return
 
     global VIEW_SCALE
-    t = Transaction(doc, "Create SLC riser" if target is None else "Add circuit to SLC riser")
+    panel_name = (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip()
+    runs = split_runs(rows)
+
+    # 1. The view, and the panel detail (a new one in a new view; the one already there otherwise).
+    created_view = False
+    panel_skipped = []
+    t = Transaction(doc, "SLC riser - view and panel")
     t.Start()
     try:
-        before = {}
         if target is None:
             view = new_drafting_view(view_name(root))
+            created_view = True
+            panel_inst = None
+            if panel_sym is not None:
+                panel_inst, _, shift, _, panel_skipped = place_panel(view, panel_sym, root)
+                # Top right corner at the origin, as before.
+                ElementTransformUtils.MoveElement(doc, panel_inst.Id, XYZ(shift[0], shift[1], 0))
         else:
             view = target
             VIEW_SCALE = view.Scale     # sizes on the sheet follow the view being added to
-            before = view_element_ids(view)
+            panel_inst = None
+        ensure_sketch_plane(view)
+        t.Commit()
+    except Exception as ex:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        forms.alert("The riser could not be created:\n%s" % ex, title=TITLE)
+        return
+
+    def undo_view():
+        if created_view:
+            t2 = Transaction(doc, "SLC riser - cancelled")
+            t2.Start()
+            try:
+                doc.Delete(view.Id)
+                t2.Commit()
+            except Exception:
+                t2.RollBack()
+
+    if target is not None:
+        panel_inst = find_view_panel(view, root)
+    exit_x, exit_ys = panel_exit_points(view, panel_inst, panel_refs)
+
+    # 2. Where each loop's one-line starts.
+    origins = []
+    for i, run in enumerate(runs, start=1):
+        name = run_name(panel_name, run, i)
+        loop = row_loop(addresses, run[0]["nodes"])
+        if exit_x is not None and loop in exit_ys:
+            origins.append((exit_x, exit_ys[loop]))
+            continue
+        if panel_inst is None:
+            reason = "There is no %s panel detail to join it to." % PANEL_FAMILY
+        elif loop is None:
+            reason = "Its loop number could not be read from the device addresses."
+        else:
+            reason = "%s has no reference line for loop %d." % (PANEL_FAMILY, loop)
+        point = pick_origin(view, name, reason)
+        if point is None:
+            undo_view()
+            return
+        origins.append(point)
+
+    # 3. Draw each loop and group it.
+    failed = 0
+    groups = []
+    t = Transaction(doc, "Create SLC riser" if target is None else "Add circuit to SLC riser")
+    t.Start()
+    try:
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
-        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n != root_id):
+        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn):
             above_type_id, above_h = small_text_type(type_id)
         used = {}
         for sym in node_symbol.values():
@@ -1010,73 +1184,49 @@ def main():
                 sym.Activate()
         doc.Regenerate()
         sizes = measure_symbols(view, used)
-        panel_inst = panel_ext = panel_shift = None
-        panel_skipped, unmatched_loops = [], set()
-        if panel_sym is not None:
-            panel_inst, panel_ext, panel_shift, panel_top_y, panel_skipped = place_panel(view, panel_sym, root)
-            for row in rows:
-                row.pop("panel_dy", None)
-                if row["source"] is not None:
-                    continue
-                loop = row_loop(addresses, row["nodes"])
-                if loop is not None and loop in panel_refs:
-                    row["panel_dy"] = panel_refs[loop] - panel_top_y
-                elif loop is not None:
-                    unmatched_loops.add(loop)
 
         box = paper(BOX_SIZE) / 2.0
-        info = {}
+        # The run starts at its origin; the layout's "panel" is that point.
+        info = {root_id: {"mapped": False, "ext": (0.0, 0.0, 0.0, 0.0), "lines": [], "panel": True,
+                          "exit_dy": 0.0}}
         for n in drawn:
             lines = list(addresses.get(n, []))
             if len(lines) > 1:
                 lines = [lines[0] + "-", lines[-1]]     # several addresses: first- / last, on two lines
-            if n == root_id:
-                lines = [] if panel_inst is not None else [element_name(root)]
-            if n == root_id and panel_inst is not None:
-                ext = panel_ext
-            elif n in node_symbol:
+            if n in node_symbol:
                 ext = sizes[sr.eid_int(node_symbol[n].Id)]
-            elif n == root_id:
-                w, h = paper(PANEL_BOX[0]) / 2.0, paper(PANEL_BOX[1]) / 2.0
-                ext = (w, w, h, h)
             else:
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
-            above = named_value(elements[n], PANEL_NUMBER_PARAM) if n != root_id else ""
+            above = named_value(elements[n], PANEL_NUMBER_PARAM)
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
-        if panel_inst is not None:
-            info[root_id]["panel"] = True
-            info[root_id]["exit_low"] = PANEL_EXIT_LOW_FT
-            info[root_id]["exit_dy"] = min(PANEL_EXIT_FROM_TOP_FT, panel_ext[3] * 0.5)
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
-        plan = rl.layout(rows, root_id, info, returns, cfg)
-        failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id)
-        if panel_inst is not None:
-            if plan["panel"] is None:
-                doc.Delete(panel_inst.Id)
-            else:
-                px, py = plan["panel"]
-                ElementTransformUtils.MoveElement(doc, panel_inst.Id,
-                                                  XYZ(px + panel_shift[0], py + panel_shift[1], 0))
-        if target is not None:
-            # Move the new circuit so its lowest point is STACK_GAP_FT above the highest point already there.
+
+        for i, (run, origin) in enumerate(zip(runs, origins), start=1):
+            plan = rl.layout(run, root_id, info, returns, cfg)
+            px, py = plan["panel"]
+            plan = shift_plan(plan, origin[0] - px, origin[1] - py)
+            before = view_element_ids(view)
+            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id)
             doc.Regenerate()
-            existing = y_range(view, before.values())
-            now = view_element_ids(view)
-            new_ids = [eid for k, eid in now.items() if k not in before]
-            added = y_range(view, new_ids)
-            if existing is not None and added is not None and new_ids:
-                dy = existing[1] + STACK_GAP_FT - added[0]
-                ids = List[ElementId](new_ids)
-                ElementTransformUtils.MoveElements(doc, ids, XYZ(0, dy, 0))
+            new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
+            if new_ids:
+                group = doc.Create.NewGroup(List[ElementId](new_ids))
+                name = unique_group_name(run_name(panel_name, run, i))
+                try:
+                    group.GroupType.Name = name
+                except Exception:
+                    pass
+                groups.append(group.GroupType.Name)
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
+        undo_view()
         forms.alert("The riser could not be created:\n%s" % ex, title=TITLE)
         return
 
@@ -1086,18 +1236,18 @@ def main():
         pass
 
     count = sum(len(row["nodes"]) for row in rows)
-    runs = len([row for row in rows if row["source"] is None])
-    taps = len(rows) - runs
+    taps = len(rows) - len(runs)
     msg = "%s '%s': %d device(s) on %d run(s)" % ("Created" if target is None else "Added to",
-                                                   view.Name, count, runs)
+                                                   view.Name, count, len(runs))
     if taps:
         msg += " and %d T-tap(s)" % taps
     msg += "."
+    if groups:
+        msg += "\n\nGroup(s): " + ", ".join(groups)
+    if target is not None and panel_inst is None:
+        msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
-    if unmatched_loops:
-        msg += ("\n\n%s has no reference line for loop %s, so it was drawn %g' below the top of the panel."
-                % (PANEL_FAMILY, ", ".join(str(n) for n in sorted(unmatched_loops)), PANEL_EXIT_FROM_TOP_FT))
     if panel_skipped:
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))
