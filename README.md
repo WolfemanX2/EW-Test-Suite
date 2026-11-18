@@ -131,7 +131,7 @@ Each script has its version on line 2.
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |
-| SLC Riser | v21 |
+| SLC Riser | v22 |
 | SLC Riser - Config | v4 |
 | lib/slc_riser.py | v5 |
 | lib/riser_layout.py | v12 |

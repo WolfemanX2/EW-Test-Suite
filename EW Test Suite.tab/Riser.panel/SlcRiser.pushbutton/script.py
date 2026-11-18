@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v21
-__title__ = "SLC\nRiser v21"
+# SLC Riser script - version v22
+__title__ = "SLC\nRiser v22"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -35,7 +35,7 @@ from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane,
-    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType
+    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference
 )
 from System.Collections.Generic import List
 try:
@@ -858,70 +858,96 @@ def choose_reference(name, reason, placed, top):
     return "pick" if picked == PICK else by_label[picked]
 
 
-def reference_in_instance(panel, view, cand, y):
-    """A Reference to the candidate's line or plane as it sits in the placed panel, or None."""
-    if cand.get("name"):
+def references_in_instance(panel, view, cand, y):
+    """Every Reference the placed panel offers that could be the candidate's line or plane, best first.
+    Locking only succeeds with one that is really in line with the riser, so trying them in turn is safe."""
+    refs, seen = [], set()
+
+    def add(r):
+        if r is None:
+            return
         try:
-            r = panel.GetReferenceByName(cand["name"])
-            if r is not None:
-                return r
+            key = r.ConvertToStableRepresentation(doc)
+        except Exception:
+            key = None
+        if key is not None and key in seen:
+            return
+        seen.add(key)
+        refs.append(r)
+
+    # 1. By name (named reference planes / lines).
+    names = ([cand["name"]] if cand.get("name") else []) + list(cand.get("labels", []))
+    for n in names:
+        try:
+            add(panel.GetReferenceByName(n))
         except Exception:
             pass
-    if cand["kind"] == "Reference Plane":
-        # Unnamed plane: any of the panel's references whose name is one of its labels.
-        for rtype in System.Enum.GetValues(clr.GetClrType(FamilyInstanceReferenceType)):
-            try:
-                for r in panel.GetReferences(rtype):
-                    if panel.GetReferenceName(r) in cand["labels"]:
-                        return r
-            except Exception:
-                pass
-        return None
-    # A line: find it in the panel's geometry (reference lines are there as non-visible curves).
+    # 2. The panel's own references (reference lines and planes with Is Reference set).
+    for rtype in System.Enum.GetValues(clr.GetClrType(FamilyInstanceReferenceType)):
+        try:
+            for r in panel.GetReferences(rtype):
+                add(r)
+        except Exception:
+            pass
+    # 3. The line in the family's geometry, turned into a reference to it in this panel.
     opts = Options()
     opts.ComputeReferences = True
     opts.IncludeNonVisibleObjects = True
     opts.View = view
-    best = None
     try:
-        geom = panel.get_Geometry(opts)
+        geom = list(panel.get_Geometry(opts))
     except Exception:
-        return None
+        geom = []
     for g in geom:
-        items = []
-        if isinstance(g, GeometryInstance):
+        if not isinstance(g, GeometryInstance):
+            continue
+        for getter, want_y in ((g.GetSymbolGeometry, cand["y"]), (g.GetInstanceGeometry, y)):
             try:
-                items = list(g.GetInstanceGeometry())
-            except Exception:
-                items = []
-        else:
-            items = [g]
-        for item in items:
-            try:
-                p0, p1 = item.GetEndPoint(0), item.GetEndPoint(1)
+                items = list(getter())
             except Exception:
                 continue
-            if abs(p0.Y - p1.Y) > 1e-6 or abs((p0.Y + p1.Y) / 2.0 - y) > 1e-4 or item.Reference is None:
-                continue
-            hidden = str(getattr(item, "Visibility", "")) != "Visible"
-            if best is None or hidden:
-                best = item.Reference
-                if hidden:
-                    return best
-    return best
+            for item in items:
+                try:
+                    p0, p1 = item.GetEndPoint(0), item.GetEndPoint(1)
+                except Exception:
+                    continue
+                if abs(p0.Y - p1.Y) > 1e-6 or abs((p0.Y + p1.Y) / 2.0 - want_y) > 1e-4 or item.Reference is None:
+                    continue
+                try:
+                    stable = item.Reference.ConvertToStableRepresentation(doc)
+                except Exception:
+                    stable = None
+                if stable:
+                    for text in ("%s:0:INSTANCE:%s" % (panel.UniqueId, stable), stable):
+                        try:
+                            add(Reference.ParseFromStableRepresentation(doc, text))
+                        except Exception:
+                            pass
+                add(item.Reference)
+    return refs
 
 
-def lock_to_reference(view, ref, curve):
-    """Lock the detail curve in alignment with the reference. Returns '' or the reason it couldn't."""
-    st = SubTransaction(doc)
-    st.Start()
-    try:
-        doc.Create.NewAlignment(view, ref, curve.GeometryCurve.Reference)
-        st.Commit()
-        return ""
-    except Exception as ex:
-        st.RollBack()
-        return str(ex)
+def lock_to_reference(view, refs, curve):
+    """Lock the detail curve in alignment with the first of the references Revit accepts.
+    Returns '' or the reason it couldn't."""
+    if not refs:
+        return ("the reference line could not be found in the placed panel "
+                "(set its Is Reference to anything but Not a Reference)")
+    line_ref = curve.GeometryCurve.Reference
+    errors = []
+    for ref in refs:
+        st = SubTransaction(doc)
+        st.Start()
+        try:
+            doc.Create.NewAlignment(view, ref, line_ref)
+            st.Commit()
+            return ""
+        except Exception as ex:
+            st.RollBack()
+            text = " ".join(str(ex).split())
+            if text not in errors:
+                errors.append(text)
+    return "tried %d reference(s): %s" % (len(refs), " | ".join(errors[:3]))
 
 
 def ensure_sketch_plane(view):
@@ -1445,13 +1471,12 @@ def main():
                             abs(min(p[0], q[0]) - origin[0]) < 1e-6:
                         first = curve
                         break
-                ref = reference_in_instance(panel_inst, view, lock[0], lock[1])
                 gname = run_name(panel_name, run, i)
-                if first is None or ref is None:
-                    not_locked.append("%s: the reference line could not be found in the placed panel "
-                                      "(set its Is Reference to anything but Not a Reference)" % gname)
+                if first is None:
+                    not_locked.append("%s: its first line could not be found" % gname)
                 else:
-                    why = lock_to_reference(view, ref, first)
+                    why = lock_to_reference(view, references_in_instance(panel_inst, view, lock[0], lock[1]),
+                                            first)
                     if why:
                         not_locked.append("%s: %s" % (gname, why))
         t.Commit()
