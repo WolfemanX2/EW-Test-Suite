@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v17
-__title__ = "SLC\nRiser v17"
+# SLC Riser script - version v18
+__title__ = "SLC\nRiser v18"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -16,7 +16,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
-           "device one device spacing away. "
+           "device one device spacing away. Each loop leaves the panel in line with the family's reference line "
+           "whose subcategory is that loop number (N1L3 -> reference line 3). "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
@@ -38,7 +39,7 @@ try:
 except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.DB.Electrical import Conduit
-from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol
+from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol, CurveElement
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
@@ -73,7 +74,8 @@ MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this 
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
-PANEL_EXIT_FROM_TOP_FT = 10.0       # the riser leaves the panel's right side this far below its top
+PANEL_EXIT_FROM_TOP_FT = 10.0       # a loop with no reference line leaves the panel's right side this far
+                                    # below its top
 PANEL_EXIT_LOW_FT = 6.0             # extra runs below the panel leave its right side this far above its bottom
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 STACK_GAP_FT = 10.0     # adding to an existing view: lowest point of the new circuit to the highest point
@@ -532,10 +534,51 @@ def set_text_param(inst, name, value):
         return False
 
 
+def panel_reference_lines(sym):
+    """{loop number: Y in the family} for the family's reference lines whose subcategory is a number.
+    Read by opening the family, so it must run outside a transaction. {} if none can be read."""
+    found = {}
+    fam_doc = None
+    try:
+        fam_doc = doc.EditFamily(sym.Family)
+        for c in FilteredElementCollector(fam_doc).OfClass(CurveElement).ToElements():
+            try:
+                if not c.IsReferenceLine:
+                    continue
+            except Exception:
+                continue
+            name = ""
+            try:
+                name = c.LineStyle.Name
+            except Exception:
+                pass
+            if not name.strip().isdigit():
+                try:
+                    p = c.get_Parameter(BuiltInParameter.FAMILY_ELEM_SUBCATEGORY)
+                    name = p.AsValueString() if p is not None else name
+                except Exception:
+                    pass
+            name = (name or "").strip()
+            if not name.isdigit():
+                continue
+            curve = c.GeometryCurve
+            y = (curve.GetEndPoint(0).Y + curve.GetEndPoint(1).Y) / 2.0
+            found[int(name)] = y
+    except Exception as ex:
+        output.print_md("Could not read the reference lines of %s: %s" % (PANEL_FAMILY, ex))
+    finally:
+        if fam_doc is not None:
+            try:
+                fam_doc.Close(False)
+            except Exception:
+                pass
+    return found
+
+
 def place_panel(view, sym, root):
     """Place the panel detail item at the origin and fill it in.
-    Returns (instance, (left, right, up, down) measured from the point where the riser leaves its right
-    side, (dx, dy) from that point to the instance's insertion point, [parameters that couldn't be set])."""
+    Returns (instance, (width, 0, 0, height) from its top right corner, (dx, dy) from that corner to the
+    insertion point, Y of that corner in the family's own coordinates, [parameters that couldn't be set])."""
     if not sym.IsActive:
         sym.Activate()
         doc.Regenerate()
@@ -549,11 +592,19 @@ def place_panel(view, sym, root):
     bb = inst.get_BoundingBox(view)
     if bb is None:
         raise Exception("Could not measure the %s detail item." % PANEL_FAMILY)
-    height = bb.Max.Y - bb.Min.Y
-    ex = bb.Max.X
-    ey = bb.Max.Y - min(PANEL_EXIT_FROM_TOP_FT, height * 0.5)
-    ext = (ex - bb.Min.X, 0.0, bb.Max.Y - ey, ey - bb.Min.Y)
-    return inst, ext, (-ex, -ey), skipped
+    ext = (bb.Max.X - bb.Min.X, 0.0, 0.0, bb.Max.Y - bb.Min.Y)
+    return inst, ext, (-bb.Max.X, -bb.Max.Y), bb.Max.Y, skipped
+
+
+def row_loop(addresses, nodes):
+    """The loop number of a row when all its addresses agree on one, else None."""
+    loops = set()
+    for n in nodes:
+        for text in addresses.get(n, []):
+            parsed = sr.parse_address(text)
+            if parsed:
+                loops.add(parsed[1])
+    return loops.pop() if len(loops) == 1 else None
 
 
 def text_type():
@@ -878,6 +929,7 @@ def main():
                             % PANEL_FAMILY, title=TITLE, yes=True, no=True)
         if not go_on:
             return
+    panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else {}
     drawn = [root_id] + [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
     chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
@@ -959,9 +1011,18 @@ def main():
         doc.Regenerate()
         sizes = measure_symbols(view, used)
         panel_inst = panel_ext = panel_shift = None
-        panel_skipped = []
+        panel_skipped, unmatched_loops = [], set()
         if panel_sym is not None:
-            panel_inst, panel_ext, panel_shift, panel_skipped = place_panel(view, panel_sym, root)
+            panel_inst, panel_ext, panel_shift, panel_top_y, panel_skipped = place_panel(view, panel_sym, root)
+            for row in rows:
+                row.pop("panel_dy", None)
+                if row["source"] is not None:
+                    continue
+                loop = row_loop(addresses, row["nodes"])
+                if loop is not None and loop in panel_refs:
+                    row["panel_dy"] = panel_refs[loop] - panel_top_y
+                elif loop is not None:
+                    unmatched_loops.add(loop)
 
         box = paper(BOX_SIZE) / 2.0
         info = {}
@@ -986,6 +1047,7 @@ def main():
         if panel_inst is not None:
             info[root_id]["panel"] = True
             info[root_id]["exit_low"] = PANEL_EXIT_LOW_FT
+            info[root_id]["exit_dy"] = min(PANEL_EXIT_FROM_TOP_FT, panel_ext[3] * 0.5)
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
@@ -1033,6 +1095,9 @@ def main():
     msg += "."
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if unmatched_loops:
+        msg += ("\n\n%s has no reference line for loop %s, so it was drawn %g' below the top of the panel."
+                % (PANEL_FAMILY, ", ".join(str(n) for n in sorted(unmatched_loops)), PANEL_EXIT_FROM_TOP_FT))
     if panel_skipped:
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))

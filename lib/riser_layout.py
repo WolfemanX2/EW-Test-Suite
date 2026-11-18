@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v11
+# riser_layout module - version v12
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -154,8 +154,13 @@ def layout(rows, root, info, returns, cfg):
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
                 "above": text written above the symbol, or "" (optional)}
     info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
-                the point where the first run leaves its right side, ext measured from there). It is drawn
-                once; every run comes out of its right side, and the rows sit beside it.
+                its top right corner; its ext is (width, 0, 0, height) from there). It is drawn once and
+                every run comes out of its right side, the rows beside it. "exit_dy" is how far below the
+                top a run leaves when it has no place of its own, "exit_low" how far above the bottom a run
+                that ends up below the panel leaves it.
+    A run row may carry "panel_dy": where on the panel's right side it should leave, as a distance from the
+                panel's top (negative = below). The row is drawn at that height when there is room for it;
+                otherwise it leaves the panel there and drops down to its row.
     A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
     cfg      = spacing, per_line, wrap_rounding (extra devices allowed before a line wraps; 0 if not given), pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
                text above a symbol; line_h if not given), label_offset (how far below
@@ -235,6 +240,7 @@ def layout(rows, root, info, returns, cfg):
     x_back = x_first - back_gap     # where a wrapped line turns at the left, and where a tap row starts
     cursor = None                   # bottom of what has been drawn so far
     panel_bottom = None             # bottom of the panel once it is placed
+    panel_top = None                # top of the custom panel once it is placed
 
     for row in rows:
         nodes = row["nodes"]
@@ -265,9 +271,18 @@ def layout(rows, root, info, returns, cfg):
             xs = xs_all[ci]
             up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
+            run_dy = None
+            if ci == 0 and row["source"] is None and custom_panel:
+                run_dy = row.get("panel_dy")
+                if panel_top is None and run_dy is None:
+                    run_dy = -abs(info[root].get("exit_dy", 0.0))
             if ci == 0:
                 if row["source"] is None:
-                    up = max(up, info[root]["ext"][2])
+                    if custom_panel:
+                        if panel_top is None:
+                            up = max(up, -run_dy - pad)     # the panel's top sits above the first run
+                    else:
+                        up = max(up, info[root]["ext"][2])
                     if row.get("label"):
                         up = max(up, lh * 1.4)
                     if not custom_panel:
@@ -289,7 +304,21 @@ def layout(rows, root, info, returns, cfg):
             if ci == 0:
                 if row["source"] is None:
                     start = root_r
-                    if panel_bottom is None or not custom_panel:
+                    if custom_panel and panel_top is None:
+                        panel_top = y - run_dy
+                        place(root, 0.0, panel_top)
+                        panel_bottom = panel_top - info[root]["ext"][3]
+                    elif custom_panel and run_dy is not None:
+                        target = panel_top + run_dy
+                        if target <= y:
+                            y = target          # room for it: drawn in line with its place on the panel
+                        else:
+                            # The rows above took its place: leave the panel there, then drop to the row.
+                            bus_x = root_r + sp * 0.04
+                            out["lines"].append(((root_r, target), (bus_x, target)))
+                            out["lines"].append(((bus_x, target), (bus_x, y)))
+                            start = bus_x
+                    elif panel_bottom is None or not custom_panel:
                         place(root, 0.0, y)
                         panel_bottom = y - info[root]["ext"][3]
                     elif y < panel_bottom + pad:
