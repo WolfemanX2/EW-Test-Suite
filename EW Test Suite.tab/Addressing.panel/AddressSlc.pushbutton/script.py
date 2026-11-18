@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v2
-__title__ = "Address\nSLC v2"
+# Address SLC script - version v3
+__title__ = "Address\nSLC v3"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -9,9 +9,11 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "Each Family : Type is addressed by its rule in Address SLC - Config: a fixed number of addresses, "
            "named Address Options to choose from, or a prompt for the count. A type without a rule is asked "
            "for its kind and count.\n\n"
-           "Follow the conduit: after a device is addressed (or after 'Continue From Selected'), pick a conduit "
-           "leaving it. Every device connected downstream by that conduit type is found, listed for "
-           "confirmation and addressed in order of connection. Conduit of any other type is not followed.\n\n"
+           "After the first device (or after 'Continue From Selected'), choose Manual (pick each device) or "
+           "Automatic: select the conduit leaving the device in the direction to check. Every device connected "
+           "downstream by that conduit type is found, listed for confirmation and addressed in order of "
+           "connection. Conduit of any other type is not followed. After an automatic run, choose Finish or keep "
+           "adding to the loop. In Manual you can still pick a conduit at any time to address downstream.\n\n"
            "Shift+Click opens Address SLC - Config. Press Esc to finish picking.")
 
 from System.Collections.Generic import List
@@ -83,6 +85,20 @@ class DeviceOrTagFilter(ISelectionFilter):
 
     def AllowReference(self, ref, pt):
         return False
+
+
+class ConduitFilter(ISelectionFilter):
+    def AllowElement(self, elem):
+        return isinstance(elem, Conduit)
+
+    def AllowReference(self, ref, pt):
+        return False
+
+
+MANUAL_LABEL = "Manual - pick each device"
+AUTOMATIC_LABEL = "Automatic - address downstream"
+FINISH_LABEL = "Finish"
+CONTINUE_LABEL = "Continue adding to %s"
 
 
 def preselected_device():
@@ -274,6 +290,8 @@ class Session(object):
         self.following = False      # True while a conduit run is being addressed
         self.current = None         # device being addressed
         self.runs = []              # summary lines of the conduit runs followed
+        self.manual = False         # True once the user chooses Manual: no more Manual / Automatic prompts
+        self.finished = False       # the user chose Finish after an automatic run
 
     def address(self, kind, number):
         return slc.fmt_address(self.prefix, kind, number)
@@ -386,9 +404,58 @@ class Session(object):
                 last[kind] = number
         return (loop[0], loop[1], last) if loop else None
 
+    # ---- Manual or automatic ----
+    def ask_mode(self):
+        """After the first device: Manual (keep picking devices) or Automatic (address downstream).
+        Returns False when the run has to stop."""
+        if self.manual or self.anchor is None:
+            return True
+        choice = forms.CommandSwitchWindow.show(
+            [MANUAL_LABEL, AUTOMATIC_LABEL],
+            message="Element %d is the first device. How do you want to address the rest of the loop?"
+                    % slc.eid_int(self.anchor.Id))
+        if choice == AUTOMATIC_LABEL:
+            return self.start_automatic()
+        self.manual = True      # Manual, or the prompt was closed
+        return True
+
+    def start_automatic(self):
+        """Explains the conduit pick, then follows the conduit the user picks from the first device."""
+        forms.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
+                    "the addresser to check. Devices are found by following that conduit (and only that conduit "
+                    "type) away from the device.\n\nPress Esc while selecting to pick devices manually instead."
+                    % slc.eid_int(self.anchor.Id), title=TITLE)
+        try:
+            ref = uidoc.Selection.PickObject(
+                ObjectType.Element, ConduitFilter(),
+                "Select the conduit leaving the device in the direction to address - Esc to pick devices manually")
+        except OperationCanceledException:
+            self.manual = True
+            return True
+        return self.run_automatic(doc.GetElement(ref.ElementId))
+
+    def run_automatic(self, conduit):
+        """A downstream run; afterwards asks whether to finish or keep adding to the loop.
+        Returns False when the run has to stop."""
+        before = len(self.log)
+        keep_going = self.follow_conduit(conduit)
+        if not keep_going or len(self.log) == before:
+            return keep_going
+        choice = forms.CommandSwitchWindow.show(
+            [FINISH_LABEL, CONTINUE_LABEL % self.prefix],
+            message="Addressed up to %s | %s. Finish, or keep adding devices to %s?"
+                    % (self.address(slc.MODULE, self.next[slc.MODULE] - 1),
+                       self.address(slc.DETECTOR, self.next[slc.DETECTOR] - 1), self.prefix))
+        if choice == FINISH_LABEL:
+            self.finished = True
+        return True
+
     # ---- Picking ----
     def pick_devices(self):
         flt = DeviceOrTagFilter(conduit=True)
+        # First device chosen with 'Continue From Selected'
+        if not self.ask_mode() or self.finished:
+            return
         while True:
             prompt = ("Select device or its tag, or a conduit to address everything downstream "
                       "(next: %s | %s) - Esc to finish"
@@ -400,15 +467,19 @@ class Session(object):
                 return
             picked = doc.GetElement(ref.ElementId)
             if isinstance(picked, Conduit):
-                if not self.follow_conduit(picked):
+                if not self.run_automatic(picked) or self.finished:
                     return
                 continue
             device = resolve_device(picked)
             if device is None:
                 forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
                 continue
+            before = len(self.log)
             if not self.address_device(device):
                 return
+            if len(self.log) > before:
+                if not self.ask_mode() or self.finished:
+                    return
 
     # ---- Following conduit ----
     def follow_conduit(self, conduit):
