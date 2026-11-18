@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Coverage Checker script - version v1
-__title__ = "NAC\nCoverage"
+# NAC Coverage Checker script - version v2
+__title__ = "NAC\nCoverage v2"
 __doc__ = ("Checks visible (strobe) coverage with line of sight. Every Fire Alarm Device that has a candela value "
            "gets its NFPA 72 coverage square (wall or ceiling table), and a grid of points in each room is tested: "
            "a point is covered when it lies inside a strobe's square AND nothing in the model or the loaded links "
@@ -41,6 +41,9 @@ TITLE = "NAC Coverage Checker"
 # ---------------- Settings ----------------
 # Lengths are in feet.
 CANDELA_PARAMS = ["Candela", "Candela Rating", "Candela Setting", "CD"]  # first one found on the instance, then the type
+                            # (hidden shared parameters are found too, by their GUID)
+USE_TYPE_NAME = True        # no value in those parameters: use the number at the end of the type name ("... 75", "... 75cd")
+TYPE_NAME_CANDELA_RANGE = (15, 300)   # a type-name number outside this range is not taken as a candela
 GRID_STEP = 2.0             # spacing of the test points. 1.0 is finer but about 4x slower
 VIEW_HEIGHT = 5.0           # height above the floor of the points the strobes must see
 DISPLAY_HEIGHT = 0.5        # height above the floor the colored points are drawn at (must be inside the plan's view range)
@@ -200,41 +203,111 @@ def analysis_view():
 
 # ---------------- Strobes ----------------
 NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+# number at the very end of a type name, e.g. "Horn Strobe - 75", "Strobe 110cd", "HS-W 15 CD"
+TYPE_NAME_RE = re.compile(r"(?<![\d./])(\d+(?:\.\d+)?)\s*(?:cd|cand(?:ela)?)?\.?\s*$", re.IGNORECASE)
+_SHARED_GUIDS = None
+
+
+def shared_guids():
+    """GUIDs of the shared parameters named in CANDELA_PARAMS. A shared parameter that is hidden
+    (Visible = false in the shared parameter file) can't be found by name, but it can by GUID."""
+    global _SHARED_GUIDS
+    if _SHARED_GUIDS is None:
+        wanted = dict((n.lower(), n) for n in CANDELA_PARAMS)
+        _SHARED_GUIDS = {}
+        for spe in FilteredElementCollector(doc).OfClass(DB.SharedParameterElement):
+            try:
+                key = spe.Name.lower()
+                if key in wanted:
+                    _SHARED_GUIDS.setdefault(wanted[key], []).append(spe.GuidValue)
+            except Exception:
+                pass
+    return _SHARED_GUIDS
+
+
+def find_param(src, name):
+    p = src.LookupParameter(name)
+    if p is not None:
+        return p
+    for guid in shared_guids().get(name, []):
+        try:
+            p = src.get_Parameter(guid)
+        except Exception:
+            p = None
+        if p is not None:
+            return p
+    return None
+
+
+def param_value(p, name):
+    """(value, problem)"""
+    if p.StorageType == StorageType.Double:
+        return p.AsDouble(), None
+    if p.StorageType == StorageType.Integer:
+        return p.AsInteger(), None
+    if p.StorageType == StorageType.String:
+        s = p.AsString() or p.AsValueString() or ""
+        nums = NUM_RE.findall(s)
+        if len(nums) == 1:
+            return float(nums[0]), None
+        if len(nums) > 1:
+            return None, u"'{}' = '{}' lists more than one value".format(name, s)
+    return None, None
+
+
+def type_name_of(el):
+    try:
+        t = doc.GetElement(el.GetTypeId())
+        p = t.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
+        name = p.AsString() if p else None
+        return name or t.Name
+    except Exception:
+        try:
+            return el.Name
+        except Exception:
+            return ""
+
+
+def candela_from_type_name(el):
+    name = (type_name_of(el) or "").strip()
+    m = TYPE_NAME_RE.search(name)
+    if not m:
+        return None
+    v = float(m.group(1))
+    lo, hi = TYPE_NAME_CANDELA_RANGE
+    return v if lo <= v <= hi else None
 
 
 def read_candela(el):
-    """(candela, None) or (None, problem). problem is None when the device has no candela parameter at all."""
+    """(candela, source, problem). source is 'parameter' or 'type name'.
+    problem is None when the device has no candela parameter and no candela in its type name."""
     sources = [el]
     try:
         sources.append(doc.GetElement(el.GetTypeId()))
     except Exception:
         pass
     problem = None
+    has_param = False
     for src in sources:
         if src is None:
             continue
         for name in CANDELA_PARAMS:
-            p = src.LookupParameter(name)
+            p = find_param(src, name)
             if p is None:
                 continue
-            v = None
-            if p.StorageType == StorageType.Double:
-                v = p.AsDouble()
-            elif p.StorageType == StorageType.Integer:
-                v = p.AsInteger()
-            elif p.StorageType == StorageType.String:
-                s = p.AsString() or p.AsValueString() or ""
-                nums = NUM_RE.findall(s)
-                if len(nums) == 1:
-                    v = float(nums[0])
-                elif len(nums) > 1:
-                    problem = u"'{}' = '{}' lists more than one value".format(name, s)
-                    continue
+            has_param = True
+            v, prob = param_value(p, name)
             if v is not None and v > 0:
-                return float(v), None
+                return float(v), "parameter", None
             if problem is None:
-                problem = u"'{}' is empty".format(name)
-    return None, problem
+                problem = prob or u"'{}' is empty".format(name)
+    if USE_TYPE_NAME:
+        v = candela_from_type_name(el)
+        if v is not None:
+            return v, "type name", None
+    if has_param:
+        return None, None, problem + u"; no candela at the end of the type name '{}'".format(type_name_of(el))
+    return None, None, None
 
 
 def wall_size(cd, aff):
@@ -366,6 +439,7 @@ def collect_strobes(sight, z_low, z_high, issues):
             rules = None
     strobes = []
     no_param = 0
+    from_name = [0]
     devices = (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_FireAlarmDevices)
                .WhereElementIsNotElementType())
     for el in devices:
@@ -377,7 +451,7 @@ def collect_strobes(sight, z_low, z_high, issues):
         lens = XYZ(loc.X, loc.Y, loc.Z + LENS_Z_OFFSET)
         if lens.Z < z_low - 1.0 or lens.Z > z_high:
             continue
-        cd, problem = read_candela(el)
+        cd, cd_source, problem = read_candela(el)
         if cd is None:
             if problem is None:
                 no_param += 1
@@ -395,6 +469,10 @@ def collect_strobes(sight, z_low, z_high, issues):
             n = XYZ.BasisZ.Negate()
             axis = horiz(el.HandOrientation) or XYZ.BasisX
         strobes.append(Strobe(el, cd, mount, lens, n, axis))
+        if cd_source == "type name":
+            from_name[0] += 1
+    if from_name[0]:
+        issues.append((None, "{} strobe(s): candela read from the number at the end of the type name (no value in the candela parameter).".format(from_name[0])))
     return strobes, no_param
 
 
@@ -676,22 +754,9 @@ def report(results, strobes, no_param, issues, scope, cancelled):
         output.print_table(rows, columns=["Room / Space", "From", "Points", "Covered", "Blocked",
                                           "Out of range", "Strobes seen"])
     if no_param:
-        output.print_md("{} Fire Alarm Device(s) near this level have no candela parameter ({}) and were ignored "
-                        "(detectors, pull stations, horns...).".format(no_param, ", ".join(CANDELA_PARAMS)))
-    notes = []
-    for s in strobes:
-        aff = None
-        if s.mount == CEILING:
-            for r in results:
-                aff = s.lens.Z - r.zone.floor_z
-                break
-            if aff is not None and aff > MAX_LENS_AFF:
-                notes.append((s.id, "Ceiling lens {:.1f} ft above the floor: above the 30 ft table, no coverage counted."
-                              .format(aff)))
-    if issues or notes:
-        output.print_md("### Devices to check")
-        output.print_table([[output.linkify(i), msg] for i, msg in issues + notes], columns=["Device", "Issue"])
-    return tot
+        output.print_md("{} Fire Alarm Device(s) near this level have no candela parameter ({}) and no candela at the "
+                        "end of their type name, and were ignored (detectors, pull stations, horns...)."
+                        .format(no_param, ", ".join(CANDELA_PARAMS)))
 
 
 def main():
@@ -738,7 +803,7 @@ def main():
     if not strobes:
         forms.alert("No Fire Alarm Devices with a candela value were found near this level.\n\n"
                     "The candela is read from the first of these parameters found on the instance or type: "
-                    "{}.".format(", ".join(CANDELA_PARAMS)), title=TITLE)
+                    "{}, or from the number at the end of the type name.".format(", ".join(CANDELA_PARAMS)), title=TITLE)
         if issues:
             report([], strobes, no_param, issues, scope, False)
         return
