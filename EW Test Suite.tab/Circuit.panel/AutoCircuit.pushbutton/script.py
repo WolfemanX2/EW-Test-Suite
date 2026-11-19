@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v3
-__title__ = "Auto-\nCircuit v3"
+# Auto-Circuit script - version v4
+__title__ = "Auto-\nCircuit v4"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
@@ -949,6 +949,9 @@ def choose_default_type():
 # ======================================================================================
 
 TITLE = "Auto-Circuit"
+FROM_SELECTED = "Continue from Selected"
+NEW_CIRCUIT = "New Circuit"
+FROM_EXISTING = "Continue from Existing Circuit"
 BUTTON_LIMIT = 10     # more choices than this -> searchable list instead of buttons
 PREVIEW_LIMIT = 25    # devices listed in the confirmation before anything is created
 AMP_TOLERANCE = 1e-6
@@ -1294,26 +1297,33 @@ class NotificationRun(object):
         """Continue a circuit already in the project, continue from a selected device, or start a new one.
         anchor = the device the conduit starts from when continuing (the circuit's last device), or None."""
         kind, name = self.kind, self.name
-        labels, ordered = {}, []
         pre = nv_address_on(preselected, kind) if preselected is not None else None
-        if pre:
-            selected_label = "Continue from selected (%s)" % nv.fmt_address(kind, pre[0], pre[1], pre[2])
-        else:
-            selected_label = "Continue from selected - pick a device..."
-        ordered.append(selected_label)
+        labels, circuits = {}, []
         for key in sorted(existing):
-            label = "Continue %s (last %s)" % (nv.fmt_circuit(kind, key[0], key[1]),
-                                               nv.fmt_address(kind, key[0], key[1], existing[key]))
+            label = "%s (last %s)" % (nv.fmt_circuit(kind, key[0], key[1]),
+                                      nv.fmt_address(kind, key[0], key[1], existing[key]))
             labels[label] = key
-            ordered.append(label)
-        new_label = "New %s circuit" % name
-        ordered.append(new_label)
+            circuits.append(label)
 
         while True:
-            choice = choose(ordered, "%s: which circuit do you want to run and address?" % name)
+            choice = forms.CommandSwitchWindow.show([FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING],
+                                                    message="%s: which circuit do you want to run and address?" % name)
             if not choice:
                 return None
-            if choice == selected_label:
+            if choice == FROM_EXISTING:
+                if not circuits:
+                    forms.alert("There are no %s circuits in this project yet." % name, title=TITLE)
+                    continue
+                picked = choose(circuits, "%s: which existing circuit do you want to continue?" % name)
+                if not picked:
+                    continue    # back to the first list
+                source, circuit = labels[picked]
+                last = existing[(source, circuit)]
+                holders = [d for d in all_devices() if nv_address_on(d, kind) == (source, circuit, last)]
+                return {"source": source, "circuit": circuit, "next": last + 1, "resumed": True,
+                        "from": nv.fmt_address(kind, source, circuit, last), "anchor": None,
+                        "last_device": holders[0] if len(holders) == 1 else None}
+            if choice == FROM_SELECTED:
                 parsed, el = pre, preselected
                 if not parsed:
                     el = pick_addressed_device("Select the device (or its tag) to continue %s from - Esc to go back"
@@ -1328,20 +1338,13 @@ class NotificationRun(object):
                 source, circuit, num = parsed
                 return {"source": source, "circuit": circuit, "next": num + 1, "resumed": True,
                         "from": nv.fmt_address(kind, source, circuit, num), "anchor": el}
-            if choice == new_label:
-                dlg = NewCircuitDialog(kind, existing)
-                dlg.ShowDialog()
-                if dlg.result is None:
-                    continue
-                source, circuit, start = dlg.result
-                return {"source": source, "circuit": circuit, "next": start, "resumed": False,
-                        "from": None, "anchor": None}
-            source, circuit = labels[choice]
-            last = existing[(source, circuit)]
-            holders = [d for d in all_devices() if nv_address_on(d, kind) == (source, circuit, last)]
-            return {"source": source, "circuit": circuit, "next": last + 1, "resumed": True,
-                    "from": nv.fmt_address(kind, source, circuit, last), "anchor": None,
-                    "last_device": holders[0] if len(holders) == 1 else None}
+            dlg = NewCircuitDialog(kind, existing)     # New Circuit
+            dlg.ShowDialog()
+            if dlg.result is None:
+                continue
+            source, circuit, start = dlg.result
+            return {"source": source, "circuit": circuit, "next": start, "resumed": False,
+                    "from": None, "anchor": None}
 
     # ---- continuing / inserting: where the new conduit starts, and the devices after it ----
     def last_device_options(self):
@@ -1803,13 +1806,21 @@ class SlcRun(object):
         preselected = preselected_device()
         while True:
             picked, resumed, anchor = None, None, None
-            from_selected, new_label = "Continue From Selected", "New SLC loop"
             labels = dict((slc.loop_label(loop), loop) for loop in loops)
-            choice = choose([slc.loop_label(loop) for loop in loops] + [from_selected, new_label],
-                            "SLC: which loop do you want to run and address?")
+            choice = forms.CommandSwitchWindow.show([FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING],
+                                                    message="SLC: which loop do you want to run and address?")
             if not choice:
                 return False
-            if choice == from_selected:
+            if choice == FROM_EXISTING:
+                if not loops:
+                    forms.alert("There are no SLC loops in this project yet.", title=TITLE)
+                    continue
+                label = choose([slc.loop_label(loop) for loop in loops],
+                               "SLC: which existing loop do you want to continue?")
+                if not label:
+                    continue    # back to the first list
+                choice = label
+            if choice == FROM_SELECTED:
                 found = self.continue_from_selected(loops, preselected)
                 preselected = None
                 if found is None:
@@ -1817,7 +1828,7 @@ class SlcRun(object):
                 picked, anchor = found
                 resumed = "element %d (M%s / D%s next)" % (eid(anchor), slc.fmt_number(picked[2]),
                                                            slc.fmt_number(picked[3]))
-            elif choice == new_label:
+            elif choice == NEW_CIRCUIT:
                 dlg = NewLoopDialog()
                 dlg.ShowDialog()
                 if dlg.result is None:

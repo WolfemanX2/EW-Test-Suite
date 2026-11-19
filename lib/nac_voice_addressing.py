@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v1
+# nac_voice_addressing module - version v2
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -263,39 +263,45 @@ def preselected_device():
     return list(devices.values())[0] if len(devices) == 1 else None
 
 
+FROM_SELECTED = "Continue from Selected"
+NEW_CIRCUIT = "New Circuit"
+FROM_EXISTING = "Continue from Existing Circuit"
+
+
 def choose_circuit(kind, existing, preselected, allow_skip=False):
     """Ask what to do with one kind (NAC or Voice) this run.
     Returns {"source", "circuit", "next", "resumed"}, "SKIP", or None if cancelled."""
     name = nv.KIND_NAMES[kind]
-    labels, ordered = {}, []
-
     # Continue from one device: the device selected when the tool started, or one picked now.
     pre = address_on(preselected, kind) if preselected is not None else None
-    if pre:
-        selected_label = "Continue from selected (%s)" % nv.fmt_address(kind, pre[0], pre[1], pre[2])
-    else:
-        selected_label = "Continue from selected - pick a device..."
-    ordered.append(selected_label)
-
+    labels, circuits = {}, []
     for key in sorted(existing):
-        label = "Continue %s (last %s)" % (nv.fmt_circuit(kind, key[0], key[1]),
-                                           nv.fmt_address(kind, key[0], key[1], existing[key]))
+        label = "%s (last %s)" % (nv.fmt_circuit(kind, key[0], key[1]),
+                                  nv.fmt_address(kind, key[0], key[1], existing[key]))
         labels[label] = key
-        ordered.append(label)
-    new_label = "New %s circuit" % name
+        circuits.append(label)
     skip_label = "Skip - do not address %s this run" % name
-    ordered.append(new_label)
-    if allow_skip:
-        ordered.append(skip_label)
+    ordered = [FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING] + ([skip_label] if allow_skip else [])
 
     while True:
-        choice = choose(ordered, "%s: which circuit do you want to address?" % name)
+        choice = forms.CommandSwitchWindow.show(ordered, message="%s: which circuit do you want to address?" % name)
         if not choice:
             return None
         if choice == skip_label:
             return "SKIP"
 
-        if choice == selected_label:
+        if choice == FROM_EXISTING:
+            if not circuits:
+                forms.alert("There are no %s circuits in this project yet." % name, title=TITLE)
+                continue
+            picked = choose(circuits, "%s: which existing circuit do you want to continue?" % name)
+            if not picked:
+                continue    # back to the first list
+            source, circuit = labels[picked]
+            return {"source": source, "circuit": circuit, "next": existing[(source, circuit)] + 1,
+                    "resumed": True}
+
+        if choice == FROM_SELECTED:
             parsed, el = pre, preselected
             if not parsed:
                 try:
@@ -314,16 +320,13 @@ def choose_circuit(kind, existing, preselected, allow_skip=False):
             return {"source": source, "circuit": circuit, "next": num + 1, "resumed": True,
                     "from": nv.fmt_address(kind, source, circuit, num), "anchor": el}
 
-        if choice == new_label:
+        if choice == NEW_CIRCUIT:
             dlg = NewCircuitDialog(kind, existing)
             dlg.ShowDialog()
             if dlg.result is None:
                 continue    # back to the list
             source, circuit, start = dlg.result
             return {"source": source, "circuit": circuit, "next": start, "resumed": False}
-
-        source, circuit = labels[choice]
-        return {"source": source, "circuit": circuit, "next": existing[(source, circuit)] + 1, "resumed": True}
 
 
 # ---------- Table manager (Shift+Click) ----------

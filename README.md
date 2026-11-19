@@ -117,18 +117,18 @@ Each script has its version on line 2.
 |---|---|
 | Auto Conduit | v4 |
 | Auto Conduit - Config | v2 |
-| Auto-Circuit | v3 |
+| Auto-Circuit | v4 |
 | Link Clash | v11 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
 | lib/clash_rules.py | v5 |
-| Address SLC | v4 |
+| Address SLC | v5 |
 | Address SLC - Config | v3 |
 | lib/slc_addressing.py | v2 |
 | lib/slc_config_editor.py | v2 |
-| Address NAC | v1 |
-| Address Voice | v1 |
-| lib/nac_voice_addressing.py | v1 |
+| Address NAC | v2 |
+| Address Voice | v2 |
+| lib/nac_voice_addressing.py | v2 |
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v4
-__title__ = "Address\nSLC v4"
+# Address SLC script - version v5
+__title__ = "Address\nSLC v5"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -32,6 +32,9 @@ uidoc = revit.uidoc
 output = script.get_output()
 
 TITLE = "Address SLC"
+FROM_SELECTED = "Continue from Selected"
+NEW_CIRCUIT = "New Circuit"
+FROM_EXISTING = "Continue from Existing Circuit"
 PREVIEW_LIMIT = 25  # devices listed in the confirmation before a conduit run is addressed
 BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
 
@@ -317,32 +320,36 @@ class Session(object):
         # Read before any dialog or pick can change it.
         preselected = preselected_device()
 
+        labels = dict((slc.loop_label(loop), loop) for loop in loops)
         while True:
             picked = None       # (n, l, start module, start detector)
-            if loops:
-                labels = dict((slc.loop_label(loop), loop) for loop in loops)
-                from_selected, new_label = "Continue From Selected", "New"
-                choice = choose([slc.loop_label(loop) for loop in loops] + [from_selected, new_label],
-                                "Existing addresses were found in this project. What do you want to do?")
-                if not choice:
-                    return False
-                if choice == from_selected:
-                    picked = self.continue_from_selected(loops, preselected)
-                    preselected = None
-                    if picked is None:
-                        continue    # Esc: back to the list
-                elif choice != new_label:
-                    loop = labels[choice]
-                    picked = (loop["n"], loop["l"],
-                              (loop["last"][slc.MODULE] or 0) + 1, (loop["last"][slc.DETECTOR] or 0) + 1)
-                    self.resumed = ("Continuing N%dL%d from M%s / D%s"
-                                    % (picked[0], picked[1], slc.fmt_number(picked[2]), slc.fmt_number(picked[3])))
-
-            if picked is None:
+            choice = forms.CommandSwitchWindow.show([FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING],
+                                                    message="SLC: which loop do you want to address?")
+            if not choice:
+                return False
+            if choice == FROM_SELECTED:
+                picked = self.continue_from_selected(loops, preselected)
+                preselected = None
+                if picked is None:
+                    continue    # Esc: back to the list
+            elif choice == FROM_EXISTING:
+                if not loops:
+                    forms.alert("There are no SLC loops in this project yet.", title=TITLE)
+                    continue
+                label = choose([slc.loop_label(loop) for loop in loops],
+                               "SLC: which existing loop do you want to continue?")
+                if not label:
+                    continue    # back to the first list
+                loop = labels[label]
+                picked = (loop["n"], loop["l"],
+                          (loop["last"][slc.MODULE] or 0) + 1, (loop["last"][slc.DETECTOR] or 0) + 1)
+                self.resumed = ("Continuing N%dL%d from M%s / D%s"
+                                % (picked[0], picked[1], slc.fmt_number(picked[2]), slc.fmt_number(picked[3])))
+            else:
                 dlg = NewLoopDialog()
                 dlg.ShowDialog()
                 if dlg.result is None:
-                    return False
+                    continue    # back to the list
                 picked = dlg.result
 
             self.prefix = "N%dL%d" % (picked[0], picked[1])
