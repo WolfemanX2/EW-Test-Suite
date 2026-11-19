@@ -1,29 +1,103 @@
 # EW Test Suite
 
-pyRevit extension with conduit routing, link clash, device addressing, riser diagram, project cleanup and family parameter tools for Revit.
+pyRevit extension with conduit routing, link clash, device addressing, riser diagram, strobe coverage, project cleanup and family parameter tools for Revit.
 
 Every tool's settings window lives in the **Tool Configs** drop-down (its own panel at the end of the tab) and is named `<Tool Name> - Config`.
 
-| Panel | Button | What it does |
-|---|---|---|
-| Conduit | Auto Conduit | Pick devices (or their tags) in order; plans and creates orthogonal conduit between them. |
-| Circuit | Auto-Circuit | Conduit and addressing in one pass. Choose the circuit type: **NAC**, **Voice** or **SLC**. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start a new one (the same choices and `N#-#.#` / `V#-#.#` addresses as Address NAC / Voice), then set the circuit limits (max current, default 1.2 A, and max device count; blank = no limit). SLC: continue a loop, continue from a selected device, or start a new one (`N#L#M000` / `N#L#D000`, as Address SLC). Then pick the new devices or their tags in order: the prompt shows the next address and the running totals, and a NAC / Voice pick that would go over a limit is asked about. When continuing, choose to continue from the circuit's last device or select a device on it. **Insert:** if devices follow the selected one along the conduit, the conduit to the next device is removed (it must be a straight run of conduit and fittings, no tee or junction box in between), new conduit runs from the selected device through the new devices back to that next device, and every device after them on the conduit is renumbered (SLC: re-numbered with the Address SLC - Config rules; devices already addressed keep their address count unless their rule fixes one). Devices on the circuit that come later by number but aren't on that conduit run are listed as possible duplicates. Elements that don't take an address of that kind (e.g. the power supply or panel) are connected but not addressed. Conduit is planned and created as in Auto Conduit; after a confirmation listing the addresses, the connected devices are addressed in order. NAC / Voice: Address and Circuit parameters, Notification Circuit on the new conduit (`N12` / `V12`, merged as `N16,V16`), and EOL on the last device of each circuit touched. SLC: each Family : Type by its rule in Address SLC - Config (fixed count, Address Options or asked, rounding), modules and detectors counted separately, unused address parameters cleared. Uses the existing Auto Conduit - Config, Address NAC / Voice - Config and Address SLC - Config files (no config of its own). One Undo; cancelling after picking undoes everything, including the removed conduit. |
-| Clash | Link Clash | Tests the selection against MEP and structural elements in loaded Revit links. Results window with statuses, grouping, Show in 3D and Auto Fix. |
-| Addressing | Address SLC | Pick devices (or their tags) in order; fills their `SLC Address` parameters (`SLC Address`, `SLC Address 2` ... `24`) with `N#L#M000` (modules) or `N#L#D000` (detectors), counted separately. Continues a loop already in the project, continues from a selected device (after the addresses written on it), or starts a new one. Each Family : Type follows its rule in Address SLC - Config; unused address parameters on the device are cleared. **Manual or Automatic:** after the first device (or after Continue From Selected), choose Manual (pick each device) or Automatic: select the conduit leaving the device in the direction to check; every device connected downstream by conduit of that conduit type is listed for confirmation, then addressed in order of connection (at a split, the branch with fewer devices first): choose to address the entire run or select an end device. Conduit of any other type is not followed. After an automatic run, choose Finish or keep adding to the loop. In Manual, picking a conduit still addresses downstream. Shift+Click opens Address SLC - Config. |
-| Addressing | Address NAC | Pick devices (or their tags) in order; fills NAC Address / NAC Circuit (`N#-#.#` / `N#-#`). Continues a circuit already in the project, continues from a selected device, or starts a new one. After the first device, choose Manual (pick each device) or Automatic: you are told to select the conduit leaving the device in the direction to check, then address to a picked device, up to a max device count for the circuit, or up to a max current (each device's `Current` parameter, default 1.2 A); the conduit of the run gets Notification Circuit `N12` (shared with Voice as `N16,V16`). After an automatic run, choose Finish or Continue adding to the circuit. When finished, the last device gets NAC EOL = Yes, the rest No, and its Comments get the total current and estimated EOL voltage (20.4 V source, 14 AWG at 3.07 ohms/1000 ft, point to point, home run included when connected; warns below 17.25 V). Shift+Click to edit the lookup table. |
-| Addressing | Address Voice | The same as Address NAC for Voice Address / Voice Circuit (`V#-#.#` / `V#-#`), Notification Circuit `V12` and Voice EOL; no current / voltage estimate. |
-| Riser | SLC Riser | Prompts step by step: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit (either can be picked by its tag; Esc follows every run from the panel), choose the conduit types to trace, then review the device count and adjust spacing / wrapping (optionally saved as your defaults), then generate a new drafting view (with the panel detail) or add the circuit to an existing one (joined to the panel detail already there, no new panel). Each loop's one-line is a detail group named `<PANEL #> - Loop <letter>`; a loop with no matching reference line (or no panel detail) starts where you pick. Follows the conduit from the first device away from the panel and draws a one-line riser in a new drafting view named `<LEVEL> - SLC RISER - <PANEL #>` (the panel's level and `Panel #` parameter, in capitals): every Fire Alarm Device with an SLC address (`SLC Address`, `SLC Address 2` ... `24`) in order of connection, one row per conduit run, labeled with its loop as a letter (`L1` = A, `L2` = B ..., read from the `N#L#M#` / `N#L#D#` addresses), full address underneath (several addresses on one device show the first and last on two lines, `first-` / `last`; the text is at 45 degrees, right justified, hanging below the riser line, its top corner 1" under its device; devices 6' apart; view scale 1/8" = 1'-0"). The head end panel is drawn with the `NEX2-DETAIL-RISER` detail item (`Panel #` and `Location` = room name and number, or "(Room ##)", filled in; `Battery Size` left at its default); each loop leaves its right side in line with the family's reference line or reference plane named for the loop (`3`, `L3` or `Loop 3` in its subcategory, line style or name; `N1L3` -> `3`) starting at the right end of that reference line, at the height given by the placed panel's `Loop Spacing N` parameter (up from its bottom), and its first line is locked in alignment with it; with no match you choose one of the family's reference lines or pick a start point, first device one device spacing out. Wrapped lines alternate direction (left to right, then right to left, ...). Conduit splits become T-tap rows. Only conduit of the chosen types is followed (the types at the first devices are ticked to start with), so tees onto other conduit types are ignored. A device with a value in `Panel #` shows it above its symbol in 5/64" centered text. A type with no symbol in the table is asked about and the choice is saved. |
-| Coverage | NAC Coverage Checker | Run from a floor plan: **Entire view** (every room / space on the plan's level), **Pick a room** (click inside one) or **Clear results**. Each Fire Alarm Device with a candela value (`Candela`, `Candela Rating`, `Candela Setting` or `CD`, instance then type; hidden shared parameters are read by GUID; if none has a value, the number at the end of the type name, e.g. `... 75` or `... 75cd`) gets its NFPA 72 coverage square (wall: from the wall into the room; ceiling: centered, by lens height up to 30 ft; wall lens below 80" reduces the size by twice the difference). Wall / Ceiling comes from Auto Conduit - Config, otherwise from the host or a wall / ceiling next to the device. A grid of points (2 ft apart, 5 ft above the floor) is tested in each room: green = inside a square with a clear line of sight from the lens, red = inside a square but blocked by anything in the model or loaded links (other fire alarm devices, conduit and sprinklers are ignored), yellow = outside every square. Rooms come from MEP Spaces, then Rooms, then Rooms in links. Results are a display only (analysis display style `NAC Coverage`) and disappear when the model is closed; a per-room table and devices to check are printed in the output window. Sight lines are tested in a 3D view named `NAC Coverage Checker` (created if missing). The NFPA tables are at the top of the script: verify them against your adopted edition. |
-| Project Cleanup | Line Nuke | Creates 15 standard Solid line styles named `Detail Line - <Color> - <Size>` (Black, Blue, Red, Green, Magenta; Thin = weight 1, Medium = 3, Thick = 6), then moves the lines of every other line style with the same color, weight and pattern onto the standard style and deletes the duplicate. A second mode also merges the remaining duplicate line styles and renames them `Color - Weight - Pattern`. Built-in styles are never changed; you pick styles to exclude and confirm a preview first (No undoes everything). |
-| Project Cleanup | Consolidate Text Styles | Groups text styles by text size (within a tolerance entered as a fraction or decimal of an inch) and merges each group into its most-used style: text notes and schedule text using the other styles are switched to it and the other styles are deleted. The kept style is rounded to the nearest 1/64" and renamed `<size> <font> <modifiers>` (e.g. `1/8" Arial Bold`). Only the size is compared, so merged text takes on the kept style's font and formatting. You pick styles to exclude and confirm a preview first. |
-| Families | Device Shared Params | Adds a batch of shared parameters from the shared parameter file to device families: the family open in the Family Editor, or model families picked from the project (Fire Alarm Devices first), which are opened, changed and reloaded keeping project values. Choose Instance or Type (all, or pick which are Type) and the Properties group. Parameters already in a family are skipped. A set can be saved as a preset (`%APPDATA%\pyRevit\EWTestSuite\family_param_presets.json`). |
-| Families | Tag Shared Params | Same for tag families. **For labels** adds the shared parameter to the tag family so a label can use it (edit the label to show it); **As family parameters** adds Instance/Type parameters of the tag itself (e.g. Yes/No visibility switches). Presets are kept separately from the device tool's. |
-| Families | Transfer Family Params | Open the source and destination families in the Family Editor and run it from any of them. Pick the source family, one or more destination families, and the parameters to transfer (filter by Shared, Family or Properties group; each shows Instance/Type, type of parameter and formula). Shared parameters keep their GUID (no shared parameter file needed; a temporary one is used and your setting is restored); family parameters keep their name, type of parameter (including Family Type parameters), Instance/Type and Properties group. Options: **Copy formulas** (set after every parameter is added, so formulas can refer to each other), **Copy values** (each destination type takes the value from the source type with the same name, otherwise from the source's current type; materials and nested family types are matched by name) and **Update parameters that already exist** in the destination. A parameter whose name is already used by a different kind of parameter is skipped. Results are listed per family; each destination has one Undo. Save the families to keep the changes. |
-| Tool Configs | Auto Conduit - Config | Per Fire Alarm Device family: Wall/Ceiling mounting and the conduit type for runs leaving it. |
-| Tool Configs | Link Clash - Config | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
-| Tool Configs | Address SLC - Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
-| Tool Configs | Address NAC / Voice - Config | Lookup table for Address NAC and Address Voice: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
-| Tool Configs | SLC Riser - Config | Drawing settings (drafting view scale, spacing between devices, devices before wrapping, wrap rounding, address text offset) and the lookup table of the Generic Annotation or Detail Item symbols drawn for each Family : Type, in order (one address each, the last taking the rest), plus rules that use other symbols depending on how many addresses a device has (e.g. `<= 6` Default, `<= 12` symbol A, `>= 13` symbol B; checked top to bottom, first match wins, default otherwise). |
+## Tools
+
+### Auto Conduit
+- Automatically draws conduit between devices in order of selection.
+
+#### Related Tools
+- **Auto-Circuit:** draws conduit the same way and also addresses the devices
+- **Auto Conduit - Config:** sets each family's mounting (Wall/Ceiling) and conduit type
+
+### Auto-Circuit
+- Draws conduit between devices and addresses them based on order of selection. It can also insert new devices into an existing circuit and renumber the devices after them.
+
+#### Related Tools
+- **Auto Conduit:** draws the conduit the same way, without addressing
+- **Address SLC**, **Address NAC** and **Address Voice:** address devices with the same rules, without drawing conduit
+- **Auto Conduit - Config**, **Address SLC - Config** and **Address NAC / Voice - Config:** Auto-Circuit uses their settings and has no config of its own
+
+### Link Clash
+- Checks selected elements for clashes with MEP and structural elements in loaded Revit links and lists them in a results window with statuses. Auto Fix can shift or jog a clashing conduit to clear it.
+
+#### Related Tools
+- **Link Clash - Config:** sets the distances and allowed fixes that Auto Fix uses
+
+### Address SLC
+- Fills in the SLC addresses of devices in the order you select them. It can also address them automatically by following the conduit downstream from a selected device.
+
+#### Related Tools
+- **Address NAC** and **Address Voice:** the same addressing steps, for NAC and Voice devices
+- **Auto-Circuit:** draws the conduit and addresses SLC devices using the same rules
+- **SLC Riser:** draws a riser diagram from these addresses
+- **Address SLC - Config:** sets the address rules for each device type
+
+### Address NAC
+- Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and estimates the circuit's current and EOL voltage.
+
+#### Related Tools
+- **Address Voice:** the same tool for Voice devices
+- **Address SLC:** the same addressing steps, for SLC devices
+- **Auto-Circuit:** draws the conduit and addresses NAC devices using the same rules
+- **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice or both
+
+### Address Voice
+- Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device.
+
+#### Related Tools
+- **Address NAC:** the same tool for NAC devices
+- **Address SLC:** the same addressing steps, for SLC devices
+- **Auto-Circuit:** draws the conduit and addresses Voice devices using the same rules
+- **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice or both
+
+### SLC Riser
+- Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
+
+#### Related Tools
+- **Address SLC:** fills in the SLC addresses the riser shows
+- **SLC Riser - Config:** sets the drawing settings and the symbols used for each device type
+
+### NAC Coverage Checker
+- Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
+
+#### Related Tools
+- **Auto Conduit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
+
+### Line Nuke
+- Creates the 15 standard "Detail Line - Color - Size" line styles and merges any line styles with the same color, weight and pattern into them.
+
+#### Related Tools
+- **Consolidate Text Styles:** the same kind of cleanup for text styles
+
+### Consolidate Text Styles
+- Merges text styles that have the same text size into one style per size and renames it by size, font and modifiers (e.g. 1/8" Arial Bold).
+
+#### Related Tools
+- **Line Nuke:** the same kind of cleanup for line styles
+
+### Device Shared Params
+- Adds a batch of shared parameters to device families, either the family open in the Family Editor or families picked from the project.
+
+#### Related Tools
+- **Tag Shared Params:** the same tool for tag families
+- **Transfer Family Params:** copies parameters from one family to others
+
+### Tag Shared Params
+- Adds a batch of shared parameters to tag families, either for use in labels or as parameters of the tag itself.
+
+#### Related Tools
+- **Device Shared Params:** the same tool for device families
+- **Transfer Family Params:** copies parameters from one family to others
+
+### Transfer Family Params
+- Copies the parameters you choose, with their formulas and values if you want, from one open family to one or more other open families.
+
+#### Related Tools
+- **Device Shared Params** and **Tag Shared Params:** add shared parameters from the shared parameter file to families
 
 ## Install
 
