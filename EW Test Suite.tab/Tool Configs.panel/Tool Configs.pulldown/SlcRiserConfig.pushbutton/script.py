@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-# SLC Riser - Config script - version v4
-__title__ = "SLC Riser - Config v4"
+# SLC Riser - Config script - version v5
+__title__ = "SLC Riser - Config v5"
 __doc__ = ("Drawing settings for SLC Riser (drafting view scale, spacing between devices, devices per line "
            "before wrapping, wrap rounding, address text offset) and the table of the symbol drawn for each Family : Type.\n\n"
-           "The symbol is any loaded Generic Annotation or Detail Item type. 'Add Types From Project' lists "
+           "The symbol is any loaded Generic Annotation or Detail Item type. Each type's Address Label is the "
+           "standard 45 degree text or a Generic Annotation tag, filled in with the device's parameters. "
+           "'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")
 
 import clr
@@ -41,7 +43,7 @@ EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SLC Riser - Config"
-        Width="860" Height="680" MinWidth="680" MinHeight="480"
+        Width="1100" Height="680" MinWidth="680" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">
     <Grid Margin="12">
@@ -89,7 +91,7 @@ EDITOR_XAML = """
         </GroupBox>
 
         <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8"
-                   Text="Choose the symbol drawn on riser diagrams for each Family Type. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
+                   Text="Choose the symbol drawn on riser diagrams for each Family Type, and its Address Label: the standard 45 degree address text, or a Generic Annotation tag that is filled in with the device's parameters (shared parameters by GUID, others by name). Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
 
         <DataGrid x:Name="grid" Grid.Row="2"
                   AutoGenerateColumns="False"
@@ -102,6 +104,9 @@ EDITOR_XAML = """
                 <DataGridComboBoxColumn Header="Riser Symbol"
                                         SelectedItemBinding="{Binding Symbol}"
                                         Width="*"/>
+                <DataGridComboBoxColumn Header="Address Label"
+                                        SelectedItemBinding="{Binding Label}"
+                                        Width="*"/>
             </DataGrid.Columns>
         </DataGrid>
 
@@ -110,6 +115,8 @@ EDITOR_XAML = """
                     Margin="0,0,8,0" Click="add_click" DockPanel.Dock="Left"/>
             <Button Content="Set Symbol For Selected..." Width="170"
                     Margin="0,0,8,0" Click="set_click" DockPanel.Dock="Left"/>
+            <Button Content="Set Address Label For Selected..." Width="210"
+                    Margin="0,0,8,0" Click="set_label_click" DockPanel.Dock="Left"/>
             <Button Content="Delete Selected Rows" Width="140"
                     Click="delete_click" DockPanel.Dock="Left"/>
             <Button Content="Close" Width="80" Click="close_click"
@@ -130,7 +137,7 @@ def number_text(v):
 
 
 class TableEditor(forms.WPFWindow):
-    def __init__(self, table, settings):
+    def __init__(self, table, settings, labels):
         forms.WPFWindow.__init__(self, EDITOR_XAML, literal_string=True)
         self._loading = True
         self.settings_dirty = False
@@ -140,14 +147,20 @@ class TableEditor(forms.WPFWindow):
         # Symbols loaded now, plus any saved ones that aren't loaded in this project (so they aren't lost).
         self.symbols = sorted(set(sr.available_symbols(doc).keys()) | set(v for v in table.values() if v))
 
+        # Address labels: the standard text, or a Generic Annotation (loaded now, or saved before).
+        self.tags = sorted(set(sr.available_tags(doc).keys()) | set(v for v in labels.values() if v))
+
         self.dt = DataTable("RiserSymbols")
         self.dt.Columns.Add("FamilyType", clr.GetClrType(String))
         sym_col = self.dt.Columns.Add("Symbol", clr.GetClrType(String))
         sym_col.DefaultValue = ""
+        label_col = self.dt.Columns.Add("Label", clr.GetClrType(String))
+        label_col.DefaultValue = sr.STANDARD_LABEL
         self.grid.Columns[1].ItemsSource = [""] + self.symbols
+        self.grid.Columns[2].ItemsSource = [sr.STANDARD_LABEL] + self.tags
 
         for key in sorted(table.keys()):
-            self._add_row(key, table[key])
+            self._add_row(key, table[key], labels.get(key) or sr.STANDARD_LABEL)
         self.dt.AcceptChanges()
         self.grid.ItemsSource = self.dt.DefaultView
         self.status_text.Text = "%d type(s) loaded" % len(table)
@@ -204,10 +217,11 @@ class TableEditor(forms.WPFWindow):
             out[key] = value
         return out
 
-    def _add_row(self, key, symbol):
+    def _add_row(self, key, symbol, label=None):
         row = self.dt.NewRow()
         row["FamilyType"] = key
         row["Symbol"] = symbol
+        row["Label"] = label or sr.STANDARD_LABEL
         self.dt.Rows.Add(row)
 
     def _live_rows(self):
@@ -252,6 +266,21 @@ class TableEditor(forms.WPFWindow):
             row["Symbol"] = symbol
         self.status_text.Text = "Symbol set on %d row(s) (unsaved)" % len(rows)
 
+    def set_label_click(self, sender, args):
+        self.grid.CommitEdit()
+        rows = [i.Row for i in list(self.grid.SelectedItems) if hasattr(i, "Row")]
+        if not rows:
+            forms.alert("Select one or more rows first.", title=TITLE)
+            return
+        label = forms.SelectFromList.show([sr.STANDARD_LABEL] + self.tags,
+                                          title="Address label for the %d selected row(s)" % len(rows),
+                                          button_name="Set Address Label", multiselect=False)
+        if not label:
+            return
+        for row in rows:
+            row["Label"] = label
+        self.status_text.Text = "Address label set on %d row(s) (unsaved)" % len(rows)
+
     def delete_click(self, sender, args):
         self.grid.CommitEdit()
         victims = [i for i in list(self.grid.SelectedItems) if hasattr(i, "Row")]
@@ -261,7 +290,7 @@ class TableEditor(forms.WPFWindow):
 
     def save_click(self, sender, args):
         self.grid.CommitEdit()
-        table, errors, seen, blank = {}, [], set(), 0
+        table, labels, errors, seen, blank = {}, {}, [], set(), 0
         settings = self._read_settings(errors)
         for idx, row in enumerate(self._live_rows(), start=1):
             key = cell_text(row["FamilyType"])
@@ -278,6 +307,9 @@ class TableEditor(forms.WPFWindow):
             if not symbol:
                 blank += 1
             table[key] = symbol
+            label = cell_text(row["Label"])
+            if label and label != sr.STANDARD_LABEL:
+                labels[key] = label
 
         if errors:
             forms.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors), title=TITLE)
@@ -290,7 +322,7 @@ class TableEditor(forms.WPFWindow):
             return
         self.settings_dirty = False
         try:
-            sr.save_table(table)
+            sr.save_table(table, labels)
         except Exception as ex:
             forms.alert("Could not save the symbol table:\n%s\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
             return
@@ -326,7 +358,11 @@ def main():
         forms.alert("Could not read the drawing settings, so the defaults are shown:\n%s\n\nPath: %s"
                     % (ex, sr.settings_path()), title=TITLE)
         settings = dict(sr.DEFAULT_SETTINGS)
-    TableEditor(table, settings).ShowDialog()
+    try:
+        labels = sr.load_labels()
+    except Exception:
+        labels = {}
+    TableEditor(table, settings, labels).ShowDialog()
 
 
 main()
