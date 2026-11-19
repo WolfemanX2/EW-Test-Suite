@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v8
+# slc_riser module - version v9
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
@@ -118,6 +118,45 @@ def loop_letter(n):
         n, r = divmod(n - 1, 26)
         text = chr(ord("A") + r) + text
     return text or str(n)
+
+
+def address_sort_key(addresses):
+    """Sort key for a device by its first readable SLC address: (node, loop, number, M/D). Devices without one
+    sort last."""
+    for text in addresses or []:
+        parsed = parse_address(text)
+        if parsed:
+            node, loop, kind, number = parsed
+            return (0, node, loop, number, kind)
+    return (1, 0, 0, 0, "")
+
+
+def address_loops(addresses):
+    """{(node, loop)} named in these addresses."""
+    found = set()
+    for text in addresses or []:
+        parsed = parse_address(text)
+        if parsed:
+            found.add((parsed[0], parsed[1]))
+    return found
+
+
+def devices_on_loops(doc, loops):
+    """[(element, [SLC addresses])] of every Fire Alarm Device in the model with an address on one of these
+    (node, loop) pairs, in address order."""
+    found = []
+    if not loops:
+        return found
+    for cat in DEVICE_CATEGORIES:
+        for el in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType().ToElements():
+            try:
+                addresses = slc_addresses(el)
+            except Exception:
+                continue
+            if addresses and address_loops(addresses) & loops:
+                found.append((el, addresses))
+    found.sort(key=lambda pair: address_sort_key(pair[1]))
+    return found
 
 
 def loop_label(address_lists):

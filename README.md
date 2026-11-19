@@ -165,10 +165,10 @@ Each script has its version on line 2.
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |
-| SLC Riser | v30 |
+| SLC Riser | v31 |
 | SLC Riser - Config | v7 |
 | NAC Coverage Checker | v2 |
-| lib/slc_riser.py | v8 |
-| lib/riser_layout.py | v17 |
+| lib/slc_riser.py | v9 |
+| lib/riser_layout.py | v18 |
 | Line Nuke | v3 |
 | Consolidate Text Styles | v4 |

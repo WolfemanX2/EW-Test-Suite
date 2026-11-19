@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v30
-__title__ = "SLC\nRiser v30"
+# SLC Riser script - version v31
+__title__ = "SLC\nRiser v31"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -24,9 +24,12 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "line style or name (N1L3 -> 3). With no match you choose one of the family's reference lines or "
            "pick a start point. The first line of the one-line is locked in alignment with its reference line. "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
-           "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
+           "on), with the devices following it.\n\n"
+           "Each loop is one line, with no T-tap rows: where the conduit splits, the device with the lowest SLC "
+           "address comes next and the other side follows when that branch ends. Devices on the loop (same "
+           "N#L#) that no conduit reaches are added at the end in address order and marked NOT CONNECTED.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
-           "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
+           "ticked to start with), so conduit of another type (NAC, power) joined by a tee is ignored.\n\n"
            "A type can have several symbols, drawn in order, one address each (the last symbol takes the rest), "
            "and rules that use other symbols depending on how many addresses the device has (e.g. 12 or fewer -> "
            "symbol A, 13 or more -> symbol B; the first rule that matches is used, otherwise the default). "
@@ -86,6 +89,7 @@ TEXT_GAP = 0.06         # between a symbol and the addresses under it
 BOX_SIZE = 0.375        # box drawn for a type that has no symbol
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
+NOT_CONNECTED_TEXT = "NOT CONNECTED"    # shown above a device the conduit doesn't reach
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
 PANEL_EXIT_FROM_TOP_FT = 10.0       # a loop with no reference line leaves the panel's right side this far
@@ -409,11 +413,41 @@ def trace_from(root, firsts):
         return None
     net.allowed = allowed
     children, returns, passed = rl.trace(root_id, net.ports, net.is_node, starts or None)
-    rows = rl.build_rows(root_id, children)
+    # One line per run: where the conduit splits, the lowest address comes next (no T-tap rows).
+    rows = rl.flat_rows(root_id, children, lambda n: sr.address_sort_key(net.addresses.get(n)))
+    unconnected = add_unconnected(rows, net)
     for row in rows:
         row["label"] = sr.loop_label([net.addresses[n] for n in row["nodes"]])
     unaddressed = [net.elements[i] for i in passed if i in net.addresses]
-    return rows, returns, net.elements, net.addresses, unaddressed
+    return rows, returns, net.elements, net.addresses, unaddressed, unconnected
+
+
+def add_unconnected(rows, net):
+    """Devices on a run's loop (same N#L#) that the conduit didn't reach are added to the end of that run in
+    address order. Returns their ids (they are flagged NOT CONNECTED on the riser)."""
+    loops_of = []
+    for row in rows:
+        loops = set()
+        for n in row["nodes"]:
+            loops |= sr.address_loops(net.addresses.get(n))
+        loops_of.append(loops)
+    wanted = set()
+    for loops in loops_of:
+        wanted |= loops
+    drawn = set(n for row in rows for n in row["nodes"])
+    unconnected = []
+    for el, addresses in sr.devices_on_loops(doc, wanted):
+        i = net.remember(el)
+        if i in drawn:
+            continue
+        loops = sr.address_loops(addresses)
+        for row, row_loops in zip(rows, loops_of):
+            if loops & row_loops:
+                row["nodes"].append(i)
+                drawn.add(i)
+                unconnected.append(i)
+                break
+    return unconnected
 
 
 # ---------- Drawing ----------
@@ -1388,7 +1422,8 @@ def main():
     traced = trace_from(root, firsts)
     if traced is None:
         return
-    rows, returns, elements, addresses, unaddressed = traced
+    rows, returns, elements, addresses, unaddressed, unconnected = traced
+    unconnected_set = set(unconnected)
     root_id = sr.eid_int(root.Id)
     if not rows:
         msg = ("No devices with an SLC address are connected to the selected element by conduit of the "
@@ -1584,7 +1619,7 @@ def main():
     try:
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
-        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
+        if unconnected or any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
             above_type_id, above_h = small_text_type(type_id)
         used = {}
         for sym in node_symbol.values():
@@ -1609,6 +1644,8 @@ def main():
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
             above = named_value(elements[n], PANEL_NUMBER_PARAM) if n in firsts else ""
+            if n in firsts and n in unconnected_set:
+                above = "\n".join(t for t in (above, NOT_CONNECTED_TEXT) if t)
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
@@ -1695,6 +1732,14 @@ def main():
     if panel_skipped:
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))
+    if unconnected:
+        msg += ("\n\n%d device(s) on this loop have no conduit path from the rest of the riser. They were added "
+                "in address order and marked %s; they are listed in the output window."
+                % (len(unconnected), NOT_CONNECTED_TEXT))
+        output.print_md("### %s - devices with no conduit path (added in address order)" % TITLE)
+        for i in unconnected:
+            output.print_md("- %s %s - %s" % (output.linkify(elements[i].Id), sr.family_key(doc, elements[i]),
+                                              ", ".join(addresses.get(i) or [])))
     if unaddressed:
         msg += ("\n\n%d Fire Alarm Device(s) on the conduit have no SLC address and were left off. "
                 "They are listed in the output window." % len(unaddressed))

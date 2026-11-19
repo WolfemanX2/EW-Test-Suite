@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v17
+# riser_layout module - version v18
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -178,6 +178,32 @@ def build_rows(root, children):
         rows.append({"nodes": chain, "source": source})
         for b in reversed(branches):
             stack.append(b)
+    return rows
+
+
+def flat_rows(root, children, sort_key):
+    """[{"nodes": [device ids in order], "source": None}] - one row per run leaving root, with no T-tap rows.
+    Where the conduit splits, the device that sorts lowest (sort_key, e.g. the lowest SLC address) comes
+    next; the other sides wait, and when a branch ends the lowest waiting device carries on."""
+    rows = []
+    for start in children.get(root, []):
+        order, pending, seen = [], [], set()
+        cur = start
+        while cur is not None:
+            if cur not in seen:
+                seen.add(cur)
+                order.append(cur)
+                kids = sorted((k for k in children.get(cur, []) if k not in seen), key=sort_key)
+                if kids:
+                    cur = kids[0]
+                    pending.extend(kids[1:])
+                    continue
+            pending = [p for p in pending if p not in seen]
+            if not pending:
+                break
+            pending.sort(key=sort_key)
+            cur = pending.pop(0)
+        rows.append({"nodes": order, "source": None})
     return rows
 
 
