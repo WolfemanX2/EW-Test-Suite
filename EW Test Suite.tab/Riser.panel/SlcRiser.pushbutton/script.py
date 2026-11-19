@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v24
-__title__ = "SLC\nRiser v24"
+# SLC Riser script - version v25
+__title__ = "SLC\nRiser v25"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -17,7 +17,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
-           "device one device spacing away from the right end of its reference line. Each loop leaves the panel in line with the family's reference line "
+           "device one device spacing away from the right end of its reference line. The height of loop N is "
+           "read from the placed panel's Loop Spacing N parameter (distance up from the bottom of the panel). "
+           "Each loop leaves the panel in line with the family's reference line "
            "(reference line or reference plane) named for that loop number - 3, L3, Loop 3 or Ref Line 3 in its subcategory, "
            "line style or name (N1L3 -> 3). With no match you choose one of the family's reference lines or "
            "pick a start point. The first line of the one-line is locked in alignment with its reference line. "
@@ -539,6 +541,8 @@ def set_text_param(inst, name, value):
         return False
 
 
+LOOP_SPACING = re.compile(r"^\s*Loop\s*Spacing\s*0*(\d+)\s*$", re.IGNORECASE)
+PANEL_FAMILY_INFO = {"spacing": {}, "bottom": None, "x": None}   # filled by panel_reference_lines()
 LOOP_LABEL = re.compile(r"^(?:N\s*\d+\s*)?(?:LOOP|L)?\s*[-_.#]?\s*0*(\d+)$", re.IGNORECASE)
 
 
@@ -607,8 +611,19 @@ def panel_reference_lines(sym):
     Read by opening the family, so it must run outside a transaction. [] if none can be read."""
     found = []
     fam_doc = None
+    PANEL_FAMILY_INFO.update({"spacing": {}, "bottom": None, "x": None})
     try:
         fam_doc = doc.EditFamily(sym.Family)
+        try:
+            fm = fam_doc.FamilyManager
+            for fp in fm.Parameters:
+                m = LOOP_SPACING.match(fp.Definition.Name)
+                if m and fm.CurrentType is not None:
+                    value = fm.CurrentType.AsDouble(fp)
+                    if value is not None:
+                        PANEL_FAMILY_INFO["spacing"][int(m.group(1))] = value
+        except Exception:
+            pass
         for c in FilteredElementCollector(fam_doc).OfClass(CurveElement).ToElements():
             try:
                 is_ref = bool(c.IsReferenceLine)
@@ -659,6 +674,13 @@ def panel_reference_lines(sym):
     # Reference lines first, then reference planes, then plain lines with a loop name; top to bottom.
     order = {"Reference Line": 0, "Reference Plane": 1, "Line": 2}
     found.sort(key=lambda c: (order.get(c["kind"], 3), -c["y"]))
+    # The bottom of the panel in the family: a loop's line height less its Loop Spacing.
+    spacing = PANEL_FAMILY_INFO["spacing"]
+    bottoms = sorted(c["y"] - spacing[c["loop"]] for c in found
+                     if c["loop"] is not None and c["loop"] in spacing and c["kind"] != "Line")
+    PANEL_FAMILY_INFO["bottom"] = bottoms[len(bottoms) // 2] if bottoms else None
+    xs = [c["x"] for c in found if c["loop"] is not None and c["kind"] != "Line"]
+    PANEL_FAMILY_INFO["x"] = max(set(xs), key=xs.count) if xs else None
     return found
 
 
@@ -830,20 +852,65 @@ def find_view_panel(view, root):
     return names.get(picked) if picked else None
 
 
+def loop_spacing_values(panel):
+    """{loop number: Loop Spacing N} of the placed panel (instance parameters first, then its type)."""
+    found = {}
+    holders = [panel]
+    try:
+        holders.append(panel.Symbol)
+    except Exception:
+        pass
+    for holder in holders:
+        try:
+            params = list(holder.Parameters)
+        except Exception:
+            continue
+        for p in params:
+            try:
+                m = LOOP_SPACING.match(p.Definition.Name)
+                if m and p.HasValue and int(m.group(1)) not in found:
+                    found[int(m.group(1))] = p.AsDouble()
+            except Exception:
+                pass
+    return found
+
+
 def panel_exit_points(view, panel, cands):
     """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, []).
-    Each candidate also gets "vx": the x of its right end in the view, where its one-line starts."""
+    A loop's height comes from the placed panel's Loop Spacing N (up from the bottom of the panel); its
+    reference line's height in the family is the fallback. Each candidate also gets "vx" (x of its right
+    end in the view, where its one-line starts) and "y_eff" (its height in the family as placed).
+    Loops with a Loop Spacing but no reference line found get a candidate of their own."""
     if panel is None:
         return None, None, []
     bb = panel.get_BoundingBox(view)
     if bb is None:
         return None, None, []
     tf = panel.GetTransform()
+    spacing = loop_spacing_values(panel)
+    bottom = PANEL_FAMILY_INFO.get("bottom")
+    common_x = PANEL_FAMILY_INFO.get("x")
+    cands = list(cands)
+    have = set(c["loop"] for c in cands if c["loop"] is not None and c["kind"] != "Line")
+    for loop in sorted(spacing):
+        if loop not in have:
+            cands.append({"kind": "Loop Spacing", "labels": ["Loop Spacing %d" % loop], "y": None,
+                          "x": common_x, "loop": loop, "name": None, "is_ref": ""})
     out = []
     for c in cands:
         try:
-            p = tf.OfPoint(XYZ(c["x"], c["y"], 0))
-            c["vx"] = p.X
+            y_fam = c["y"]
+            if c["loop"] in spacing and bottom is not None:
+                y_fam = bottom + spacing[c["loop"]]
+            if y_fam is None:
+                # No reference line to measure from: up from the bottom of the panel as drawn.
+                c["y_eff"] = None
+                c["vx"] = bb.Max.X
+                out.append((c, bb.Min.Y + spacing[c["loop"]]))
+                continue
+            c["y_eff"] = y_fam
+            p = tf.OfPoint(XYZ(c["x"] if c["x"] is not None else 0.0, y_fam, 0))
+            c["vx"] = p.X if c["x"] is not None else bb.Max.X
             out.append((c, p.Y))
         except Exception:
             pass
@@ -916,7 +983,8 @@ def references_in_instance(panel, view, cand, y):
     for g in geom:
         if not isinstance(g, GeometryInstance):
             continue
-        for getter, want_y in ((g.GetSymbolGeometry, cand["y"]), (g.GetInstanceGeometry, y)):
+        fam_y = cand.get("y_eff", cand["y"])
+        for getter, want_y in ((g.GetSymbolGeometry, fam_y), (g.GetInstanceGeometry, y)):
             try:
                 items = list(getter())
             except Exception:
@@ -926,7 +994,8 @@ def references_in_instance(panel, view, cand, y):
                     p0, p1 = item.GetEndPoint(0), item.GetEndPoint(1)
                 except Exception:
                     continue
-                if abs(p0.Y - p1.Y) > 1e-6 or abs((p0.Y + p1.Y) / 2.0 - want_y) > 1e-4 or item.Reference is None:
+                if want_y is None or abs(p0.Y - p1.Y) > 1e-6 or abs((p0.Y + p1.Y) / 2.0 - want_y) > 1e-4 \
+                        or item.Reference is None:
                     continue
                 try:
                     stable = item.Reference.ConvertToStableRepresentation(doc)
