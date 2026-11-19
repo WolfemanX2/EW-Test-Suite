@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v19
+# riser_layout module - version v20
 # Change log (last change first):
+#   v20 - Code consolidation step 2 (no change to SLC Riser's results): the tee rule in flat_rows is now
+#         tee_order, which conduit_trace also uses, so the addressing tools treat a tee the same way.
 #   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
 #         main run carries on (flat_rows).
 #   v18 - SLC Riser v31: one line per loop, lowest address next at a split (flat_rows).
+#   v17 - SLC Riser v30 / Config v7: symbol rules by number of addresses (rule_matches, pick_rule).
+#   v16 - SLC Riser v29 / Config v6: several symbols per type, in order (assign_symbols).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
-Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing."""
+Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing.
+
+tee_order is the tee rule for both SLC Riser and the conduit tracing of the addressing tools (lib/conduit_trace.py),
+so a tee is treated the same way everywhere."""
 
 
 def rule_matches(op, limit, value):
@@ -185,6 +192,21 @@ def build_rows(root, children):
     return rows
 
 
+def tee_order(sides, size, sort_key):
+    """The order to take the sides of a split (a tee) in. Shared by SLC Riser (flat_rows) and the conduit
+    tracing used by Address SLC, Address NAC / Voice and Auto-Circuit (conduit_trace.trace_downstream).
+
+    The main run is the side with the most devices beyond the split, and it is taken last. The other sides are
+    the tee'd branches, taken first in sort_key order. On a tie for the most devices the side that sorts last
+    is the main run, so the lower one is taken first as a branch.
+    sides: one id per side; size(side) -> number of devices on that side; sort_key(side) -> sort value."""
+    sides = list(sides)
+    if len(sides) < 2:
+        return sides
+    main = max(sides, key=lambda s: (size(s), sort_key(s)))
+    return sorted((s for s in sides if s != main), key=sort_key) + [main]
+
+
 def flat_rows(root, children, sort_key):
     """[{"nodes": [device ids in order], "source": None}] - one row per run leaving root, with no T-tap rows.
 
@@ -206,13 +228,9 @@ def flat_rows(root, children, sort_key):
             kids = [k for k in children.get(cur, []) if k not in seen]
             if not kids:
                 continue
-            # The main run: most devices beyond the split (a tie goes to the one that sorts last, so the
-            # lower addressed side is drawn first as the branch).
-            main = max(kids, key=lambda k: (size.get(k, 1), sort_key(k)))
-            branches = sorted((k for k in kids if k != main), key=sort_key)
-            # Stack: last pushed is drawn first. Main run last, branches first in sort order.
-            stack.append(main)
-            for k in reversed(branches):
+            # The tee rule (tee_order): branches first in sort order, the main run (most devices beyond the
+            # split; a tie goes to the one that sorts last) last. Stack: last pushed is drawn first.
+            for k in reversed(tee_order(kids, lambda k: size.get(k, 1), sort_key)):
                 stack.append(k)
         rows.append({"nodes": order, "source": None})
     return rows

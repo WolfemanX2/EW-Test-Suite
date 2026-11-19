@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address Voice script - version v2
-__title__ = "Address\nVoice v2"
+# Address Voice script - version v3
+__title__ = "Address\nVoice v3"
 __doc__ = """Fills Voice Address / Voice Circuit (V#-#.# / V#-#) on each picked Fire Alarm Device (or a tag hosted to one), in order of selection.
 
 Continue a circuit already in the project (resumes after its highest device number), continue from a selected

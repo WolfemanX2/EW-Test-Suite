@@ -149,26 +149,26 @@ Each script has its version on line 2.
 |---|---|
 | Auto Conduit | v5 |
 | Auto Conduit - Config | v2 |
-| Auto-Circuit | v5 |
+| Auto-Circuit | v6 |
 | Link Clash | v11 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
 | lib/conduit_routing.py | v1 |
 | lib/clash_rules.py | v5 |
-| Address SLC | v5 |
+| Address SLC | v6 |
 | Address SLC - Config | v3 |
-| lib/slc_addressing.py | v2 |
+| lib/slc_addressing.py | v3 |
 | lib/slc_config_editor.py | v2 |
-| Address NAC | v2 |
-| Address Voice | v2 |
+| Address NAC | v3 |
+| Address Voice | v3 |
 | lib/nac_voice_addressing.py | v2 |
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
-| lib/conduit_trace.py | v3 |
+| lib/conduit_trace.py | v4 |
 | SLC Riser | v32 |
 | SLC Riser - Config | v7 |
 | NAC Coverage Checker | v2 |
-| lib/slc_riser.py | v9 |
-| lib/riser_layout.py | v19 |
+| lib/slc_riser.py | v10 |
+| lib/riser_layout.py | v20 |
 | Line Nuke | v3 |
 | Consolidate Text Styles | v4 |

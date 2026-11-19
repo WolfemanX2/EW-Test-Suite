@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v9
+# slc_riser module - version v10
+# Change log (last change first):
+#   v10 - Code consolidation step 2 (no change to SLC Riser): eid_int, conduit_connectors and
+#         connected_elements now come from conduit_trace instead of a copy here.
+#   v9 - SLC Riser v31: address_sort_key, address_loops and devices_on_loops (lowest address next at a
+#        split, devices with no conduit path added and flagged).
+#   v8 - SLC Riser v30 / Config v7: symbol rules by number of addresses.
+#   v7 - SLC Riser v29 / Config v6: several symbols per type, in order.
+#   v6 - SLC Riser v28 / Config v5: Generic Annotation address labels.
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
-elements, and the lookup table that says which symbol is drawn for each Family : Type.
+elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
+symbol is drawn for each Family : Type.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\riser_symbols.json. It is changed with the
 SLC Riser - Config tool. Updates never overwrite it.
@@ -12,8 +21,9 @@ import os
 import re
 import json
 
-from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, StorageType, Domain, ConnectorType,
-                               FilteredElementCollector, FamilySymbol)
+from Autodesk.Revit.DB import BuiltInCategory, BuiltInParameter, StorageType, FilteredElementCollector, FamilySymbol
+
+import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
@@ -171,12 +181,7 @@ def loop_label(address_lists):
 
 
 # ---------- Revit helpers ----------
-def eid_int(eid):
-    """Integer value of an ElementId in any Revit version."""
-    try:
-        return eid.Value            # Revit 2024+
-    except Exception:
-        return eid.IntegerValue     # older Revit
+eid_int = ct.eid_int
 
 
 def is_device(elem):
@@ -229,55 +234,9 @@ def slc_addresses(el):
 
 
 # ---------- Conduit connections ----------
-def conduit_connectors(el):
-    """Conduit / cable tray connectors of a conduit, fitting or family instance, in a steady order."""
-    cm = None
-    try:
-        cm = el.ConnectorManager                # conduit, cable tray
-    except Exception:
-        pass
-    if cm is None:
-        try:
-            cm = el.MEPModel.ConnectorManager   # devices, fittings, boxes, panels
-        except Exception:
-            cm = None
-    if cm is None:
-        return []
-    out = []
-    for c in cm.Connectors:
-        try:
-            if c.Domain == Domain.DomainCableTrayConduit:
-                out.append(c)
-        except Exception:
-            pass
-    try:
-        out.sort(key=lambda c: c.Id)
-    except Exception:
-        pass
-    return out
-
-
-def connected_elements(el):
-    """One list per conduit connector of el: the elements physically joined to that connector."""
-    groups = []
-    own = eid_int(el.Id)
-    for c in conduit_connectors(el):
-        group = []
-        try:
-            if c.IsConnected:
-                for r in c.AllRefs:
-                    try:
-                        if r.ConnectorType == ConnectorType.Logical:
-                            continue
-                        owner = r.Owner
-                        if owner is not None and eid_int(owner.Id) != own:
-                            group.append(owner)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        groups.append(group)
-    return groups
+# The conduit tracing is shared: these are conduit_trace's functions, the one copy every tool uses.
+conduit_connectors = ct.conduit_connectors
+connected_elements = ct.connected_elements
 
 
 # ---------- Symbols ----------

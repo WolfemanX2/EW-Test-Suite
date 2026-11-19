@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC script - version v2
-__title__ = "Address\nNAC v2"
+# Address NAC script - version v3
+__title__ = "Address\nNAC v3"
 __doc__ = """Fills NAC Address / NAC Circuit (N#-#.# / N#-#) on each picked Fire Alarm Device (or a tag hosted to one), in order of selection.
 
 Continue a circuit already in the project (resumes after its highest device number), continue from a selected
