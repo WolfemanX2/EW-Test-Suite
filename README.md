@@ -127,6 +127,9 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 ### Other settings
 
+- Conduit routing settings for Auto Conduit and Auto-Circuit (obstacle avoidance, stub and leg lengths, default
+  elevation, highlight color, prompt wording) are at the top of `lib/conduit_routing.py`. Both tools use the same
+  routing code from that file, so a change there applies to both.
 - `lib/mounting_rules.json` (Auto Conduit - Config). Not part of the repository, so updates never overwrite it.
   To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
 - NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
@@ -144,12 +147,13 @@ Each script has its version on line 2.
 
 | File | Version |
 |---|---|
-| Auto Conduit | v4 |
+| Auto Conduit | v5 |
 | Auto Conduit - Config | v2 |
-| Auto-Circuit | v4 |
+| Auto-Circuit | v5 |
 | Link Clash | v11 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
+| lib/conduit_routing.py | v1 |
 | lib/clash_rules.py | v5 |
 | Address SLC | v5 |
 | Address SLC - Config | v3 |
