@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v31
-__title__ = "SLC\nRiser v31"
+# SLC Riser script - version v32
+__title__ = "SLC\nRiser v32"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -25,8 +25,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "pick a start point. The first line of the one-line is locked in alignment with its reference line. "
            "When a row wraps, the next line runs the opposite way (left to right, then right to left, and so "
            "on), with the devices following it.\n\n"
-           "Each loop is one line, with no T-tap rows: where the conduit splits, the device with the lowest SLC "
-           "address comes next and the other side follows when that branch ends. Devices on the loop (same "
+           "Each loop is one line, with no T-tap rows. A conduit teeing off the main run is treated as a feed "
+           "and a return in one conduit: its devices are drawn at the tee, out to the end of the branch and back, "
+           "then the main run (the side with the most devices) carries on. Devices on the loop (same "
            "N#L#) that no conduit reaches are added at the end in address order and marked NOT CONNECTED.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so conduit of another type (NAC, power) joined by a tee is ignored.\n\n"
@@ -413,7 +414,7 @@ def trace_from(root, firsts):
         return None
     net.allowed = allowed
     children, returns, passed = rl.trace(root_id, net.ports, net.is_node, starts or None)
-    # One line per run: where the conduit splits, the lowest address comes next (no T-tap rows).
+    # One line per run (no T-tap rows): a tee'd branch is drawn at the split, out and back, then the main run.
     rows = rl.flat_rows(root_id, children, lambda n: sr.address_sort_key(net.addresses.get(n)))
     unconnected = add_unconnected(rows, net)
     for row in rows:

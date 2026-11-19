@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v18
+# riser_layout module - version v19
+# Change log (last change first):
+#   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
+#         main run carries on (flat_rows).
+#   v18 - SLC Riser v31: one line per loop, lowest address next at a split (flat_rows).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -183,26 +187,33 @@ def build_rows(root, children):
 
 def flat_rows(root, children, sort_key):
     """[{"nodes": [device ids in order], "source": None}] - one row per run leaving root, with no T-tap rows.
-    Where the conduit splits, the device that sorts lowest (sort_key, e.g. the lowest SLC address) comes
-    next; the other sides wait, and when a branch ends the lowest waiting device carries on."""
+
+    A conduit teeing off the main run is treated as a feed and a return pulled through the same conduit:
+    at the split the tee'd branch is drawn first, out to its end and back, and then the main run carries on.
+    The main run is the side with the most devices beyond the split; the other sides are branches, taken in
+    order of their first device (sort_key, e.g. the lowest SLC address). Branches off branches work the same."""
+    size = subtree_sizes(root, children)
     rows = []
     for start in children.get(root, []):
-        order, pending, seen = [], [], set()
-        cur = start
-        while cur is not None:
-            if cur not in seen:
-                seen.add(cur)
-                order.append(cur)
-                kids = sorted((k for k in children.get(cur, []) if k not in seen), key=sort_key)
-                if kids:
-                    cur = kids[0]
-                    pending.extend(kids[1:])
-                    continue
-            pending = [p for p in pending if p not in seen]
-            if not pending:
-                break
-            pending.sort(key=sort_key)
-            cur = pending.pop(0)
+        order, seen = [], set()
+        stack = [start]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            order.append(cur)
+            kids = [k for k in children.get(cur, []) if k not in seen]
+            if not kids:
+                continue
+            # The main run: most devices beyond the split (a tie goes to the one that sorts last, so the
+            # lower addressed side is drawn first as the branch).
+            main = max(kids, key=lambda k: (size.get(k, 1), sort_key(k)))
+            branches = sorted((k for k in kids if k != main), key=sort_key)
+            # Stack: last pushed is drawn first. Main run last, branches first in sort order.
+            stack.append(main)
+            for k in reversed(branches):
+                stack.append(k)
         rows.append({"nodes": order, "source": None})
     return rows
 
