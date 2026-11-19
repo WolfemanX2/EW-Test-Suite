@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v12
+# riser_layout module - version v13
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -166,7 +166,10 @@ def layout(rows, root, info, returns, cfg):
                text above a symbol; line_h if not given), label_offset (how far below
                the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
-             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None}
+             "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None,
+             "leader_texts": [(x, y, text, end x, end y)]}
+    "leader_texts" are the loop labels: level text with (x, y) at its top left and a leader down to
+    (end x, end y) on the riser line. cfg "loop_label_raise" lifts them (0 if not given).
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
          "A" = the small text above a device symbol, level, with (x, y) at its top centre.
@@ -188,7 +191,8 @@ def layout(rows, root, info, returns, cfg):
         text = info[n].get("above")
         return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
-    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None}
+    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": []}
+    label_raise = cfg.get("loop_label_raise", 0.0)
     custom_panel = bool(info[root].get("panel"))
 
     def label_size(n):
@@ -284,7 +288,7 @@ def layout(rows, root, info, returns, cfg):
                     else:
                         up = max(up, info[root]["ext"][2])
                     if row.get("label"):
-                        up = max(up, lh * 1.4)
+                        up = max(up, lh * 1.4 + label_raise)
                     if not custom_panel:
                         below = max(below, root_depth())
                 else:
@@ -329,7 +333,9 @@ def layout(rows, root, info, returns, cfg):
                         out["lines"].append(((bus_x, exit_y), (bus_x, y)))
                         start = bus_x
                     if row.get("label"):
-                        out["texts"].append((root_r + sp * 0.08, y + lh * 1.25, row["label"], "L"))
+                        lx = root_r + sp * 0.25
+                        out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"],
+                                                    lx - sp * 0.12, y))
                 else:
                     src_lines = info[row["source"]]["lines"]
                     label = "T-TAP FROM\n%s" % (src_lines[0].rstrip("-") if src_lines else "DEVICE")

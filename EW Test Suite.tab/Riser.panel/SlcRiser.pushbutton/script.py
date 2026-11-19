@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v25
-__title__ = "SLC\nRiser v25"
+# SLC Riser script - version v26
+__title__ = "SLC\nRiser v26"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -37,7 +37,8 @@ from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane,
-    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference
+    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference,
+    TextNoteLeaderTypes
 )
 from System.Collections.Generic import List
 try:
@@ -72,6 +73,8 @@ PER_LINE = 5            # devices on one line before the row wraps underneath
 WRAP_ROUNDING = 0       # a line only wraps when it would have more than PER_LINE + this
 DEVICE_SPACING_FT = 4.5 # device centre to device centre, in feet in the view
 LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the view) below the riser line
+LOOP_LABEL_RAISE_IN = 5.0   # loop letter (A, B ...) sits this many inches (in the view) higher, with a leader
+                            # down to the riser line
 ABOVE_TEXT_SIZE_IN = 5.0 / 64.0     # text above a device (its Panel #): size on the sheet, in inches
 ABOVE_TEXT_TYPE_NAME = 'SLC Riser 5/64"'    # made from the default text type if no 5/64" type exists
 # Sizes on the printed sheet, in inches:
@@ -1073,7 +1076,9 @@ def shift_plan(plan, dx, dy):
     out = {"symbols": [(x + dx, y + dy, n) for x, y, n in plan["symbols"]],
            "boxes": [(x + dx, y + dy, l, r, u, d) for x, y, l, r, u, d in plan["boxes"]],
            "lines": [((p[0] + dx, p[1] + dy), (q[0] + dx, q[1] + dy)) for p, q in plan["lines"]],
-           "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]]}
+           "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]],
+           "leader_texts": [(x + dx, y + dy, t, ex + dx, ey + dy)
+                            for x, y, t, ex, ey in plan.get("leader_texts", [])]}
     return out
 
 
@@ -1149,6 +1154,19 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
             TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
         except Exception:
             failed[0] += 1
+    for x, y, text, ex, ey in plan.get("leader_texts", []):
+        try:
+            opts = TextNoteOptions(type_id)
+            opts.HorizontalAlignment = HorizontalTextAlignment.Left
+            note = TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+        except Exception:
+            failed[0] += 1
+            continue
+        try:
+            leader = note.AddLeader(TextNoteLeaderTypes.TNLT_STRAIGHT_L)
+            leader.End = XYZ(ex, ey, 0)
+        except Exception:
+            failed[0] += 1      # the label is there, only its leader is missing
     return failed[0]
 
 
@@ -1527,6 +1545,7 @@ def main():
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
+               "loop_label_raise": LOOP_LABEL_RAISE_IN / 12.0,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
 
         for i, (run, origin, lock) in enumerate(zip(runs, origins, lock_refs), start=1):

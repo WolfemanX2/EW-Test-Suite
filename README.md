@@ -132,10 +132,10 @@ Each script has its version on line 2.
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |
-| SLC Riser | v25 |
+| SLC Riser | v26 |
 | SLC Riser - Config | v4 |
 | NAC Coverage Checker | v2 |
 | lib/slc_riser.py | v5 |
-| lib/riser_layout.py | v12 |
+| lib/riser_layout.py | v13 |
 | Line Nuke | v3 |
 | Consolidate Text Styles | v4 |
