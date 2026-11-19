@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v13
+# riser_layout module - version v14
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -168,8 +168,8 @@ def layout(rows, root, info, returns, cfg):
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
              "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None,
              "leader_texts": [(x, y, text, end x, end y)]}
-    "leader_texts" are the loop labels: level text with (x, y) at its top left and a leader down to
-    (end x, end y) on the riser line. cfg "loop_label_raise" lifts them (0 if not given).
+    "leader_texts" are the loop labels: level text centred on x with its top at y, and a vertical line from
+    under it down to (end x, end y) on the riser line. cfg "loop_label_raise" lifts them (0 if not given).
 
     how: "L" / "C" / "R" = level text with (x, y) at its top left / top centre / top right.
          "A" = the small text above a device symbol, level, with (x, y) at its top centre.
@@ -334,8 +334,7 @@ def layout(rows, root, info, returns, cfg):
                         start = bus_x
                     if row.get("label"):
                         lx = root_r + sp * 0.25
-                        out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"],
-                                                    lx - sp * 0.12, y))
+                        out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"], lx, y))
                 else:
                     src_lines = info[row["source"]]["lines"]
                     label = "T-TAP FROM\n%s" % (src_lines[0].rstrip("-") if src_lines else "DEVICE")
