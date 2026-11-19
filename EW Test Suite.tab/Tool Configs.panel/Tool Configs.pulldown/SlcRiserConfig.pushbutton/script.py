@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-# SLC Riser - Config script - version v5
-__title__ = "SLC Riser - Config v5"
+# SLC Riser - Config script - version v6
+__title__ = "SLC Riser - Config v6"
 __doc__ = ("Drawing settings for SLC Riser (drafting view scale, spacing between devices, devices per line "
            "before wrapping, wrap rounding, address text offset) and the table of the symbol drawn for each Family : Type.\n\n"
-           "The symbol is any loaded Generic Annotation or Detail Item type. Each type's Address Label is the "
-           "standard 45 degree text or a Generic Annotation tag, filled in with the device's parameters. "
-           "'Add Types From Project' lists "
+           "The symbols are any loaded Generic Annotation or Detail Item types. A type can have several, drawn in "
+           "order: once each, or (Repeat) as a pattern repeated along the device's addresses with one address "
+           "under each symbol. 'Add Types From Project' lists "
            "the loaded Fire Alarm Device types, or the Electrical Equipment types for panels.")
 
 import clr
 clr.AddReference("System.Data")
-from System import String, DBNull
+from System import String, Boolean, DBNull
 from System.Data import DataTable, DataRowState
 from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 from pyrevit import revit, forms
@@ -43,7 +43,7 @@ EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SLC Riser - Config"
-        Width="1100" Height="680" MinWidth="680" MinHeight="480"
+        Width="980" Height="680" MinWidth="680" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">
     <Grid Margin="12">
@@ -91,9 +91,9 @@ EDITOR_XAML = """
         </GroupBox>
 
         <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8"
-                   Text="Choose the symbol drawn on riser diagrams for each Family Type, and its Address Label: the standard 45 degree address text, or a Generic Annotation tag that is filled in with the device's parameters (shared parameters by GUID, others by name). Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
+                   Text="Choose the symbols drawn on riser diagrams for each Family Type, in order (double-click a row, or use Set Symbols). Without Repeat each symbol is drawn once with one address, and the last symbol takes the rest. With Repeat the symbols are a pattern repeated along the device's addresses, one address under each: addresses 1-18 with 3 symbols draws the 3 symbols 6 times. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
 
-        <DataGrid x:Name="grid" Grid.Row="2"
+        <DataGrid x:Name="grid" Grid.Row="2" MouseDoubleClick="grid_double_click"
                   AutoGenerateColumns="False"
                   CanUserAddRows="True" CanUserDeleteRows="True"
                   SelectionMode="Extended" SelectionUnit="FullRow"
@@ -101,22 +101,18 @@ EDITOR_XAML = """
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Family Type"
                                     Binding="{Binding FamilyType}" Width="*"/>
-                <DataGridComboBoxColumn Header="Riser Symbol"
-                                        SelectedItemBinding="{Binding Symbol}"
-                                        Width="*"/>
-                <DataGridComboBoxColumn Header="Address Label"
-                                        SelectedItemBinding="{Binding Label}"
-                                        Width="*"/>
+                <DataGridTextColumn Header="Riser Symbols (in order)"
+                                    Binding="{Binding Symbol}" IsReadOnly="True" Width="1.4*"/>
+                <DataGridCheckBoxColumn Header="Repeat"
+                                        Binding="{Binding Repeat, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
             </DataGrid.Columns>
         </DataGrid>
 
         <DockPanel Grid.Row="3" Margin="0,10,0,0" LastChildFill="False">
             <Button Content="Add Types From Project..." Width="170"
                     Margin="0,0,8,0" Click="add_click" DockPanel.Dock="Left"/>
-            <Button Content="Set Symbol For Selected..." Width="170"
+            <Button Content="Set Symbols For Selected..." Width="180"
                     Margin="0,0,8,0" Click="set_click" DockPanel.Dock="Left"/>
-            <Button Content="Set Address Label For Selected..." Width="210"
-                    Margin="0,0,8,0" Click="set_label_click" DockPanel.Dock="Left"/>
             <Button Content="Delete Selected Rows" Width="140"
                     Click="delete_click" DockPanel.Dock="Left"/>
             <Button Content="Close" Width="80" Click="close_click"
@@ -131,13 +127,121 @@ EDITOR_XAML = """
 """
 
 
+SEP = "  >  "      # between the symbols of one type, in the table
+
+
+SYMBOL_LIST_XAML = """
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Riser Symbols"
+        Width="820" Height="520" MinWidth="640" MinHeight="380"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="title_text" Grid.Row="0" Grid.ColumnSpan="4" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+        <DockPanel Grid.Row="1" Grid.Column="0">
+            <TextBox x:Name="filter_box" DockPanel.Dock="Top" Margin="0,0,0,4" TextChanged="filter_changed"
+                     ToolTip="Filter the loaded symbols"/>
+            <ListBox x:Name="available_list" SelectionMode="Extended" MouseDoubleClick="add_click"/>
+        </DockPanel>
+
+        <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Center" Margin="8,0">
+            <Button Content="Add &gt;" Width="80" Margin="0,0,0,6" Click="add_click"/>
+            <Button Content="&lt; Remove" Width="80" Click="remove_click"/>
+        </StackPanel>
+
+        <DockPanel Grid.Row="1" Grid.Column="2">
+            <TextBlock DockPanel.Dock="Top" Text="Drawn in this order:" Margin="0,0,0,4"/>
+            <ListBox x:Name="chosen_list" SelectionMode="Single" MouseDoubleClick="remove_click"/>
+        </DockPanel>
+
+        <StackPanel Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Margin="8,0,0,0">
+            <Button Content="Move Up" Width="80" Margin="0,0,0,6" Click="up_click"/>
+            <Button Content="Move Down" Width="80" Click="down_click"/>
+        </StackPanel>
+
+        <DockPanel Grid.Row="2" Grid.ColumnSpan="4" Margin="0,10,0,0" LastChildFill="False">
+            <CheckBox x:Name="repeat_check" DockPanel.Dock="Left" VerticalAlignment="Center"
+                      Content="Repeat the pattern along the device's addresses (one address under each symbol)"/>
+            <Button Content="Cancel" Width="80" IsCancel="True" Click="cancel_click" DockPanel.Dock="Right"/>
+            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click" DockPanel.Dock="Right"/>
+        </DockPanel>
+    </Grid>
+</Window>
+"""
+
+
+class SymbolListEditor(forms.WPFWindow):
+    """Choose the symbols of a type, in order, and whether they repeat. self.result = (symbols, repeat) or None."""
+    def __init__(self, title, symbols, current, repeat):
+        forms.WPFWindow.__init__(self, SYMBOL_LIST_XAML, literal_string=True)
+        self.all_symbols = list(symbols)
+        self.result = None
+        self.title_text.Text = ("Riser symbols for %s. A symbol can be added more than once. Without Repeat each "
+                                "symbol is drawn once with one address and the last takes the rest; with Repeat "
+                                "the list is a pattern repeated along the device's addresses." % title)
+        self.available_list.ItemsSource = self.all_symbols
+        for sym in current:
+            self.chosen_list.Items.Add(sym)
+        self.repeat_check.IsChecked = bool(repeat)
+
+    def filter_changed(self, sender, args):
+        text = (self.filter_box.Text or "").strip().lower()
+        self.available_list.ItemsSource = [x for x in self.all_symbols if text in x.lower()]
+
+    def add_click(self, sender, args):
+        for sym in list(self.available_list.SelectedItems):
+            self.chosen_list.Items.Add(sym)
+
+    def remove_click(self, sender, args):
+        i = self.chosen_list.SelectedIndex
+        if i >= 0:
+            self.chosen_list.Items.RemoveAt(i)
+            self.chosen_list.SelectedIndex = min(i, self.chosen_list.Items.Count - 1)
+
+    def _move(self, step):
+        i = self.chosen_list.SelectedIndex
+        j = i + step
+        if i < 0 or j < 0 or j >= self.chosen_list.Items.Count:
+            return
+        sym = self.chosen_list.Items[i]
+        self.chosen_list.Items.RemoveAt(i)
+        self.chosen_list.Items.Insert(j, sym)
+        self.chosen_list.SelectedIndex = j
+
+    def up_click(self, sender, args):
+        self._move(-1)
+
+    def down_click(self, sender, args):
+        self._move(1)
+
+    def ok_click(self, sender, args):
+        self.result = ([str(x) for x in self.chosen_list.Items], bool(self.repeat_check.IsChecked))
+        self.Close()
+
+    def cancel_click(self, sender, args):
+        self.Close()
+
+
 def number_text(v):
     """4.5 -> '4.5', 6.0 -> '6'"""
     return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
 
 
 class TableEditor(forms.WPFWindow):
-    def __init__(self, table, settings, labels):
+    def __init__(self, table, settings):
         forms.WPFWindow.__init__(self, EDITOR_XAML, literal_string=True)
         self._loading = True
         self.settings_dirty = False
@@ -145,22 +249,20 @@ class TableEditor(forms.WPFWindow):
         self._show_settings(settings)
 
         # Symbols loaded now, plus any saved ones that aren't loaded in this project (so they aren't lost).
-        self.symbols = sorted(set(sr.available_symbols(doc).keys()) | set(v for v in table.values() if v))
-
-        # Address labels: the standard text, or a Generic Annotation (loaded now, or saved before).
-        self.tags = sorted(set(sr.available_tags(doc).keys()) | set(v for v in labels.values() if v))
+        saved = set()
+        for entry in table.values():
+            saved.update(entry["symbols"])
+        self.symbols = sorted(set(sr.available_symbols(doc).keys()) | saved)
 
         self.dt = DataTable("RiserSymbols")
         self.dt.Columns.Add("FamilyType", clr.GetClrType(String))
         sym_col = self.dt.Columns.Add("Symbol", clr.GetClrType(String))
         sym_col.DefaultValue = ""
-        label_col = self.dt.Columns.Add("Label", clr.GetClrType(String))
-        label_col.DefaultValue = sr.STANDARD_LABEL
-        self.grid.Columns[1].ItemsSource = [""] + self.symbols
-        self.grid.Columns[2].ItemsSource = [sr.STANDARD_LABEL] + self.tags
+        rep_col = self.dt.Columns.Add("Repeat", clr.GetClrType(Boolean))
+        rep_col.DefaultValue = False
 
         for key in sorted(table.keys()):
-            self._add_row(key, table[key], labels.get(key) or sr.STANDARD_LABEL)
+            self._add_row(key, table[key]["symbols"], table[key]["repeat"])
         self.dt.AcceptChanges()
         self.grid.ItemsSource = self.dt.DefaultView
         self.status_text.Text = "%d type(s) loaded" % len(table)
@@ -217,11 +319,11 @@ class TableEditor(forms.WPFWindow):
             out[key] = value
         return out
 
-    def _add_row(self, key, symbol, label=None):
+    def _add_row(self, key, symbols, repeat=False):
         row = self.dt.NewRow()
         row["FamilyType"] = key
-        row["Symbol"] = symbol
-        row["Label"] = label or sr.STANDARD_LABEL
+        row["Symbol"] = SEP.join(symbols)
+        row["Repeat"] = bool(repeat)
         self.dt.Rows.Add(row)
 
     def _live_rows(self):
@@ -246,40 +348,40 @@ class TableEditor(forms.WPFWindow):
         if not picked:
             return
         for key in picked:
-            self._add_row(key, "")
+            self._add_row(key, [])
         self.status_text.Text = "%d type(s) added (unsaved) - choose a Riser Symbol for each" % len(picked)
 
     def set_click(self, sender, args):
         self.grid.CommitEdit()
         rows = [i.Row for i in list(self.grid.SelectedItems) if hasattr(i, "Row")]
+        self._edit_rows(rows)
+
+    def grid_double_click(self, sender, args):
+        item = self.grid.CurrentItem
+        if item is not None and hasattr(item, "Row"):
+            self.grid.CommitEdit()
+            self._edit_rows([item.Row])
+
+    def _edit_rows(self, rows):
         if not rows:
             forms.alert("Select one or more rows first.", title=TITLE)
             return
         if not self.symbols:
             forms.alert("No Generic Annotation or Detail Item types are loaded in this project.", title=TITLE)
             return
-        symbol = forms.SelectFromList.show(self.symbols, title="Symbol for the %d selected row(s)" % len(rows),
-                                           button_name="Set Symbol", multiselect=False)
-        if not symbol:
+        first = rows[0]
+        current = [x for x in cell_text(first["Symbol"]).split(SEP) if x]
+        repeat = bool(first["Repeat"]) if not isinstance(first["Repeat"], DBNull) else False
+        title = cell_text(first["FamilyType"]) if len(rows) == 1 else "%d selected types" % len(rows)
+        dlg = SymbolListEditor(title, self.symbols, current, repeat)
+        dlg.ShowDialog()
+        if dlg.result is None:
             return
+        symbols, repeat = dlg.result
         for row in rows:
-            row["Symbol"] = symbol
-        self.status_text.Text = "Symbol set on %d row(s) (unsaved)" % len(rows)
-
-    def set_label_click(self, sender, args):
-        self.grid.CommitEdit()
-        rows = [i.Row for i in list(self.grid.SelectedItems) if hasattr(i, "Row")]
-        if not rows:
-            forms.alert("Select one or more rows first.", title=TITLE)
-            return
-        label = forms.SelectFromList.show([sr.STANDARD_LABEL] + self.tags,
-                                          title="Address label for the %d selected row(s)" % len(rows),
-                                          button_name="Set Address Label", multiselect=False)
-        if not label:
-            return
-        for row in rows:
-            row["Label"] = label
-        self.status_text.Text = "Address label set on %d row(s) (unsaved)" % len(rows)
+            row["Symbol"] = SEP.join(symbols)
+            row["Repeat"] = repeat
+        self.status_text.Text = "Symbols set on %d row(s) (unsaved)" % len(rows)
 
     def delete_click(self, sender, args):
         self.grid.CommitEdit()
@@ -290,11 +392,13 @@ class TableEditor(forms.WPFWindow):
 
     def save_click(self, sender, args):
         self.grid.CommitEdit()
-        table, labels, errors, seen, blank = {}, {}, [], set(), 0
+        table, errors, seen, blank = {}, [], set(), 0
         settings = self._read_settings(errors)
         for idx, row in enumerate(self._live_rows(), start=1):
             key = cell_text(row["FamilyType"])
             symbol = cell_text(row["Symbol"])
+            repeat = row["Repeat"]
+            repeat = False if isinstance(repeat, DBNull) or repeat is None else bool(repeat)
             if not key and not symbol:
                 continue    # fully blank row
             if not key:
@@ -306,10 +410,7 @@ class TableEditor(forms.WPFWindow):
             seen.add(key)
             if not symbol:
                 blank += 1
-            table[key] = symbol
-            label = cell_text(row["Label"])
-            if label and label != sr.STANDARD_LABEL:
-                labels[key] = label
+            table[key] = sr.new_entry([x for x in symbol.split(SEP) if x], repeat)
 
         if errors:
             forms.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors), title=TITLE)
@@ -322,7 +423,7 @@ class TableEditor(forms.WPFWindow):
             return
         self.settings_dirty = False
         try:
-            sr.save_table(table, labels)
+            sr.save_table(table)
         except Exception as ex:
             forms.alert("Could not save the symbol table:\n%s\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
             return
@@ -358,11 +459,7 @@ def main():
         forms.alert("Could not read the drawing settings, so the defaults are shown:\n%s\n\nPath: %s"
                     % (ex, sr.settings_path()), title=TITLE)
         settings = dict(sr.DEFAULT_SETTINGS)
-    try:
-        labels = sr.load_labels()
-    except Exception:
-        labels = {}
-    TableEditor(table, settings, labels).ShowDialog()
+    TableEditor(table, settings).ShowDialog()
 
 
 main()

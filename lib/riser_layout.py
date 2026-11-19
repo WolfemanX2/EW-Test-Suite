@@ -1,9 +1,31 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v15
+# riser_layout module - version v16
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
 Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing."""
+
+
+def assign_symbols(addresses, count, repeat):
+    """Which addresses go under each symbol drawn for one device: [(symbol index, [addresses])].
+
+    repeat: the symbols are a pattern repeated along the device's addresses, one address each
+            (addresses 1-18 with 3 symbols: S1 S2 S3 S1 S2 S3 ... 18 symbols).
+    otherwise: each symbol is drawn once, in order, with one address each; the last symbol takes the rest
+            (1 symbol: it gets every address, as a first-last range)."""
+    count = max(1, int(count))
+    addresses = list(addresses)
+    if repeat:
+        if not addresses:
+            return [(0, [])]
+        return [(i % count, [a]) for i, a in enumerate(addresses)]
+    out = []
+    for i in range(count):
+        if i < count - 1:
+            out.append((i, addresses[i:i + 1]))
+        else:
+            out.append((i, addresses[i:]))
+    return out
 
 
 def find_path(root, target, ports, is_node):
@@ -152,11 +174,7 @@ def layout(rows, root, info, returns, cfg):
     """Positions for the whole diagram, in the same length unit as cfg and the extents.
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
-                "above": text written above the symbol, or "" (optional),
-                "tag": (left, right, up, down) of a Generic Annotation drawn instead of the turned address
-                       text, measured from its insertion point (optional)}
-    A device with a "tag" gets out["tags"] = [(x, y, id)]: the tag's insertion point, label_offset below
-    the riser line under the device.
+                "above": text written above the symbol, or "" (optional)}
     info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
                 its top right corner; its ext is (width, 0, 0, height) from there). It is drawn once and
                 every run comes out of its right side, the rows beside it. "exit_dy" is how far below the
@@ -195,7 +213,7 @@ def layout(rows, root, info, returns, cfg):
         text = info[n].get("above")
         return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
-    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": [], "tags": []}
+    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": []}
     label_raise = cfg.get("loop_label_raise", 0.0)
     custom_panel = bool(info[root].get("panel"))
 
@@ -207,25 +225,14 @@ def layout(rows, root, info, returns, cfg):
         return max(len(t) for t in lines) * char_w, len(lines) * lh
 
     def label_drop(n):
-        """How far a device's turned label (or its tag) reaches below the riser line."""
-        tag = info[n].get("tag")
-        if tag:
-            return offset + tag[3]
+        """How far a device's turned label reaches below the riser line."""
         length, height = label_size(n)
         return (length + height) * diag + offset if length else 0.0
 
     def label_reach(n):
-        """How far a device's turned label (or its tag) reaches left of the device centreline."""
-        tag = info[n].get("tag")
-        if tag:
-            return tag[0]
+        """How far a device's turned label reaches left of the device centreline."""
         length, height = label_size(n)
         return length * diag if length else 0.0
-
-    def tag_up(n):
-        """How far a device's tag reaches above the riser line."""
-        tag = info[n].get("tag")
-        return max(0.0, tag[2] - offset) if tag else 0.0
 
     def root_depth():
         lines = info[root]["lines"]
@@ -243,9 +250,6 @@ def layout(rows, root, info, returns, cfg):
         above = info[n].get("above")
         if above and n != root:
             out["texts"].append((x, y + above_up(n), above, "A"))
-        if n != root and info[n].get("tag"):
-            out["tags"].append((x, y - offset, n))
-            return
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])
@@ -291,7 +295,7 @@ def layout(rows, root, info, returns, cfg):
             last_chunk = ci == len(chunks) - 1
             forward = ci % 2 == 0
             xs = xs_all[ci]
-            up = max(max(above_up(n), tag_up(n)) for n in chunk)
+            up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             run_dy = None
             if ci == 0 and row["source"] is None and custom_panel:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v6
+# slc_riser module - version v7
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
@@ -254,88 +254,15 @@ def available_symbols(doc):
     return found
 
 
-def available_tags(doc):
-    """{"Family : Type": FamilySymbol} for every loaded generic annotation type (address tags)."""
-    found = {}
-    for s in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_GenericAnnotation)
-              .OfClass(FamilySymbol).ToElements()):
-        try:
-            found[type_key(s)] = s
-        except Exception:
-            pass
-    return found
-
-
-def copy_parameters(source, target):
-    """Copy every value the target (a placed address tag) shares with the source device: shared parameters
-    by GUID, other project parameters by name, from the device itself or its type. Built-in parameters,
-    read-only ones and element references are left alone. Returns the number copied."""
-    holders = [source]
-    try:
-        holders.append(source.Document.GetElement(source.GetTypeId()))
-    except Exception:
-        pass
-    copied = 0
-    for p in target.Parameters:
-        try:
-            if p.IsReadOnly or p.StorageType not in (StorageType.String, StorageType.Integer, StorageType.Double):
-                continue
-            definition = p.Definition
-            try:
-                if int(definition.BuiltInParameter) != int(BuiltInParameter.INVALID):
-                    continue
-            except Exception:
-                pass
-            src = None
-            for holder in holders:
-                if holder is None:
-                    continue
-                if p.IsShared:
-                    src = holder.get_Parameter(p.GUID)
-                if src is None:
-                    src = holder.LookupParameter(definition.Name)
-                if src is not None and src.HasValue:
-                    break
-                src = None
-            if src is None or src.StorageType != p.StorageType:
-                continue
-            if p.StorageType == StorageType.String:
-                ok = p.Set(src.AsString() or "")
-            elif p.StorageType == StorageType.Integer:
-                ok = p.Set(src.AsInteger())
-            else:
-                ok = p.Set(src.AsDouble())
-            if ok:
-                copied += 1
-        except Exception:
-            pass
-    return copied
-
-
 # ---------- Lookup table ----------
-STANDARD_LABEL = "Standard - 45 degree text"     # shown in the table; stored as ""
-
-
-def load_labels():
-    """{"Family : Type" of a device: "Family : Type" of the Generic Annotation drawn as its address label}.
-    Types that use the standard 45 degree text are left out. Raises if the file can't be read."""
-    labels = {}
-    path = table_path()
-    if not os.path.isfile(path):
-        return labels
-    with open(path, "r") as f:
-        data = json.load(f)
-    for key, value in data.items():
-        if isinstance(value, dict):
-            label = (value.get("label") or "").strip()
-            if label and label != STANDARD_LABEL:
-                labels[key] = label
-    return labels
+def new_entry(symbols=None, repeat=False):
+    """A table entry: the riser symbols drawn for one Family : Type, in order, and whether they repeat."""
+    return {"symbols": [s for s in (symbols or []) if s], "repeat": bool(repeat)}
 
 
 def load_table():
-    """{"Family : Type" of a device or panel: "Family : Type" of its riser symbol ("" = not chosen yet)}.
-    Raises if the file can't be read."""
+    """{"Family : Type" of a device: {"symbols": ["Family : Type" of each riser symbol, in order], "repeat": bool}}.
+    Older tables with a single "symbol" are read as a one-symbol list. Raises if the file can't be read."""
     table = {}
     path = table_path()
     if not os.path.isfile(path):
@@ -344,27 +271,25 @@ def load_table():
         data = json.load(f)
     for key, value in data.items():
         if isinstance(value, dict):
-            value = value.get("symbol")
-        table[key] = (value or "").strip()
+            symbols = value.get("symbols")
+            if not isinstance(symbols, list):
+                symbols = [value.get("symbol") or ""]
+            table[key] = new_entry([(s or "").strip() for s in symbols], value.get("repeat", False))
+        else:
+            table[key] = new_entry([(value or "").strip()])
     return table
 
 
-def save_table(table, labels=None):
-    """Write the table, creating the folder if needed. Raises if it can't be written.
-    labels: {"Family : Type": address label Generic Annotation}; None keeps the labels already saved."""
+def save_table(table):
+    """Write the table, creating the folder if needed. Raises if it can't be written."""
     path = table_path()
     folder = os.path.dirname(path)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder)
-    if labels is None:
-        try:
-            labels = load_labels()
-        except Exception:
-            labels = {}
     data = {}
-    for key, symbol in table.items():
-        data[key] = {"symbol": symbol}
-        if labels.get(key):
-            data[key]["label"] = labels[key]
+    for key, entry in table.items():
+        symbols = list(entry.get("symbols") or [])
+        data[key] = {"symbols": symbols, "repeat": bool(entry.get("repeat")),
+                     "symbol": symbols[0] if symbols else ""}     # read by older versions
     with open(path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)

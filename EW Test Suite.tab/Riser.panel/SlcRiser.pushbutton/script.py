@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v28
-__title__ = "SLC\nRiser v28"
+# SLC Riser script - version v29
+__title__ = "SLC\nRiser v29"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -27,10 +27,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
-           "A type can use a Generic Annotation as its address label instead of the 45 degree text (set in "
-           "SLC Riser - Config); the tag is placed under the device and filled in with the device's parameters "
-           "(shared parameters by GUID, others by name). "
-           "Each Family : Type is drawn with the symbol set for it in SLC Riser - Config. A type without "
+           "A type can have several symbols, drawn in order: once each (one address each, the last symbol "
+           "taking the rest) or as a pattern repeated along the device's addresses (one address under each). "
+           "Each Family : Type is drawn with the symbol(s) set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"
            "View scale, device spacing, devices per line, wrap rounding and the label offset are set in SLC Riser - Config.\n\n"
@@ -793,6 +792,44 @@ def device_label(view, x, y, text, type_id):
     TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
+def expand_devices(rows, returns, elements, addresses, keys, type_symbols, available):
+    """Replace every device in the rows with the symbols drawn for it (see riser_layout.assign_symbols).
+    The first symbol keeps the device's id; the others get '<id>#<n>'. elements, addresses and keys are
+    filled in for the new ids. Returns (rows, returns, {id: FamilySymbol}, ids of each device's first symbol)."""
+    parts_of, node_symbol = {}, {}
+    for row in rows:
+        for n in row["nodes"]:
+            if n in parts_of:
+                continue
+            key = keys[n]
+            if key in type_symbols:
+                symbols, repeat = type_symbols[key]
+                parts = rl.assign_symbols(addresses.get(n, []), len(symbols), repeat)
+            else:
+                symbols, parts = None, [(None, list(addresses.get(n, [])))]
+            ids = []
+            for k, (idx, addrs) in enumerate(parts):
+                sid = n if k == 0 else "%s#%d" % (n, k)
+                elements[sid] = elements[n]
+                keys[sid] = key
+                addresses[sid] = addrs
+                if idx is not None:
+                    node_symbol[sid] = available[symbols[idx]]
+                ids.append(sid)
+            parts_of[n] = ids
+    new_rows = []
+    for row in rows:
+        nodes = []
+        for n in row["nodes"]:
+            nodes.extend(parts_of[n])
+        new_row = dict(row)
+        new_row["nodes"] = nodes
+        new_rows.append(new_row)
+    new_returns = set(parts_of[n][-1] for n in returns if n in parts_of)
+    firsts = set(ids[0] for ids in parts_of.values())
+    return new_rows, new_returns, node_symbol, firsts
+
+
 def split_runs(rows):
     """Rows grouped per run: each run row with the T-tap rows that follow it."""
     runs = []
@@ -1079,36 +1116,9 @@ def shift_plan(plan, dx, dy):
            "boxes": [(x + dx, y + dy, l, r, u, d) for x, y, l, r, u, d in plan["boxes"]],
            "lines": [((p[0] + dx, p[1] + dy), (q[0] + dx, q[1] + dy)) for p, q in plan["lines"]],
            "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]],
-           "tags": [(x + dx, y + dy, n) for x, y, n in plan.get("tags", [])],
            "leader_texts": [(x + dx, y + dy, t, ex + dx, ey + dy)
                             for x, y, t, ex, ey in plan.get("leader_texts", [])]}
     return out
-
-
-def measure_tags(view, symbols):
-    """{symbol id: (left, right, up, down)} of address label tags from their insertion point (not capped)."""
-    placed = {}
-    for key, sym in symbols.items():
-        try:
-            placed[key] = doc.Create.NewFamilyInstance(XYZ(0, 0, 0), sym, view)
-        except Exception:
-            pass
-    if placed:
-        doc.Regenerate()
-    sizes = {}
-    for key in symbols:
-        ext = (0.0, 0.0, 0.0, paper(0.5))
-        inst = placed.get(key)
-        if inst is not None:
-            try:
-                bb = inst.get_BoundingBox(view)
-                if bb is not None:
-                    ext = (max(-bb.Min.X, 0.0), max(bb.Max.X, 0.0), max(bb.Max.Y, 0.0), max(-bb.Min.Y, 0.0))
-            except Exception:
-                pass
-            doc.Delete(inst.Id)
-        sizes[key] = ext
-    return sizes
 
 
 def measure_symbols(view, symbols):
@@ -1139,8 +1149,7 @@ def measure_symbols(view, symbols):
     return sizes
 
 
-def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None, tag_symbol=None,
-         elements=None):
+def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None):
     """Create everything in the layout. Returns the number of things that could not be created.
     created: a list that gets (start, end, detail curve) for every line drawn."""
     failed = [0]
@@ -1161,15 +1170,6 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
             doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view)
         except Exception:
             failed[0] += 1
-    for x, y, n in plan.get("tags", []):
-        # A Generic Annotation address label, filled in with the device's parameters.
-        try:
-            tag = doc.Create.NewFamilyInstance(XYZ(x, y, 0), tag_symbol[n], view)
-        except Exception:
-            failed[0] += 1
-            continue
-        if elements is not None:
-            sr.copy_parameters(elements[n], tag)
     for x, y, l, r, u, d in plan["boxes"]:
         corners = [(x - l, y - d), (x + r, y - d), (x + r, y + u), (x - l, y + u)]
         for i in range(4):
@@ -1265,7 +1265,7 @@ def number_text(v):
 class ReviewDialog(forms.WPFWindow):
     """Device count, with the spacing and wrapping settings to adjust before the riser is drawn.
     self.result = (spacing ft, devices per line, wrap rounding, save as default) or None if cancelled."""
-    def __init__(self, rows):
+    def __init__(self, rows, device_count=None):
         forms.WPFWindow.__init__(self, REVIEW_XAML, literal_string=True)
         self.rows = rows
         self.result = None
@@ -1273,7 +1273,10 @@ class ReviewDialog(forms.WPFWindow):
         total = sum(len(r["nodes"]) for r in rows)
         runs = [r for r in rows if r["source"] is None]
         taps = len(rows) - len(runs)
-        self.count_text.Text = "%d device(s) will be added to the riser." % total
+        if device_count is not None and device_count != total:
+            self.count_text.Text = "%d device(s) (%d symbols) will be added to the riser." % (device_count, total)
+        else:
+            self.count_text.Text = "%d device(s) will be added to the riser." % total
         parts = []
         for r in runs:
             parts.append("%s%d" % (("Loop %s: " % r["label"]) if r.get("label") else "", len(r["nodes"])))
@@ -1329,10 +1332,10 @@ class ReviewDialog(forms.WPFWindow):
         self.Close()
 
 
-def review_layout(rows):
+def review_layout(rows, device_count=None):
     """Show the device count and let the user adjust spacing and wrapping. False if cancelled."""
     global DEVICE_SPACING_FT, PER_LINE, WRAP_ROUNDING
-    dlg = ReviewDialog(rows)
+    dlg = ReviewDialog(rows, device_count)
     dlg.ShowDialog()
     if dlg.result is None:
         return False
@@ -1401,25 +1404,28 @@ def main():
         forms.alert("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
         return
     available = sr.available_symbols(doc)
-    try:
-        labels = sr.load_labels()
-    except Exception:
-        labels = {}
-    available_tags = sr.available_tags(doc)
 
     # The panel is the NEX2-DETAIL-RISER detail item; the devices use the symbols from the table.
     panel_sym = panel_family_symbol()
     panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else []
     drawn = [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
-    chosen, missing = {}, []    # type key -> symbol key; type keys with no usable symbol
+    # Symbols for each type: the table's list, in order, leaving out any that aren't loaded.
+    type_symbols, missing, not_loaded = {}, [], set()
     for n in drawn:
         key = keys[n]
-        wanted = table.get(key, "")
-        if wanted in available:
-            chosen[key] = wanted
-        elif key not in missing:
+        if key in type_symbols or key in missing:
+            continue
+        entry = table.get(key) or sr.new_entry()
+        loaded = [sym for sym in entry["symbols"] if sym in available]
+        if loaded:
+            not_loaded.update(sym for sym in entry["symbols"] if sym not in available)
+            type_symbols[key] = (loaded, entry["repeat"])
+        else:
             missing.append(key)
+    if not_loaded:
+        forms.alert("These riser symbols are set in SLC Riser - Config but are not loaded in this project, so they "
+                    "are left out of their patterns:\n\n%s" % "\n".join(sorted(not_loaded)), title=TITLE)
     if missing:
         names = sorted(available.keys())
         if not names:
@@ -1431,15 +1437,15 @@ def main():
         else:
             picked_any = False
             for i, key in enumerate(missing, start=1):
-                wanted = table.get(key, "")
-                if wanted:
-                    forms.toast("Saved symbol '%s' for %s is not loaded in this project." % (wanted, key))
+                old = table.get(key) or sr.new_entry()
+                if old["symbols"]:
+                    forms.toast("Saved symbol(s) for %s are not loaded in this project." % key)
                 picked = forms.SelectFromList.show(
                     names, title="Symbol for %s  (%d of %d without one)" % (key, i, len(missing)),
                     button_name="Use Symbol", multiselect=False)
                 if picked:
-                    chosen[key] = picked
-                    table[key] = picked
+                    type_symbols[key] = ([picked], old["repeat"])
+                    table[key] = sr.new_entry([picked], old["repeat"])
                     picked_any = True
                     continue
                 go_on = forms.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
@@ -1457,26 +1463,14 @@ def main():
                                 "\n\nPath: %s" % (ex, sr.table_path()), title=TITLE)
             if not go_on:
                 return
-    node_symbol = dict((n, available[chosen[keys[n]]]) for n in drawn if keys[n] in chosen)
 
-    # Address labels: a Generic Annotation where the table sets one, the 45 degree text otherwise.
-    tag_symbol, missing_tags = {}, set()
-    for n in drawn:
-        wanted = labels.get(keys[n])
-        if not wanted:
-            continue
-        if wanted in available_tags:
-            tag_symbol[n] = available_tags[wanted]
-        else:
-            missing_tags.add(wanted)
-    if missing_tags:
-        go_on = forms.alert("These address label Generic Annotations are set in SLC Riser - Config but are not "
-                            "loaded in this project:\n\n%s\n\nThose devices will use the standard 45 degree "
-                            "text. Continue?" % "\n".join(sorted(missing_tags)), title=TITLE, yes=True, no=True)
-        if not go_on:
-            return
+    # Each device becomes its symbols, in order, each with its own address(es).
+    device_count = len(drawn)
+    rows, returns, node_symbol, firsts = expand_devices(rows, returns, elements, addresses, keys,
+                                                        type_symbols, available)
+    drawn = [n for row in rows for n in row["nodes"]]
 
-    if not review_layout(rows):
+    if not review_layout(rows, device_count):
         return
     target = choose_target_view(view_name(root))
     if target is False:
@@ -1582,7 +1576,7 @@ def main():
     try:
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
-        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn):
+        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
             above_type_id, above_h = small_text_type(type_id)
         used = {}
         for sym in node_symbol.values():
@@ -1592,15 +1586,6 @@ def main():
                 sym.Activate()
         doc.Regenerate()
         sizes = measure_symbols(view, used)
-        used_tags = {}
-        for sym in tag_symbol.values():
-            used_tags[sr.eid_int(sym.Id)] = sym
-        for sym in used_tags.values():
-            if not sym.IsActive:
-                sym.Activate()
-        if used_tags:
-            doc.Regenerate()
-        tag_sizes = measure_tags(view, used_tags)
 
         box = paper(BOX_SIZE) / 2.0
         # The run starts at its origin; the layout's "panel" is that point.
@@ -1615,10 +1600,8 @@ def main():
             else:
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
-            above = named_value(elements[n], PANEL_NUMBER_PARAM)
+            above = named_value(elements[n], PANEL_NUMBER_PARAM) if n in firsts else ""
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
-            if n in tag_symbol:
-                info[n]["tag"] = tag_sizes[sr.eid_int(tag_symbol[n].Id)]
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
@@ -1632,7 +1615,7 @@ def main():
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
             curves = []
-            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, tag_symbol, elements)
+            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves)
             doc.Regenerate()
             new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
             group = None
@@ -1686,7 +1669,7 @@ def main():
     except Exception:
         pass
 
-    count = sum(len(row["nodes"]) for row in rows)
+    count = device_count
     taps = len(rows) - len(runs)
     msg = "%s '%s': %d device(s) on %d run(s)" % ("Created" if target is None else "Added to",
                                                    view.Name, count, len(runs))
