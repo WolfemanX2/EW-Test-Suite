@@ -1,12 +1,38 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v16
+# riser_layout module - version v17
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
 Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing."""
 
 
-def assign_symbols(addresses, count, repeat):
+def rule_matches(op, limit, value):
+    """True when value <op> limit, e.g. rule_matches("<=", 12, 7)."""
+    if op == "<=":
+        return value <= limit
+    if op == "<":
+        return value < limit
+    if op == "=":
+        return value == limit
+    if op == ">=":
+        return value >= limit
+    if op == ">":
+        return value > limit
+    return False
+
+
+def pick_rule(rules, value):
+    """Index of the first rule that matches value (checked top to bottom), or None."""
+    for i, rule in enumerate(rules or []):
+        try:
+            if rule_matches(rule["op"], int(rule["count"]), value):
+                return i
+        except Exception:
+            pass
+    return None
+
+
+def assign_symbols(addresses, count, repeat=False):
     """Which addresses go under each symbol drawn for one device: [(symbol index, [addresses])].
 
     repeat: the symbols are a pattern repeated along the device's addresses, one address each

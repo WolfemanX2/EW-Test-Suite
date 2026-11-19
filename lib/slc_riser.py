@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v7
+# slc_riser module - version v8
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements, and the lookup table that says which symbol is drawn for each Family : Type.
 
@@ -255,14 +255,35 @@ def available_symbols(doc):
 
 
 # ---------- Lookup table ----------
-def new_entry(symbols=None, repeat=False):
-    """A table entry: the riser symbols drawn for one Family : Type, in order, and whether they repeat."""
-    return {"symbols": [s for s in (symbols or []) if s], "repeat": bool(repeat)}
+RULE_OPS = ["<=", "<", "=", ">=", ">"]     # how a rule compares a device's number of addresses
+
+
+def new_rule(op, count, symbols=None):
+    """A rule: when the number of addresses <op> count, draw these symbols ([] = the type's default ones)."""
+    return {"op": op, "count": int(count), "symbols": [s for s in (symbols or []) if s]}
+
+
+def new_entry(symbols=None, rules=None):
+    """A table entry: the default riser symbols for one Family : Type, in order, and the rules that pick other
+    symbols by the number of addresses (checked top to bottom, the first that matches is used)."""
+    return {"symbols": [s for s in (symbols or []) if s], "rules": list(rules or [])}
+
+
+def _read_rules(value):
+    rules = []
+    for r in (value or []):
+        try:
+            if r.get("op") in RULE_OPS:
+                rules.append(new_rule(r["op"], int(r.get("count")), [(s or "").strip() for s in r.get("symbols") or []]))
+        except Exception:
+            pass
+    return rules
 
 
 def load_table():
-    """{"Family : Type" of a device: {"symbols": ["Family : Type" of each riser symbol, in order], "repeat": bool}}.
-    Older tables with a single "symbol" are read as a one-symbol list. Raises if the file can't be read."""
+    """{"Family : Type" of a device: {"symbols": [default symbols, in order], "rules": [rule, ...]}}, each symbol
+    a "Family : Type". Older tables with a single "symbol" are read as a one-symbol list. Raises if the file
+    can't be read."""
     table = {}
     path = table_path()
     if not os.path.isfile(path):
@@ -274,7 +295,7 @@ def load_table():
             symbols = value.get("symbols")
             if not isinstance(symbols, list):
                 symbols = [value.get("symbol") or ""]
-            table[key] = new_entry([(s or "").strip() for s in symbols], value.get("repeat", False))
+            table[key] = new_entry([(s or "").strip() for s in symbols], _read_rules(value.get("rules")))
         else:
             table[key] = new_entry([(value or "").strip()])
     return table
@@ -289,7 +310,7 @@ def save_table(table):
     data = {}
     for key, entry in table.items():
         symbols = list(entry.get("symbols") or [])
-        data[key] = {"symbols": symbols, "repeat": bool(entry.get("repeat")),
+        data[key] = {"symbols": symbols, "rules": list(entry.get("rules") or []),
                      "symbol": symbols[0] if symbols else ""}     # read by older versions
     with open(path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)

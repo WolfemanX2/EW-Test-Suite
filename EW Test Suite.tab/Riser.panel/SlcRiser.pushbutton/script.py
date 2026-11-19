@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v29
-__title__ = "SLC\nRiser v29"
+# SLC Riser script - version v30
+__title__ = "SLC\nRiser v30"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -27,8 +27,9 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "on), with the devices following it. Where the conduit splits, the shorter side is drawn as its own T-tap row.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so a tee onto conduit of another type (NAC, power) is not a T-tap.\n\n"
-           "A type can have several symbols, drawn in order: once each (one address each, the last symbol "
-           "taking the rest) or as a pattern repeated along the device's addresses (one address under each). "
+           "A type can have several symbols, drawn in order, one address each (the last symbol takes the rest), "
+           "and rules that use other symbols depending on how many addresses the device has (e.g. 12 or fewer -> "
+           "symbol A, 13 or more -> symbol B; the first rule that matches is used, otherwise the default). "
            "Each Family : Type is drawn with the symbol(s) set for it in SLC Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"
@@ -792,7 +793,7 @@ def device_label(view, x, y, text, type_id):
     TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
-def expand_devices(rows, returns, elements, addresses, keys, type_symbols, available):
+def expand_devices(rows, returns, elements, addresses, keys, device_symbols, available):
     """Replace every device in the rows with the symbols drawn for it (see riser_layout.assign_symbols).
     The first symbol keeps the device's id; the others get '<id>#<n>'. elements, addresses and keys are
     filled in for the new ids. Returns (rows, returns, {id: FamilySymbol}, ids of each device's first symbol)."""
@@ -802,9 +803,9 @@ def expand_devices(rows, returns, elements, addresses, keys, type_symbols, avail
             if n in parts_of:
                 continue
             key = keys[n]
-            if key in type_symbols:
-                symbols, repeat = type_symbols[key]
-                parts = rl.assign_symbols(addresses.get(n, []), len(symbols), repeat)
+            if n in device_symbols:
+                symbols = device_symbols[n]
+                parts = rl.assign_symbols(addresses.get(n, []), len(symbols))
             else:
                 symbols, parts = None, [(None, list(addresses.get(n, [])))]
             ids = []
@@ -1410,22 +1411,27 @@ def main():
     panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else []
     drawn = [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
-    # Symbols for each type: the table's list, in order, leaving out any that aren't loaded.
-    type_symbols, missing, not_loaded = {}, [], set()
+    # Symbols for each device: the first of its type's rules that matches its number of addresses, otherwise the
+    # type's default symbols. Symbols that aren't loaded are left out.
+    device_symbols, missing, not_loaded = {}, [], set()
     for n in drawn:
         key = keys[n]
-        if key in type_symbols or key in missing:
-            continue
         entry = table.get(key) or sr.new_entry()
-        loaded = [sym for sym in entry["symbols"] if sym in available]
+        wanted = entry["symbols"]
+        idx = rl.pick_rule(entry["rules"], len(addresses.get(n, [])))
+        if idx is not None and entry["rules"][idx]["symbols"]:
+            wanted = entry["rules"][idx]["symbols"]
+        loaded = [sym for sym in wanted if sym in available]
+        not_loaded.update(sym for sym in wanted if sym not in available)
+        if not loaded and wanted is not entry["symbols"]:
+            loaded = [sym for sym in entry["symbols"] if sym in available]     # the rule's symbols aren't loaded
         if loaded:
-            not_loaded.update(sym for sym in entry["symbols"] if sym not in available)
-            type_symbols[key] = (loaded, entry["repeat"])
-        else:
+            device_symbols[n] = loaded
+        elif key not in missing:
             missing.append(key)
     if not_loaded:
         forms.alert("These riser symbols are set in SLC Riser - Config but are not loaded in this project, so they "
-                    "are left out of their patterns:\n\n%s" % "\n".join(sorted(not_loaded)), title=TITLE)
+                    "are left out:\n\n%s" % "\n".join(sorted(not_loaded)), title=TITLE)
     if missing:
         names = sorted(available.keys())
         if not names:
@@ -1444,8 +1450,10 @@ def main():
                     names, title="Symbol for %s  (%d of %d without one)" % (key, i, len(missing)),
                     button_name="Use Symbol", multiselect=False)
                 if picked:
-                    type_symbols[key] = ([picked], old["repeat"])
-                    table[key] = sr.new_entry([picked], old["repeat"])
+                    for n in drawn:
+                        if keys[n] == key and n not in device_symbols:
+                            device_symbols[n] = [picked]
+                    table[key] = sr.new_entry([picked], old["rules"])
                     picked_any = True
                     continue
                 go_on = forms.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
@@ -1467,7 +1475,7 @@ def main():
     # Each device becomes its symbols, in order, each with its own address(es).
     device_count = len(drawn)
     rows, returns, node_symbol, firsts = expand_devices(rows, returns, elements, addresses, keys,
-                                                        type_symbols, available)
+                                                        device_symbols, available)
     drawn = [n for row in rows for n in row["nodes"]]
 
     if not review_layout(rows, device_count):

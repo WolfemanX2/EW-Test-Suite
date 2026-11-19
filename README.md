@@ -22,7 +22,7 @@ Every tool's settings window lives in the **Tool Configs** drop-down (its own pa
 | Tool Configs | Link Clash - Config | Distances, allowed fix types, jog angles and elevation rules used by Auto Fix. |
 | Tool Configs | Address SLC - Config | Rules table: for each Family : Type, Device Type (Module or Detector), Number of Addresses (blank = ask), Address Options (named choices typed as `"Single Zone":6, "Dual Zone":12`) and Round Up To Multiple Of (any whole number). **Load Default Config...** copies a default config file into your own table without changing the default. |
 | Tool Configs | Address NAC / Voice - Config | Lookup table for Address NAC and Address Voice: each Family : Type is NAC Only, Voice Only, or NAC and Voice. |
-| Tool Configs | SLC Riser - Config | Drawing settings (drafting view scale, spacing between devices, devices before wrapping, wrap rounding, address text offset) and the lookup table of the Generic Annotation or Detail Item symbols drawn for each Family : Type, in order: once each (one address each, the last taking the rest) or, with Repeat, as a pattern repeated along the device's addresses with one address under each symbol. |
+| Tool Configs | SLC Riser - Config | Drawing settings (drafting view scale, spacing between devices, devices before wrapping, wrap rounding, address text offset) and the lookup table of the Generic Annotation or Detail Item symbols drawn for each Family : Type, in order (one address each, the last taking the rest), plus rules that use other symbols depending on how many addresses a device has (e.g. `<= 6` Default, `<= 12` symbol A, `>= 13` symbol B; checked top to bottom, first match wins, default otherwise). |
 
 ## Install
 
@@ -132,10 +132,10 @@ Each script has its version on line 2.
 | Address NAC / Voice - Config | v2 |
 | lib/nac_voice_types.py | v6 |
 | lib/conduit_trace.py | v3 |
-| SLC Riser | v29 |
-| SLC Riser - Config | v6 |
+| SLC Riser | v30 |
+| SLC Riser - Config | v7 |
 | NAC Coverage Checker | v2 |
-| lib/slc_riser.py | v7 |
-| lib/riser_layout.py | v16 |
+| lib/slc_riser.py | v8 |
+| lib/riser_layout.py | v17 |
 | Line Nuke | v3 |
 | Consolidate Text Styles | v4 |
