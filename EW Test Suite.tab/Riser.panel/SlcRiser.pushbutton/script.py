@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v23
-__title__ = "SLC\nRiser v23"
+# SLC Riser script - version v24
+__title__ = "SLC\nRiser v24"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -591,6 +591,15 @@ def _labels(fam_doc, el):
     return out
 
 
+def is_reference_text(el):
+    """The element's Is Reference setting as Revit shows it ('Weak Reference', 'Not a Reference' ...), or ''."""
+    try:
+        p = el.get_Parameter(BuiltInParameter.ELEM_REFERENCE_NAME)
+        return (p.AsValueString() or "").strip() if p is not None else ""
+    except Exception:
+        return ""
+
+
 def panel_reference_lines(sym):
     """The horizontal reference lines and reference planes in the panel family, each
     {"kind", "labels", "y" (in the family), "x" (its right end, in the family), "loop" (number its
@@ -621,7 +630,8 @@ def panel_reference_lines(sym):
             if abs(p0.Y - p1.Y) > 1e-6:
                 continue        # not horizontal
             found.append({"kind": "Reference Line" if is_ref else "Line", "labels": labels,
-                          "y": (p0.Y + p1.Y) / 2.0, "x": max(p0.X, p1.X), "loop": loop, "name": None})
+                          "y": (p0.Y + p1.Y) / 2.0, "x": max(p0.X, p1.X), "loop": loop, "name": None,
+                          "is_ref": is_reference_text(c)})
         for rp in FilteredElementCollector(fam_doc).OfClass(ReferencePlane).ToElements():
             try:
                 p0, p1 = rp.BubbleEnd, rp.FreeEnd
@@ -636,7 +646,7 @@ def panel_reference_lines(sym):
                 if loop is not None:
                     break
             found.append({"kind": "Reference Plane", "labels": labels, "y": (p0.Y + p1.Y) / 2.0,
-                          "x": max(p0.X, p1.X),
+                          "x": max(p0.X, p1.X), "is_ref": is_reference_text(rp),
                           "loop": loop, "name": (rp.Name or "").strip() or None})
     except Exception as ex:
         output.print_md("Could not read the reference lines of %s: %s" % (PANEL_FAMILY, ex))
@@ -658,9 +668,9 @@ def report_reference_lines(placed, top):
     if not placed:
         output.print_md("- none (no horizontal reference lines or reference planes)")
     for c, y in placed:
-        output.print_md("- %s at %s below the top - names: %s - loop: %s"
+        output.print_md("- %s at %s below the top - names: %s - loop: %s - Is Reference: %s"
                         % (c["kind"], feet_text(top - y), ", ".join(c["labels"]) or "(none)",
-                           c["loop"] if c["loop"] is not None else "not recognised"))
+                           c["loop"] if c["loop"] is not None else "not recognised", c.get("is_ref") or "?"))
 
 
 def feet_text(ft):
@@ -1483,7 +1493,20 @@ def main():
                     why = lock_to_reference(view, references_in_instance(panel_inst, view, lock[0], lock[1]),
                                             first)
                     if why:
-                        not_locked.append("%s: %s" % (gname, why))
+                        cand = lock[0]
+                        label = ", ".join(cand["labels"][:2]) or cand["kind"].lower()
+                        if (cand.get("is_ref") or "").lower().startswith("not a"):
+                            why = ("%s '%s' is set to Is Reference = Not a Reference, so Revit can't lock "
+                                   "to it from outside the family. Set it to Weak Reference in %s, reload "
+                                   "the family and run again." % (cand["kind"], label, PANEL_FAMILY))
+                        elif "not geometrically aligned" in why:
+                            why = ("none of the panel's references is at the height of %s '%s' (Is Reference: "
+                                   "%s). Check it isn't set to Not a Reference and that the panel detail in "
+                                   "the view is the current version of %s. (%s)"
+                                   % (cand["kind"].lower(), label, cand.get("is_ref") or "unknown",
+                                      PANEL_FAMILY, why))
+                        not_locked.append("%s: %s The one-line is drawn in line with it; only the lock is "
+                                          "missing." % (gname, why))
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
