@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v7
+# slc_addressing module - version v8
 # Change log (last change first):
+#   v8 - Auto-Circuit v11 / Address SLC v12: device_addresses, resume_numbers and loop_next (where a loop carries
+#        on), moved here from the copies in Address SLC and Auto-Circuit; scan_loops can also list which devices
+#        hold each address, so a tool needs only one pass over the model to start.
 #   v7 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; the
 #        table stays in %APPDATA%\MyTools, shared with the standalone add-in.
 #   v6 - Code consolidation step 6 (Address SLC v11, Auto-Circuit v10, SLC Riser v34): the one SLC address
@@ -10,9 +13,6 @@
 #        RULE_KINDS, is_head_end): never addressed.
 #   v4 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORY come from
 #        ew_common.
-#   v3 - Code consolidation step 2 (Address SLC v6): eid_int, conduit_connectors, connected_elements,
-#        element_type_name and trace_downstream now come from conduit_trace (one copy, with SLC Riser's
-#        tee rule) instead of a copy here.
 """Shared pieces of the SLC addressing tools (Address SLC, Address SLC - Config): the parameter names, the
 address format, the rules table and the default config.
 
@@ -203,22 +203,64 @@ def address_texts(reader, el):
     return found
 
 
-def scan_loops(doc, reader):
-    """Loops already written in the model: [{"n", "l", "last": {"M": highest or None, "D": ...}}], sorted."""
+def scan_loops(doc, reader, holders=None):
+    """Loops already written in the model: [{"n", "l", "last": {"M": highest or None, "D": ...}}], sorted.
+    holders: an optional dict, filled in the same pass with {address as written: [devices that hold it]}."""
     loops = {}
     for el in device_instances(doc):
+        held = set()
         for _pos, p in reader.get(el):
-            try:
-                parsed = parse_address(p.AsString())
-            except Exception:
-                parsed = None
+            value = p.AsString()
+            parsed = parse_address(value)
             if not parsed:
                 continue
             n, l, kind, number = parsed
             loop = loops.setdefault((n, l), {"n": n, "l": l, "last": {MODULE: None, DETECTOR: None}})
             if loop["last"][kind] is None or number > loop["last"][kind]:
                 loop["last"][kind] = number
+            if holders is not None and value not in held:
+                held.add(value)
+                holders.setdefault(value, []).append(el)
     return [loops[key] for key in sorted(loops)]
+
+
+def loop_next(loop):
+    """(n, l, next module, next detector) to carry on a loop from scan_loops after its highest numbers."""
+    return (loop["n"], loop["l"], (loop["last"][MODULE] or 0) + 1, (loop["last"][DETECTOR] or 0) + 1)
+
+
+def device_addresses(reader, el):
+    """(n, l, {kind: highest number or None}) from the device's first written address and the others on the
+    same loop, or None if it has no address."""
+    loop, last = None, {MODULE: None, DETECTOR: None}
+    for _pos, p in reader.get(el):
+        parsed = parse_address(p.AsString())
+        if not parsed:
+            continue
+        n, l, kind, number = parsed
+        if loop is None:
+            loop = (n, l)
+        elif loop != (n, l):
+            continue    # an address of another loop on the same device
+        if last[kind] is None or number > last[kind]:
+            last[kind] = number
+    return (loop[0], loop[1], last) if loop else None
+
+
+def resume_numbers(reader, el, loops):
+    """Where a loop carries on after a device: (n, l, next module, next detector), or None if the device has no
+    address. The kind found on the device continues after the device's own highest number; the other kind after
+    the highest number used on that loop (loops: from scan_loops)."""
+    found = device_addresses(reader, el)
+    if not found:
+        return None
+    n, l, last = found
+    for loop in loops:
+        if loop["n"] == n and loop["l"] == l:
+            for kind in KINDS:
+                if last[kind] is None:
+                    last[kind] = loop["last"][kind]
+    return n, l, (last[MODULE] or 0) + 1, (last[DETECTOR] or 0) + 1
 
 
 def loop_label(loop):

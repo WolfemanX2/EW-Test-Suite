@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v2
+# ew_common module - version v3
 # Change log (last change first):
+#   v3 - Auto-Circuit v11 / Address SLC v12 / Address NAC v5 / Address Voice v5: commit (run a change in a
+#        transaction and check Revit kept it), moved here from Auto-Circuit; Address SLC and Address NAC / Voice
+#        had copies of it.
 #   v2 - Code consolidation step 4 (Auto Conduit v6, Auto-Circuit v7, Address SLC v7, SLC Riser v33, Link Clash
 #        v13): picking a device or a tag hosted to it (tagged_hosts, resolve_pick, PickFilter, resolve_device,
 #        DeviceOrTagFilter, ConduitFilter, shift_down) and pick highlighting (make_highlight, highlight).
@@ -21,8 +24,11 @@ resolve_pick         what a pick stands for: the element itself, or the element 
 PickFilter           selection filter for elements that pass a rule, or tags hosted to one (optionally conduit)
 resolve_device / DeviceOrTagFilter / ConduitFilter   the same for Fire Alarm Devices, and conduit only
 shift_down           True while Shift is held (Shift+click to take a pick back)
-make_highlight / highlight                           colour picked elements in the active view"""
-from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, IndependentTag, Transaction,
+make_highlight / highlight                           colour picked elements in the active view
+
+Changing the model:
+commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't"""
+from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, IndependentTag, Transaction, TransactionStatus,
                                OverrideGraphicSettings, Color, FillPatternElement, FilteredElementCollector)
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ISelectionFilter
@@ -224,3 +230,23 @@ def highlight(doc, uidoc, ogs, ids, tool_name):
         except Exception:
             pass
         return False
+
+
+# ---------- Changing the model ----------
+def commit(t, work):
+    """Runs work() inside the transaction t (not started yet) and commits it.
+    Returns None if Revit kept the change, otherwise the reason it didn't: the error, or "the change was rolled
+    back" (a warning the user cancels rolls the transaction back without an exception)."""
+    try:
+        t.Start()
+        work()
+        if t.Commit() != TransactionStatus.Committed:
+            return "the change was rolled back"
+        return None
+    except Exception as ex:
+        try:
+            if t.GetStatus() == TransactionStatus.Started:
+                t.RollBack()
+        except Exception:
+            pass
+        return str(ex)

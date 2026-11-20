@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v6
+# nac_voice_addressing module - version v7
 # Change log (last change first):
+#   v7 - Address NAC v5 / Address Voice v5: saving the addresses and the EOL through ew_common.commit (the same
+#        steps, one shared copy).
 #   v6 - Code consolidation step 5 (no tool change): the New Circuit window, choose, the start choices and the
 #        preselected device come from addressing_ui; the device scans from nac_voice_types.
 #   v5 - Address NAC v4 / Address Voice v4: Head End devices are never addressed (skipped when picked, passed
@@ -8,8 +10,6 @@
 #   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
 #        ew_common.
 #   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
-#   v2 - Auto-Circuit v4, Address SLC v5, Address NAC v2, Address Voice v2: circuit choice menu (Continue
-#        from Selected / New Circuit / Continue from Existing Circuit).
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -18,7 +18,7 @@ Each button runs main() with its kind ("N" or "V")."""
 import os
 
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import (Transaction, TransactionStatus, FilteredElementCollector,
+from Autodesk.Revit.DB import (Transaction, FilteredElementCollector,
                                ElementId, BuiltInParameter, BuiltInCategory)
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType
@@ -473,10 +473,7 @@ class Session(object):
                 if old:
                     touched.add((kind, old[0], old[1]))
 
-        error = None
-        t = Transaction(doc, name)
-        try:
-            t.Start()
+        def work():
             for p, text in conduits:
                 p.Set(text)
             for (_el, _key, targets), assigned in zip(items, numbers):
@@ -485,17 +482,9 @@ class Session(object):
                     addr_p.Set(self.address(kind, number))
                     if circ_p is not None:
                         circ_p.Set(self.circuit(kind))
-            # The counters only move on if Revit really kept the change (a warning the user cancels rolls the
-            # transaction back without an exception).
-            if t.Commit() != TransactionStatus.Committed:
-                error = "the change was rolled back"
-        except Exception as ex:
-            try:
-                if t.GetStatus() == TransactionStatus.Started:
-                    t.RollBack()
-            except Exception:
-                pass
-            error = str(ex)
+
+        # The counters only move on if Revit really kept the change.
+        error = ec.commit(Transaction(doc, name), work)
         if error:
             return error
 
@@ -1081,21 +1070,14 @@ class Session(object):
 
         if not changes:
             return
-        t = Transaction(doc, "Set NAC / Voice EOL and estimate")
-        try:
-            t.Start()
+
+        def work():
             for p, value in changes:
                 p.Set(value)
-            if t.Commit() != TransactionStatus.Committed:
-                self.problems.append("EOL parameters were not set: the change was rolled back.")
-                self.eol_lines = []
-        except Exception as ex:
-            try:
-                if t.GetStatus() == TransactionStatus.Started:
-                    t.RollBack()
-            except Exception:
-                pass
-            self.problems.append("EOL parameters were not set: %s" % ex)
+
+        error = ec.commit(Transaction(doc, "Set NAC / Voice EOL and estimate"), work)
+        if error:
+            self.problems.append("EOL parameters were not set: %s" % error)
             self.eol_lines = []
 
     def run(self):

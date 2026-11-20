@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# slc_session module - version v2
+# slc_session module - version v3
 # Change log (last change first):
+#   v3 - Address SLC v12: follows conduit with conduit_trace.follow (it had its own copy of the same steps); the
+#        count / kind questions come from addressing_ui.SlcCountRules and the device's addresses from
+#        slc_addressing (shared with Auto-Circuit); saving through ew_common.commit; its messages are titled
+#        'Address SLC'.
 #   v2 - Address SLC v10: an Automatic (downstream) run is one Undo, 'Address SLC downstream', like Address
 #        NAC / Voice; each device picked by hand is one Undo, 'Address SLC device'.
 #   v1 - Code consolidation step 5 (Address SLC v9): Address SLC's addressing session, moved here from the Address SLC
@@ -8,7 +12,7 @@
 """Address SLC: the addressing session (moved from the button script, like Address NAC / Voice's
 nac_voice_addressing). The Address SLC button runs main()."""
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus, ElementId
+from Autodesk.Revit.DB import Transaction, TransactionGroup, ElementId
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -16,6 +20,7 @@ from pyrevit import revit, forms, script
 
 import slc_addressing as slc
 import slc_config_editor
+import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import addressing_ui as aui     # shared addressing windows and menus
 
@@ -63,8 +68,11 @@ def end_group(group, keep):
 
 
 # ---------- One run ----------
-class Session(object):
+class Session(aui.SlcCountRules):
+    """One Address SLC run. How many addresses each device gets (and the questions about it) comes from
+    addressing_ui.SlcCountRules, shared with Auto-Circuit."""
     def __init__(self):
+        self.init_count_rules()     # last_choice, undefined_seen, count_prompted, option_prompted
         self.reader = slc.AddressParamReader()
         self.table = {}
         self.prefix = None          # "N1L2"
@@ -75,10 +83,6 @@ class Session(object):
         self.addressed = {}         # element id -> its log entry
         self.rounding_skips = []    # (element id, kind, first skipped, last skipped)
         self.problems = []
-        self.last_choice = {}       # Family : Type -> (count, kind) chosen last, the dialog default
-        self.undefined_seen = set()
-        self.count_prompted = set()
-        self.option_prompted = set()
         self.anchor = None          # device a conduit run is followed from: the last one addressed
         self.following = False      # True while a conduit run is being addressed
         self.current = None         # device being addressed
@@ -128,9 +132,7 @@ class Session(object):
                                "SLC: which existing loop do you want to continue?")
                 if not label:
                     continue    # back to the first list
-                loop = labels[label]
-                picked = (loop["n"], loop["l"],
-                          (loop["last"][slc.MODULE] or 0) + 1, (loop["last"][slc.DETECTOR] or 0) + 1)
+                picked = slc.loop_next(labels[label])
                 self.resumed = ("Continuing N%dL%d from M%s / D%s"
                                 % (picked[0], picked[1], slc.fmt_number(picked[2]), slc.fmt_number(picked[3])))
             else:
@@ -160,47 +162,21 @@ class Session(object):
                     return None
                 device = resolve_device(doc.GetElement(ref.ElementId))
                 if device is None:
-                    forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
+                    forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.", title=TITLE)
                     continue
 
-            found = self.device_addresses(device)
+            found = slc.resume_numbers(self.reader, device, loops)
             if found:
-                n, l, last = found
-                for loop in loops:
-                    if loop["n"] == n and loop["l"] == l:
-                        for kind in slc.KINDS:
-                            if last[kind] is None:
-                                last[kind] = loop["last"][kind]
-                start_m = (last[slc.MODULE] or 0) + 1
-                start_d = (last[slc.DETECTOR] or 0) + 1
+                n, l, start_m, start_d = found
                 self.resumed = ("Continuing N%dL%d after element %d: from M%s / D%s"
                                 % (n, l, slc.eid_int(device.Id), slc.fmt_number(start_m), slc.fmt_number(start_d)))
-                forms.toast(self.resumed)
+                forms.toast(self.resumed, title=TITLE)
                 self.anchor = device
-                return n, l, start_m, start_d
+                return found
 
-            forms.toast("That device has no N#L#M000 / N#L#D000 address to continue from. Pick another.")
+            forms.toast("That device has no N#L#M000 / N#L#D000 address to continue from. Pick another.",
+                        title=TITLE)
             device = None
-
-    def device_addresses(self, device):
-        """(n, l, {kind: highest number or None}) from the device's first written address and the others on
-        the same loop, or None if it has no address."""
-        loop, last = None, {slc.MODULE: None, slc.DETECTOR: None}
-        for _pos, p in self.reader.get(device):
-            try:
-                parsed = slc.parse_address(p.AsString())
-            except Exception:
-                parsed = None
-            if not parsed:
-                continue
-            n, l, kind, number = parsed
-            if loop is None:
-                loop = (n, l)
-            elif loop != (n, l):
-                continue    # an address of another loop on the same device
-            if last[kind] is None or number > last[kind]:
-                last[kind] = number
-        return (loop[0], loop[1], last) if loop else None
 
     # ---- Manual or automatic ----
     def ask_mode(self):
@@ -270,7 +246,7 @@ class Session(object):
                 continue
             device = resolve_device(picked)
             if device is None:
-                forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
+                forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.", title=TITLE)
                 continue
             before = len(self.log)
             if not self.address_device(device):
@@ -289,28 +265,10 @@ class Session(object):
                         "'Continue From Selected').", title=TITLE)
             return True
 
-        type_id = slc.eid_int(conduit.GetTypeId())
         type_name = slc.element_type_name(doc, conduit) or "the picked"
-        elements, port_cache = {}, {}
-
-        def remember(el):
-            i = slc.eid_int(el.Id)
-            elements.setdefault(i, el)
-            return i
-
-        def ports(i):
-            if i not in port_cache:
-                port_cache[i] = [[remember(e) for e in group] for group in slc.connected_elements(elements[i])]
-            return port_cache[i]
-
-        def allowed(i):
-            # Only conduit of the picked type is followed; fittings, boxes and devices are passed through.
-            el = elements[i]
-            return not isinstance(el, Conduit) or slc.eid_int(el.GetTypeId()) == type_id
-
-        anchor_id = remember(self.anchor)
-        order, problem = slc.trace_downstream(remember(conduit), anchor_id, ports, allowed,
-                                              lambda i: slc.is_device(elements[i]))
+        anchor_id = slc.eid_int(self.anchor.Id)
+        # Only conduit of the picked type is followed; fittings, boxes and devices are passed through.
+        order, problem = ct.follow(doc, self.anchor, conduit, slc.is_device)
         if problem:
             forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
                         "Pick a conduit on the run leaving the last device addressed, or pick a device."
@@ -318,16 +276,19 @@ class Session(object):
             return True
 
         todo, no_params, done, head_end = [], [], 0, 0
-        for i in order:
+        for el in order:
+            i = slc.eid_int(el.Id)
             if i in self.addressed:
                 done += 1
-            elif slc.is_head_end(self.table, slc.family_key(doc, elements[i])):
-                self.head_end[i] = slc.family_key(doc, elements[i])
+                continue
+            key = slc.family_key(doc, el)
+            if slc.is_head_end(self.table, key):
+                self.head_end[i] = key
                 head_end += 1
-            elif any(not p.IsReadOnly for _pos, p in self.reader.get(elements[i])):
-                todo.append(elements[i])
+            elif any(not p.IsReadOnly for _pos, p in self.reader.get(el)):
+                todo.append(el)
             else:
-                no_params.append(i)
+                no_params.append(el)
         if not todo:
             forms.alert("No devices with SLC Address parameters were found downstream of element %d on '%s' "
                         "conduit." % (anchor_id, type_name), title=TITLE)
@@ -353,7 +314,7 @@ class Session(object):
         lines = ["%d. %s" % (n, slc.family_key(doc, el)) for n, el in enumerate(todo[:PREVIEW_LIMIT], start=1)]
         if len(todo) > PREVIEW_LIMIT:
             lines.append("... and %d more" % (len(todo) - PREVIEW_LIMIT))
-        readdress = len([el for el in todo if self.device_addresses(el)])
+        readdress = len([el for el in todo if slc.device_addresses(self.reader, el)])
         notes = []
         if len(todo) < found_count:
             notes.append("Stops at element %d. %d more device(s) downstream are not addressed."
@@ -396,10 +357,10 @@ class Session(object):
         count = len(self.log) - before
         self.runs.append("Followed '%s' conduit from element %d %s: %d of %d device(s) addressed"
                          % (type_name, anchor_id, how_text, count, len(todo)))
-        for i in no_params:
+        for el in no_params:
             self.problems.append("Element %d (%s): on the followed conduit but has no writable SLC Address "
-                                 "parameter. Passed over." % (i, slc.family_key(doc, elements[i])))
-        forms.toast("%d device(s) addressed along the conduit." % count)
+                                 "parameter. Passed over." % (slc.eid_int(el.Id), slc.family_key(doc, el)))
+        forms.toast("%d device(s) addressed along the conduit." % count, title=TITLE)
         return keep_going
 
     def pick_end(self, todo, type_name):
@@ -435,7 +396,7 @@ class Session(object):
         key = slc.family_key(doc, device)
         if slc.is_head_end(self.table, key):
             self.head_end[eid] = key
-            forms.toast("Head End device - never addressed. Skipped.")
+            forms.toast("Head End device - never addressed. Skipped.", title=TITLE)
             return True
 
         # Guard against picking the same device twice (directly or via its tag).
@@ -451,7 +412,7 @@ class Session(object):
         writable = [p for _pos, p in self.reader.get(device) if not p.IsReadOnly]
         if not writable:
             self.problems.append("Element %d: no writable SLC Address parameters" % eid)
-            forms.toast("No writable address parameters on that device.")
+            forms.toast("No writable address parameters on that device.", title=TITLE)
             return True
 
         rule = self.table.get(key)
@@ -472,36 +433,27 @@ class Session(object):
                         % (len(fill), self.address(kind, first), kind, slc.MAX_NUMBER), title=TITLE)
             return False
 
-        cleared, error = 0, None
-        t = Transaction(doc, "%s device" % TITLE)
-        try:
-            t.Start()
+        cleared = [0]
+
+        def work():
             for i, p in enumerate(fill):
                 p.Set(self.address(kind, first + i))
             # Clear unused address parameters that still hold a value.
             for p in leftovers:
                 if p.AsString():
                     p.Set("")
-                    cleared += 1
-            # The counter below only moves on if Revit really kept the change (a warning the user cancels
-            # rolls the transaction back without an exception).
-            if t.Commit() != TransactionStatus.Committed:
-                error = "the change was rolled back"
-        except Exception as ex:
-            try:
-                if t.GetStatus() == TransactionStatus.Started:
-                    t.RollBack()
-            except Exception:
-                pass
-            error = str(ex)
+                    cleared[0] += 1
+
+        # The counter below only moves on if Revit really kept the change.
+        error = ec.commit(Transaction(doc, "%s device" % TITLE), work)
         if error:
             self.problems.append("Element %d: %s" % (eid, error))
-            forms.toast("That device was not addressed: %s" % error)
+            forms.toast("That device was not addressed: %s" % error, title=TITLE)
             return True
 
         self.next[kind] = last + 1
         entry = {"id": eid, "key": key, "kind": kind, "count": len(fill), "first": first, "last": last,
-                 "cleared": cleared, "option": option}
+                 "cleared": cleared[0], "option": option}
         self.log.append(entry)
         self.addressed[eid] = entry
         self.anchor = device
@@ -509,76 +461,15 @@ class Session(object):
             self.rounding_skips.append((eid, kind, original, first - 1))
         return True
 
-    def resolve_count_and_kind(self, key, eid, rule, total):
-        """How many addresses to fill and of which kind, prompting only when the table leaves it open.
-        Returns (count, kind, option label or None), or None when the device is skipped."""
-        if rule is None:
-            # Not in the table: ask for count and kind (not saved).
-            self.undefined_seen.add(key)
-            return self.ask(key,
-                            "%s\nThis type is not defined in the lookup table.\nIt has %d address parameter(s). "
-                            "Choose the address kind and how many to fill.\n(Shift+Click the tool button to "
-                            "define it permanently.)" % (key, total),
-                            [(None, i) for i in range(1, total + 1)], total, slc.MODULE, False, None)
-
-        kind = rule["kind"]
-        name = slc.KIND_NAMES[kind]
-
-        # Kind + count defined: never prompt.
-        if rule["count"]:
-            count = rule["count"]
-            if count > total:
-                self.problems.append("%s: table says %d but element %d has only %d writable address "
-                                     "parameter(s); filled %d." % (key, count, eid, total, total))
-                count = total
-            return count, kind, None
-
-        if rule["options"]:
-            # Named options ("Dual Zone" = 12): offer the ones this device has room for.
-            fitting = [(label, count) for label, count in rule["options"] if count <= total]
-            if not fitting:
-                self.problems.append("%s: element %d has only %d writable address parameter(s), fewer than "
-                                     "every Address Option (%s). Skipped."
-                                     % (key, eid, total, slc.format_options(rule["options"])))
-                forms.toast("Device has fewer address parameters than its smallest Address Option. Skipped.")
-                return None
-            if len(fitting) == 1:
-                return fitting[0][1], kind, fitting[0][0]
-            self.option_prompted.add(key)
-            return self.ask(key,
-                            "%s\nDefined as a %s with Address Options.\nThis device has %d address parameters. "
-                            "Choose which option to use." % (key, name, total),
-                            fitting, fitting[0][1], kind, True, "Option (addresses):")
-
-        if total == 1:
-            return 1, kind, None
-
-        # Kind defined, count not defined: prompt for the count only.
-        self.count_prompted.add(key)
-        return self.ask(key,
-                        "%s\nDefined as a %s, but the number of addresses is not defined.\nThis device has %d "
-                        "address parameters. How many do you want to fill?" % (key, name, total),
-                        [(None, i) for i in range(1, total + 1)], total, kind, True, None)
-
-    def ask(self, key, message, choices, default_count, default_kind, lock_kind, count_label):
-        """Shows the count / kind dialog, defaulting to the last answer for this type."""
-        if key in self.last_choice:
-            default_count = self.last_choice[key][0]
-            if not lock_kind:
-                default_kind = self.last_choice[key][1]
+    # ---- Hooks for the shared count / kind questions (addressing_ui.SlcCountRules) ----
+    def before_ask(self, message):
         if self.following:
             self.show(self.current)     # the device was found by the tool, not picked: show which one it is
-            message = "Element %d\n%s" % (slc.eid_int(self.current.Id), message)
-        dlg = aui.CountDialog(message, choices, default_count, default_kind, lock_kind, count_label)
-        dlg.ShowDialog()
-        if dlg.result is None:
-            forms.toast("Skipped - no addresses assigned.")
-            return None
-        count, kind, label = dlg.result
-        if lock_kind:
-            kind = default_kind
-        self.last_choice[key] = (count, kind)
-        return count, kind, label
+            return "Element %d\n%s" % (slc.eid_int(self.current.Id), message)
+        return message
+
+    def skipped(self, text):
+        forms.toast(text, title=TITLE)
 
     # ---- Summary ----
     def report(self):

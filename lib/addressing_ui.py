@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# addressing_ui module - version v1
+# addressing_ui module - version v2
 # Change log (last change first):
+#   v2 - Auto-Circuit v11 / Address SLC v12: SlcCountRules (how many SLC addresses a device gets, asking only
+#        when its rule leaves it open), moved here from the copies in Address SLC and Auto-Circuit.
 #   v1 - Code consolidation step 5 (Address SLC v9, Auto-Circuit v9): the windows and menus the addressing tools share,
 #        moved here from Address SLC, nac_voice_addressing and Auto-Circuit (which had copies of them).
 """Windows and menus shared by the addressing tools (Address SLC, Address NAC / Voice, Auto-Circuit).
@@ -10,6 +12,7 @@ choose               one of a list of choices: buttons, or a searchable list whe
 preselected_device   the one device selected (directly or by its tag) when a tool starts
 NewLoopDialog        N#, L# and the starting module / detector numbers of a new SLC loop
 CountDialog          how many SLC addresses to fill on a device, and which kind
+SlcCountRules        how many SLC addresses a device gets from its rule, asking (CountDialog) only when needed
 NewCircuitDialog     power supply, circuit and starting device number of a new NAC / Voice circuit"""
 from pyrevit import forms
 
@@ -207,6 +210,104 @@ class CountDialog(forms.WPFWindow):
         self.result = None
         self.Close()
 
+
+
+# ---------- SLC: how many addresses a device gets ----------
+class SlcCountRules(object):
+    """How many SLC addresses a device gets and of which kind, from its rule in Address SLC - Config, asking
+    only when the rule leaves it open. Address SLC and Auto-Circuit mix it into their run (one copy, so both
+    ask the same way). Call init_count_rules() in __init__; the run also needs self.problems (a list).
+
+    It remembers the last answer for each type (the next window's default) and, for the report, which types
+    were asked about: undefined_seen, count_prompted, option_prompted.
+    COUNT_TITLE / SKIP_TEXT / SKIP_WIDTH: the window's title and skip button.
+    A run can override before_ask(message) (the message to show) and skipped(text) (a device is left without
+    addresses)."""
+    COUNT_TITLE = "Address SLC"
+    SKIP_TEXT = "Skip Device"
+    SKIP_WIDTH = 90
+
+    def init_count_rules(self):
+        self.last_choice = {}       # Family : Type -> (count, kind) chosen last, the window's default
+        self.undefined_seen = set()
+        self.count_prompted = set()
+        self.option_prompted = set()
+
+    def before_ask(self, message):
+        return message
+
+    def skipped(self, text):
+        pass
+
+    def resolve_count_and_kind(self, key, element_id, rule, total):
+        """How many addresses to fill and of which kind (total = the device's writable address parameters).
+        Returns (count, kind, option label or None), or None when the device is not addressed."""
+        if rule is None:
+            # Not in the table: ask for count and kind (not saved).
+            self.undefined_seen.add(key)
+            return self.ask(key,
+                            "%s\nThis type is not defined in Address SLC - Config.\nIt has %d address parameter(s). "
+                            "Choose the address kind and how many to fill.\n(Define the type in Address SLC - "
+                            "Config to keep it.)" % (key, total),
+                            [(None, i) for i in range(1, total + 1)], total, slc.MODULE, False, None)
+
+        kind = rule["kind"]
+        name = slc.KIND_NAMES[kind]
+
+        # Kind + count defined: never ask.
+        if rule["count"]:
+            count = rule["count"]
+            if count > total:
+                self.problems.append("%s: table says %d but element %d has only %d writable address "
+                                     "parameter(s); filled %d." % (key, count, element_id, total, total))
+                count = total
+            return count, kind, None
+
+        if rule["options"]:
+            # Named options ("Dual Zone" = 12): offer the ones this device has room for.
+            fitting = [(label, count) for label, count in rule["options"] if count <= total]
+            if not fitting:
+                self.problems.append("%s: element %d has only %d writable address parameter(s), fewer than "
+                                     "every Address Option (%s). Not addressed."
+                                     % (key, element_id, total, slc.format_options(rule["options"])))
+                self.skipped("Device has fewer address parameters than its smallest Address Option. "
+                             "Not addressed.")
+                return None
+            if len(fitting) == 1:
+                return fitting[0][1], kind, fitting[0][0]
+            self.option_prompted.add(key)
+            return self.ask(key,
+                            "%s\nDefined as a %s with Address Options.\nThis device has %d address parameters. "
+                            "Choose which option to use." % (key, name, total),
+                            fitting, fitting[0][1], kind, True, "Option (addresses):")
+
+        if total == 1:
+            return 1, kind, None
+
+        # Kind defined, count not defined: ask for the count only.
+        self.count_prompted.add(key)
+        return self.ask(key,
+                        "%s\nDefined as a %s, but the number of addresses is not defined.\nThis device has %d "
+                        "address parameters. How many do you want to fill?" % (key, name, total),
+                        [(None, i) for i in range(1, total + 1)], total, kind, True, None)
+
+    def ask(self, key, message, choices, default_count, default_kind, lock_kind, count_label):
+        """Shows CountDialog, defaulting to the last answer for this type. (count, kind, label) or None."""
+        if key in self.last_choice:
+            default_count = self.last_choice[key][0]
+            if not lock_kind:
+                default_kind = self.last_choice[key][1]
+        dlg = CountDialog(self.before_ask(message), choices, default_count, default_kind, lock_kind, count_label,
+                          title=self.COUNT_TITLE, skip_text=self.SKIP_TEXT, skip_width=self.SKIP_WIDTH)
+        dlg.ShowDialog()
+        if dlg.result is None:
+            self.skipped("Skipped - no addresses assigned.")
+            return None
+        count, kind, label = dlg.result
+        if lock_kind:
+            kind = default_kind
+        self.last_choice[key] = (count, kind)
+        return count, kind, label
 
 # ---------- New NAC / Voice circuit ----------
 NEW_CIRCUIT_XAML = """

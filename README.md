@@ -170,25 +170,25 @@ share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
-| lib/ew_common.py | v2 |
-| lib/addressing_ui.py | v1 |
+| lib/ew_common.py | v3 |
+| lib/addressing_ui.py | v2 |
 | lib/config_store.py | v1 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v3 |
-| Auto-Circuit | v10 |
+| Auto-Circuit | v11 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v2 |
 | lib/conduit_routing.py | v3 |
 | lib/clash_rules.py | v6 |
-| Address SLC | v11 |
-| lib/slc_session.py | v2 |
+| Address SLC | v12 |
+| lib/slc_session.py | v3 |
 | Address SLC - Config | v4 |
-| lib/slc_addressing.py | v7 |
+| lib/slc_addressing.py | v8 |
 | lib/slc_config_editor.py | v4 |
-| Address NAC | v4 |
-| Address Voice | v4 |
-| lib/nac_voice_addressing.py | v6 |
+| Address NAC | v5 |
+| Address Voice | v5 |
+| lib/nac_voice_addressing.py | v7 |
 | Address NAC / Voice - Config | v4 |
 | lib/nac_voice_types.py | v10 |
 | lib/conduit_trace.py | v5 |

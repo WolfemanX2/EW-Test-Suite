@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v10
-__title__ = "Auto-\nCircuit v10"
+# Auto-Circuit script - version v11
+__title__ = "Auto-\nCircuit v11"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
@@ -23,12 +23,13 @@ __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "Everything is one Undo; cancelling at any step after picking puts everything back.")
 
 # Conduit routing and creation come from lib/conduit_routing.py, shared with Auto Conduit.
-# Addressing follows Address NAC / Voice v5 and Address SLC v2, using their shared modules (read only).
+# Addressing uses the same shared modules as Address NAC / Voice and Address SLC (nac_voice_types, slc_addressing,
+# addressing_ui), so the three tools number devices the same way.
 
 from pyrevit import revit, forms, script
 from Autodesk.Revit.DB import (
     BuiltInCategory, ElementId,
-    Transaction, TransactionGroup, TransactionStatus, FamilyInstance, OverrideGraphicSettings
+    Transaction, TransactionGroup, FamilyInstance, OverrideGraphicSettings
 )
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType
@@ -42,6 +43,7 @@ import slc_addressing as slc     # Address SLC - Config and address format (read
 import conduit_trace as ct       # follows conduit from a device (shared with Address NAC / Voice)
 import conduit_routing as cr     # routing and settings shared with Auto Conduit (lib/conduit_routing.py)
 import addressing_ui as aui      # windows and menus shared with the addressing tools (lib/addressing_ui.py)
+import ew_common as ec           # shared helpers (lib/ew_common.py)
 from conduit_routing import (
     AVOID_EXISTING_CONDUIT, AVOID_MODEL_OBSTACLES, DEFAULT_ELEVATION_TEXT, DeviceOrTagFilter,
     HIGHLIGHT_PICKED, MARGIN, OPT_ADD_AGAIN, OPT_ADJUST, OPT_CANCEL, OPT_CANCEL_CHAIN, OPT_CLOSEST,
@@ -58,8 +60,8 @@ output = script.get_output()
 
 # ======================================================================================
 # Auto-Circuit: circuit type, addressing and the run
-#   NAC / Voice follow Address NAC / Voice v5 (lookup table, N#-#.# / V#-#.#, Notification Circuit, EOL).
-#   SLC follows Address SLC v2 (Address SLC - Config rules, N#L#M000 / N#L#D000, unused addresses cleared).
+#   NAC / Voice as Address NAC / Voice (lookup table, N#-#.# / V#-#.#, Notification Circuit, EOL).
+#   SLC as Address SLC (Address SLC - Config rules, N#L#M000 / N#L#D000, unused addresses cleared).
 # ======================================================================================
 
 TITLE = "Auto-Circuit"
@@ -102,22 +104,7 @@ def element_key(el):
     return nv.family_key(doc, el) if isinstance(el, FamilyInstance) else element_label(el)
 
 
-def commit(t, work):
-    """Runs work() inside transaction t. Returns None, or the reason nothing was kept."""
-    try:
-        t.Start()
-        work()
-        # A warning the user cancels rolls the transaction back without an exception.
-        if t.Commit() != TransactionStatus.Committed:
-            return "the change was rolled back"
-        return None
-    except Exception as ex:
-        try:
-            if t.GetStatus() == TransactionStatus.Started:
-                t.RollBack()
-        except Exception:
-            pass
-        return str(ex)
+commit = ec.commit                       # from ew_common: None, or the reason the change wasn't kept
 
 
 # ======================================================================================
@@ -126,11 +113,6 @@ def commit(t, work):
 
 
 nv_address_on = nv.address_on           # from nac_voice_types
-
-
-def nv_scan_existing(kind):
-    """{(power supply, circuit): highest device number} from the addresses already written."""
-    return nv.scan_existing(doc)[kind]
 
 
 LIMITS_XAML = """
@@ -264,15 +246,24 @@ class NotificationRun(object):
             forms.alert("Could not read the NAC / Voice lookup table:\n%s\n\nPath: %s\n\nTypes will be asked "
                         "about as they are picked." % (ex, nv.table_path()), title=TITLE)
             self.table = {}
-        picked = self.choose_circuit(nv_scan_existing(self.kind), preselected_device())
+        # One pass over the model: every circuit of this kind and its devices.
+        circuits = {}       # (power supply, circuit) -> [(device number, device)]
+        for el in all_devices():
+            parsed = nv_address_on(el, self.kind)
+            if parsed:
+                circuits.setdefault((parsed[0], parsed[1]), []).append((parsed[2], el))
+        existing = {}       # (power supply, circuit) -> highest device number
+        for key, numbered in circuits.items():
+            last = max(n for n, _el in numbered)
+            if last > 0:
+                existing[key] = last
+        picked = self.choose_circuit(existing, preselected_device(), circuits)
         if picked is None:
             return False
         picked["start"] = picked["next"]
         self.state = picked
-        for el in all_devices():
-            parsed = nv_address_on(el, self.kind)
-            if parsed and parsed[0] == picked["source"] and parsed[1] == picked["circuit"]:
-                self.members[eid(el)] = nv.get_current(doc, el) or 0.0
+        for _n, el in circuits.get((picked["source"], picked["circuit"]), []):
+            self.members[eid(el)] = nv.get_current(doc, el) or 0.0
         dlg = LimitsDialog(self.circuit_text(), picked["next"], sum(self.members.values()), len(self.members))
         dlg.ShowDialog()
         if dlg.result is None:
@@ -280,9 +271,10 @@ class NotificationRun(object):
         self.limits = dlg.result
         return True
 
-    def choose_circuit(self, existing, preselected):
+    def choose_circuit(self, existing, preselected, devices_by_circuit):
         """Continue a circuit already in the project, continue from a selected device, or start a new one.
-        anchor = the device the conduit starts from when continuing (the circuit's last device), or None."""
+        anchor = the device the conduit starts from when continuing (the circuit's last device), or None.
+        devices_by_circuit: {(power supply, circuit): [(device number, device)]} from setup's pass over the model."""
         kind, name = self.kind, self.name
         pre = nv_address_on(preselected, kind) if preselected is not None else None
         labels, circuits = {}, []
@@ -306,7 +298,7 @@ class NotificationRun(object):
                     continue    # back to the first list
                 source, circuit = labels[picked]
                 last = existing[(source, circuit)]
-                holders = [d for d in all_devices() if nv_address_on(d, kind) == (source, circuit, last)]
+                holders = [el for n, el in devices_by_circuit.get((source, circuit), []) if n == last]
                 return {"source": source, "circuit": circuit, "next": last + 1, "resumed": True,
                         "from": nv.fmt_address(kind, source, circuit, last), "anchor": None,
                         "last_device": holders[0] if len(holders) == 1 else None}
@@ -360,7 +352,8 @@ class NotificationRun(object):
 
     def set_anchor(self, anchor):
         self.state["anchor"] = anchor
-        self.state["from"] = self.address(self.position(anchor)) if self.position(anchor) else element_label(anchor)
+        number = self.position(anchor)
+        self.state["from"] = self.address(number) if number else element_label(anchor)
         self.info.pop(eid(anchor), None)
 
     def downstream_info(self, el):
@@ -606,21 +599,23 @@ class NotificationRun(object):
 # ======================================================================================
 
 
-class SlcRun(object):
+class SlcRun(aui.SlcCountRules):
     """An SLC loop, addressed as Address SLC does: each Family : Type by its rule in Address SLC - Config,
-    modules and detectors counted separately, unused address parameters on a device cleared."""
+    modules and detectors counted separately, unused address parameters on a device cleared. How many addresses
+    each device gets (and the questions about it) comes from addressing_ui.SlcCountRules, shared with
+    Address SLC."""
     name = "SLC"
+    COUNT_TITLE = "Auto-Circuit - SLC addresses"     # the count / kind window (SlcCountRules)
+    SKIP_TEXT = "Don't Address"
+    SKIP_WIDTH = 100
 
     def __init__(self):
+        self.init_count_rules()     # last_choice, undefined_seen, count_prompted, option_prompted
         self.reader = slc.AddressParamReader()
         self.table = {}
         self.prefix = None
         self.state = None           # {"next": {kind: n}, "start": {kind: n}, "resumed", "from", "anchor"}
         self.info = {}
-        self.last_choice = {}       # Family : Type -> (count, kind) chosen last, the dialog default
-        self.undefined_seen = set()
-        self.count_prompted = set()
-        self.option_prompted = set()
         self.rounding_skips = []    # (element id, kind, first skipped, last skipped)
         self.problems = []
         self.cleared = 0
@@ -648,7 +643,8 @@ class SlcRun(object):
             if not go_on:
                 return False
             self.table = {}
-        loops = slc.scan_loops(doc, self.reader)
+        holders = {}        # address as written -> the devices holding it, from the same pass over the model
+        loops = slc.scan_loops(doc, self.reader, holders)
         preselected = preselected_device()
         while True:
             picked, resumed, anchor = None, None, None
@@ -682,8 +678,7 @@ class SlcRun(object):
                 picked = dlg.result
             else:
                 loop = labels[choice]
-                picked = (loop["n"], loop["l"],
-                          (loop["last"][slc.MODULE] or 0) + 1, (loop["last"][slc.DETECTOR] or 0) + 1)
+                picked = slc.loop_next(loop)
                 resumed = "N%dL%d (M%s / D%s next)" % (loop["n"], loop["l"], slc.fmt_number(picked[2]),
                                                        slc.fmt_number(picked[3]))
             self.prefix = "N%dL%d" % (picked[0], picked[1])
@@ -697,10 +692,9 @@ class SlcRun(object):
                     if self.loop_last[kind] is None:
                         continue
                     text = self.address(kind, self.loop_last[kind])
-                    holders = [d for d in all_devices()
-                               if any(p.AsString() == text for _pos, p in self.reader.get(d))]
-                    if len(holders) == 1:
-                        last_devices[kind] = (text, holders[0])
+                    found = holders.get(text, [])
+                    if len(found) == 1:
+                        last_devices[kind] = (text, found[0])
             self.state = {"next": nxt, "start": dict(nxt), "resumed": bool(resumed), "from": resumed,
                           "anchor": anchor, "last_devices": last_devices}
             return True
@@ -718,10 +712,7 @@ class SlcRun(object):
         """{kind: (lowest, highest)} of the device's addresses on this loop."""
         out = {}
         for _pos, p in self.reader.get(el):
-            try:
-                parsed = slc.parse_address(p.AsString())
-            except Exception:
-                parsed = None
+            parsed = slc.parse_address(p.AsString())
             if not parsed or "N%dL%d" % (parsed[0], parsed[1]) != self.prefix:
                 continue
             kind, number = parsed[2], parsed[3]
@@ -802,37 +793,12 @@ class SlcRun(object):
                                                "from - Esc to go back")
                 if device is None:
                     return None
-            found = self.device_addresses(device)
+            found = slc.resume_numbers(self.reader, device, loops)
             if found:
-                n, l, last = found
-                for loop in loops:
-                    if loop["n"] == n and loop["l"] == l:
-                        for kind in slc.KINDS:
-                            if last[kind] is None:
-                                last[kind] = loop["last"][kind]
-                return (n, l, (last[slc.MODULE] or 0) + 1, (last[slc.DETECTOR] or 0) + 1), device
+                return found, device
             forms.toast("That device has no N#L#M000 / N#L#D000 address to continue from. Pick another.",
                         title=TITLE)
             device = None
-
-    def device_addresses(self, device):
-        """(n, l, {kind: highest number or None}) of the device's first written loop, or None."""
-        loop, last = None, {slc.MODULE: None, slc.DETECTOR: None}
-        for _pos, p in self.reader.get(device):
-            try:
-                parsed = slc.parse_address(p.AsString())
-            except Exception:
-                parsed = None
-            if not parsed:
-                continue
-            n, l, kind, number = parsed
-            if loop is None:
-                loop = (n, l)
-            elif loop != (n, l):
-                continue
-            if last[kind] is None or number > last[kind]:
-                last[kind] = number
-        return (loop[0], loop[1], last) if loop else None
 
     # ---- what a device takes (rules table, as in Address SLC) ----
     def classify(self, el):
@@ -862,61 +828,9 @@ class SlcRun(object):
                     old = ", ".join(self._range_text(kk, pos[kk][0], pos[kk][1]) for kk in slc.KINDS if kk in pos)
                     out.update({"addr": True, "kind": kind, "fill": writable[:count], "leftovers": writable[count:],
                                 "option": option, "round_to": rule["round_to"] if rule else None,
-                                "had": self.device_addresses(el) is not None, "old": old or None})
+                                "had": slc.device_addresses(self.reader, el) is not None, "old": old or None})
         self.info[k] = out
         return out
-
-    def resolve_count_and_kind(self, key, element_id, rule, total):
-        """(count, kind, option label or None), prompting only when the table leaves it open; None = skip."""
-        if rule is None:
-            self.undefined_seen.add(key)
-            return self.ask(key, "%s\nThis type is not defined in Address SLC - Config.\nIt has %d address "
-                                 "parameter(s). Choose the address kind and how many to fill." % (key, total),
-                            [(None, i) for i in range(1, total + 1)], total, slc.MODULE, False, None)
-        kind = rule["kind"]
-        name = slc.KIND_NAMES[kind]
-        if rule["count"]:
-            count = rule["count"]
-            if count > total:
-                self.problems.append("%s: table says %d but element %d has only %d writable address "
-                                     "parameter(s); filled %d." % (key, count, element_id, total, total))
-                count = total
-            return count, kind, None
-        if rule["options"]:
-            fitting = [(label, count) for label, count in rule["options"] if count <= total]
-            if not fitting:
-                self.problems.append("%s: element %d has only %d writable address parameter(s), fewer than every "
-                                     "Address Option (%s). Not addressed."
-                                     % (key, element_id, total, slc.format_options(rule["options"])))
-                return None
-            if len(fitting) == 1:
-                return fitting[0][1], kind, fitting[0][0]
-            self.option_prompted.add(key)
-            return self.ask(key, "%s\nDefined as a %s with Address Options.\nThis device has %d address parameters. "
-                                 "Choose which option to use." % (key, name, total),
-                            fitting, fitting[0][1], kind, True, "Option (addresses):")
-        if total == 1:
-            return 1, kind, None
-        self.count_prompted.add(key)
-        return self.ask(key, "%s\nDefined as a %s, but the number of addresses is not defined.\nThis device has %d "
-                             "address parameters. How many do you want to fill?" % (key, name, total),
-                        [(None, i) for i in range(1, total + 1)], total, kind, True, None)
-
-    def ask(self, key, message, choices, default_count, default_kind, lock_kind, count_label):
-        if key in self.last_choice:
-            default_count = self.last_choice[key][0]
-            if not lock_kind:
-                default_kind = self.last_choice[key][1]
-        dlg = aui.CountDialog(message, choices, default_count, default_kind, lock_kind, count_label,
-                              title="Auto-Circuit - SLC addresses", skip_text="Don't Address", skip_width=100)
-        dlg.ShowDialog()
-        if dlg.result is None:
-            return None
-        count, kind, label = dlg.result
-        if lock_kind:
-            kind = default_kind
-        self.last_choice[key] = (count, kind)
-        return count, kind, label
 
     # ---- numbering ----
     def _number(self, items):
@@ -1105,7 +1019,6 @@ def _pick_loop(ogs, run, min_picks):
     anchor = run.state.get("anchor")
     if anchor is not None:
         run.set_anchor(anchor)
-    if anchor is not None:
         start_note = " (new devices, after element %d)" % eid(anchor)
     elif run.state["resumed"]:
         start_note = " (new devices; you choose where they connect next)"
