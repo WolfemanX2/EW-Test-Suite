@@ -4,11 +4,16 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 
 Every tool's settings window lives in the **Tool Configs** drop-down (its own panel at the end of the tab) and is named `<Tool Name> - Config`.
 
+The **EW Production Suite** tab holds the **Family QAQC** panel (Family Placer) and the Obsolete panel.
+
 Tools being replaced are kept in the **Obsolete** panel on the separate **EW Production Suite** tab, in three drop-downs:
 **Old Tools** (Auto Conduit, Auto-Circuit, Address SLC, Address NAC, Address Voice, NAC Coverage Checker),
 **Template Cleanup** (Line Nuke, Consolidate Text Styles) and **Parameter Tools** (the family parameter tools).
 
 ## Tools
+
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Family%20QAQC.panel/FamilyPlacer.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Family%20QAQC.panel/FamilyPlacer.pushbutton/icon.png" width="32" height="32" alt=""></picture> Family Placer
+- Places one of every loaded type of a chosen category in a grid in the active plan view: one row per family, one column per type, 6 ft apart unless you enter another spacing. Families that need a host or a curve are skipped and listed.
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Circuit - SLC - Configurable
 - Readdresses SLC devices manually or automatically along the conduit; Route Conduit and Reroute and Readdress are coming next.
