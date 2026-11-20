@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# family_qaqc module - version v3
+# family_qaqc module - version v4
 # Change log (last change first):
+#   v4 - Family Audit v5: remap_to_shared checks the data types match, runs in a SubTransaction and, when Revit's
+#        ReplaceParameter fails (e.g. Symbol Visibility: "Parameter replacement failed"), rebuilds the parameter:
+#        removes it and adds the shared one, then puts back values, formulas, element associations (visibility,
+#        nested families) and dimension labels. Returns how it was done.
 #   v3 - Family Audit v3: FamilyLoadOptions (reload a family, keeping the project's parameter values), moved here
 #        from family_shared_params; plain_family_params.
 #   v2 - Family Audit v2: SharedFileSwitch (open any shared parameter file through Revit and put the user's setting
@@ -16,13 +20,14 @@ read_shared_param_file   {guid: (name, group)} from a shared parameter file, rea
 SharedFileSwitch         get an ExternalDefinition from any shared parameter file; restores Revit's setting on close
 plain_family_params      {name: FamilyParameter} of a family's own parameters that aren't shared or built in
 FamilyLoadOptions        reload a family into the project, keeping the parameter values already there
-remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values
-                         and formulas
+remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values,
+                         formulas, element associations and dimension labels
 """
 import re
 import codecs
 from Autodesk.Revit.DB import (FilteredElementCollector, FamilySymbol, CategoryType, BuiltInParameter,
-                               IFamilyLoadOptions, FamilySource)
+                               IFamilyLoadOptions, FamilySource, SubTransaction, StorageType, Dimension,
+                               LogicalOrFilter, ElementIsElementTypeFilter)
 from ew_common import type_name
 
 
@@ -118,17 +123,151 @@ def _group(param):
         return param.Definition.ParameterGroup      # older
 
 
+def _spec(d):
+    """Data type of a definition, comparable across Revit versions (None if it can't be read)."""
+    for get in (lambda: d.GetDataType(), lambda: d.ParameterType):     # Revit 2022+ / older
+        try:
+            return get()
+        except Exception:
+            continue
+    return None
+
+
+def _spec_label(spec):
+    try:
+        from Autodesk.Revit.DB import LabelUtils
+        return LabelUtils.GetLabelForSpec(spec)
+    except Exception:
+        return str(spec)
+
+
+def _value(ftype, param):
+    """A family type's value of param, read by its storage type (None if it has none)."""
+    st = param.StorageType
+    if not ftype.HasValue(param):
+        return None
+    if st == StorageType.Integer:
+        return ftype.AsInteger(param)
+    if st == StorageType.Double:
+        return ftype.AsDouble(param)
+    if st == StorageType.String:
+        return ftype.AsString(param)
+    if st == StorageType.ElementId:
+        return ftype.AsElementId(param)
+    return None
+
+
+def _all_elements(fdoc):
+    """Every element and element type in the family (where a parameter can be associated)."""
+    return FilteredElementCollector(fdoc).WherePasses(
+        LogicalOrFilter(ElementIsElementTypeFilter(False), ElementIsElementTypeFilter(True))).ToElements()
+
+
+def _rebuild(fdoc, param, definition):
+    """Removes param and adds the shared parameter in its place, putting back its values, its formula, formulas
+    that use it, element parameters associated to it and dimensions labeled with it. Returns a summary."""
+    fm = fdoc.FamilyManager
+    name = param.Definition.Name
+    group = _group(param)
+    instance = param.IsInstance
+    own_formula = param.Formula if param.IsDeterminedByFormula else None
+    values = []
+    if own_formula is None:
+        for ft in fm.Types:
+            values.append((ft, _value(ft, param)))
+    # other parameters' formulas that use it (blocked removal / broke the replacement): cleared, then put back
+    formulas = [(q, q.Formula) for q in fm.Parameters
+                if q.Id != param.Id and q.IsDeterminedByFormula and q.Formula and name in q.Formula]
+    links, labels = [], []
+    for el in _all_elements(fdoc):
+        try:
+            if isinstance(el, Dimension) and el.FamilyLabel is not None and el.FamilyLabel.Id == param.Id:
+                labels.append(el)
+        except Exception:
+            pass
+        try:
+            for ep in el.Parameters:
+                try:
+                    a = fm.GetAssociatedFamilyParameter(ep)
+                    if a is not None and a.Id == param.Id:
+                        links.append((el, ep.Id))
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    for q, _f in formulas:
+        fm.SetFormula(q, None)
+    for d in labels:
+        d.FamilyLabel = None
+    fm.RemoveParameter(param)
+    new = fm.AddParameter(definition, group, instance)
+
+    current = fm.CurrentType
+    for ft, v in values:
+        if v is None:
+            continue
+        fm.CurrentType = ft
+        fm.Set(new, v)
+    if current is not None:
+        fm.CurrentType = current
+    if own_formula:
+        fm.SetFormula(new, own_formula)
+    for q, f in formulas:
+        fm.SetFormula(q, f)
+    relinked = 0
+    for el, pid in links:
+        for ep in el.Parameters:
+            if ep.Id == pid:
+                fm.AssociateElementParameterToFamilyParameter(ep, new)
+                relinked += 1
+                break
+    for d in labels:
+        d.FamilyLabel = new
+    bits = []
+    if relinked:
+        bits.append("%d association%s" % (relinked, "" if relinked == 1 else "s"))
+    if formulas:
+        bits.append("%d formula%s" % (len(formulas), "" if len(formulas) == 1 else "s"))
+    if labels:
+        bits.append("%d dimension label%s" % (len(labels), "" if len(labels) == 1 else "s"))
+    return "rebuilt" + (", kept " + ", ".join(bits) if bits else "")
+
+
 def remap_to_shared(fdoc, param, definition):
-    """Replaces the family parameter param with the shared parameter definition, in an open transaction of the
-    family document fdoc. Keeps Instance / Type, the group, values and formulas. Returns the new FamilyParameter.
-    A shared parameter can't be swapped straight for another of the same name, so it is first turned into a
-    plain family parameter under a temporary name."""
+    """Swaps the family parameter param (shared or not) for the shared parameter definition, inside an open
+    transaction of the family document fdoc. Keeps its name, Instance / Type, group, values, formulas, element
+    associations and dimension labels. Returns how it was done ("replaced" or "rebuilt, kept ..."); raises with
+    the reason if it couldn't be done (and leaves the family as it was).
+    Revit's ReplaceParameter is tried first (a shared parameter goes through a temporary plain one, as one shared
+    parameter can't be swapped straight for another of the same name); when that fails the parameter is rebuilt."""
+    a, b = _spec(param.Definition), _spec(definition)
+    if a is not None and b is not None and a != b:
+        raise Exception("data types differ: %s in the family, %s in the file" % (_spec_label(a), _spec_label(b)))
     fm = fdoc.FamilyManager
     group = _group(param)
     instance = param.IsInstance
-    if param.IsShared:
-        param = fm.ReplaceParameter(param, param.Definition.Name + "__remap_tmp", group, instance)
-    return fm.ReplaceParameter(param, definition, group, instance)
+    st = SubTransaction(fdoc)
+    st.Start()
+    try:
+        p = param
+        if p.IsShared:
+            p = fm.ReplaceParameter(p, p.Definition.Name + "__remap_tmp", group, instance)
+        fm.ReplaceParameter(p, definition, group, instance)
+        st.Commit()
+        return "replaced"
+    except Exception as ex:
+        first = str(ex)
+        st.RollBack()
+    st = SubTransaction(fdoc)
+    st.Start()
+    try:
+        how = _rebuild(fdoc, param, definition)
+        st.Commit()
+        return how
+    except Exception as ex:
+        st.RollBack()
+        raise Exception("%s (rebuilding it also failed: %s)" % (first, ex))
 
 
 def plain_family_params(fdoc):

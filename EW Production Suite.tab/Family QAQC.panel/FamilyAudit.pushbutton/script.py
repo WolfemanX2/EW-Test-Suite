@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v4
+# Family Audit script - version v5
+# v5 - parameters Revit won't replace directly (e.g. Symbol Visibility) are rebuilt instead, keeping their values,
+#      formulas, visibility / nested associations and dimension labels; a data type mismatch is reported as such
 # v4 - fix: the remap step failed (too many values to unpack) - the same-name table reused the by_name list
 # v3 - remap step options: also map plain family parameters to the shared parameter of the same name, and
 #      reload the updated families into the project
 # v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
 #      parameter files but matching one there by name are swapped for it and the families saved to a folder
-__title__ = "Family\nAudit v4"
+__title__ = "Family\nAudit v5"
 __doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
@@ -279,9 +281,9 @@ def remap_family(fam, fam_name, items, files, folder, reload_fam):
                     raise Exception("not found in the file")
                 if g not in params:
                     raise Exception("not in the family any more")
-                remap_to_shared(fdoc, params[g], d)
+                how = remap_to_shared(fdoc, params[g], d)
                 done += 1
-                rows.append([fam_name, name, fname, "Remapped"])
+                rows.append([fam_name, name, fname, "Remapped" + ("" if how == "replaced" else " (%s)" % how)])
             except Exception as ex:
                 rows.append([fam_name, name, fname, "Not remapped: %s" % ex])
         if done:
