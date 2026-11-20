@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-# slc_session module - version v1
+# slc_session module - version v2
 # Change log (last change first):
+#   v2 - Address SLC v10: an Automatic (downstream) run is one Undo, 'Address SLC downstream', like Address
+#        NAC / Voice; each device picked by hand is one Undo, 'Address SLC device'.
 #   v1 - Code consolidation step 5 (Address SLC v9): Address SLC's addressing session, moved here from the Address SLC
 #        v8 button script (unchanged, apart from its windows and menus now coming from addressing_ui).
 """Address SLC: the addressing session (moved from the button script, like Address NAC / Voice's
 nac_voice_addressing). The Address SLC button runs main()."""
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import Transaction, TransactionStatus, ElementId
+from Autodesk.Revit.DB import Transaction, TransactionGroup, TransactionStatus, ElementId
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -46,6 +48,18 @@ choose = aui.choose                      # from addressing_ui
 
 def preselected_device():
     return aui.preselected_device(doc, uidoc)
+
+
+def end_group(group, keep):
+    """Close a transaction group: merge it into one Undo if anything was kept, otherwise roll it back."""
+    try:
+        if group.HasStarted() and not group.HasEnded():
+            if keep:
+                group.Assimilate()
+            else:
+                group.RollBack()
+    except Exception:
+        pass
 
 
 # ---------- One run ----------
@@ -367,6 +381,10 @@ class Session(object):
         before = len(self.log)
         keep_going = True
         self.following = True
+        # The whole run is one Undo, like Address NAC / Voice: each device is still its own transaction (a
+        # device can stop to ask for its count), and the group merges them when the run ends.
+        group = TransactionGroup(doc, "%s downstream" % TITLE)
+        group.Start()
         try:
             for el in todo:
                 if not self.address_device(el):
@@ -374,6 +392,7 @@ class Session(object):
                     break
         finally:
             self.following = False
+            end_group(group, len(self.log) > before)
         count = len(self.log) - before
         self.runs.append("Followed '%s' conduit from element %d %s: %d of %d device(s) addressed"
                          % (type_name, anchor_id, how_text, count, len(todo)))
@@ -454,7 +473,7 @@ class Session(object):
             return False
 
         cleared, error = 0, None
-        t = Transaction(doc, "Address device")
+        t = Transaction(doc, "%s device" % TITLE)
         try:
             t.Start()
             for i, p in enumerate(fill):

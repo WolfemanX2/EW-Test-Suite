@@ -160,8 +160,8 @@ share are in `lib/addressing_ui.py`.
 | lib/mounting_rules.py | v1 |
 | lib/conduit_routing.py | v3 |
 | lib/clash_rules.py | v5 |
-| Address SLC | v9 |
-| lib/slc_session.py | v1 |
+| Address SLC | v10 |
+| lib/slc_session.py | v2 |
 | Address SLC - Config | v4 |
 | lib/slc_addressing.py | v5 |
 | lib/slc_config_editor.py | v4 |
