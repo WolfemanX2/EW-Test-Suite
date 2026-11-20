@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# family_qaqc module - version v4
+# family_qaqc module - version v5
 # Change log (last change first):
+#   v5 - Family Audit v6: nested_shared_families (shared families nested in a family, with instance counts).
 #   v4 - Family Audit v5: remap_to_shared checks the data types match, runs in a SubTransaction and, when Revit's
 #        ReplaceParameter fails (e.g. Symbol Visibility: "Parameter replacement failed"), rebuilds the parameter:
 #        removes it and adds the shared one, then puts back values, formulas, element associations (visibility,
@@ -19,6 +20,7 @@ read_shared_param_file   {guid: (name, group)} from a shared parameter file, rea
                          left alone)
 SharedFileSwitch         get an ExternalDefinition from any shared parameter file; restores Revit's setting on close
 plain_family_params      {name: FamilyParameter} of a family's own parameters that aren't shared or built in
+nested_shared_families   [(name, category, instances)] of the shared families nested in an open family
 FamilyLoadOptions        reload a family into the project, keeping the parameter values already there
 remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values,
                          formulas, element associations and dimension labels
@@ -27,7 +29,7 @@ import re
 import codecs
 from Autodesk.Revit.DB import (FilteredElementCollector, FamilySymbol, CategoryType, BuiltInParameter,
                                IFamilyLoadOptions, FamilySource, SubTransaction, StorageType, Dimension,
-                               LogicalOrFilter, ElementIsElementTypeFilter)
+                               LogicalOrFilter, ElementIsElementTypeFilter, Family, FamilyInstance)
 from ew_common import type_name
 
 
@@ -294,3 +296,29 @@ class FamilyLoadOptions(IFamilyLoadOptions):
         source.Value = FamilySource.Family
         overwriteParameterValues.Value = False
         return True
+
+
+def nested_shared_families(fdoc):
+    """[(family name, category name, number of instances placed)] of the shared families nested in the open
+    family document fdoc, sorted by name."""
+    counts = {}
+    for inst in FilteredElementCollector(fdoc).OfClass(FamilyInstance).ToElements():
+        try:
+            fid = inst.Symbol.Family.Id
+            counts[fid] = counts.get(fid, 0) + 1
+        except Exception:
+            continue
+    own = fdoc.OwnerFamily.Id if fdoc.OwnerFamily is not None else None
+    out = []
+    for fam in FilteredElementCollector(fdoc).OfClass(Family).ToElements():
+        try:
+            if fam.Id == own:
+                continue
+            p = fam.get_Parameter(BuiltInParameter.FAMILY_SHARED)
+            if p is None or p.AsInteger() != 1:
+                continue
+            cat = fam.FamilyCategory.Name if fam.FamilyCategory is not None else ""
+            out.append((fam.Name, cat, counts.get(fam.Id, 0)))
+        except Exception:
+            continue
+    return sorted(out, key=lambda x: natural(x[0]))

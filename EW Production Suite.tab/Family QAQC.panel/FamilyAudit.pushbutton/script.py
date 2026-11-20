@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v5
+# Family Audit script - version v6
+# v6 - Nested Shared Families list: which audited families have shared families nested in them
 # v5 - parameters Revit won't replace directly (e.g. Symbol Visibility) are rebuilt instead, keeping their values,
 #      formulas, visibility / nested associations and dimension labels; a data type mismatch is reported as such
 # v4 - fix: the remap step failed (too many values to unpack) - the same-name table reused the by_name list
@@ -7,11 +8,11 @@
 #      reload the updated families into the project
 # v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
 #      parameter files but matching one there by name are swapped for it and the families saved to a folder
-__title__ = "Family\nAudit v5"
+__title__ = "Family\nAudit v6"
 __doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
-           "parameters that have the same name but different GUIDs. Results can be saved as a CSV file. Shared "
+           "parameters that have the same name but different GUIDs, and the shared families nested in each family. Results can be saved as a CSV file. Shared "
            "parameters not found in any file, but with a parameter of the same name in one, can then be remapped "
            "to that file's parameter (optionally plain family parameters with a matching name too), the changed "
            "families saved to a folder you pick and, optionally, reloaded into the project.")
@@ -21,7 +22,8 @@ from collections import OrderedDict
 from pyrevit import revit, forms, script
 from Autodesk.Revit.DB import FilteredElementCollector, SharedParameterElement, Transaction, SaveAsOptions
 from family_qaqc import (natural, loaded_by_category, read_shared_param_file,     # lib/family_qaqc.py
-                         SharedFileSwitch, remap_to_shared, plain_family_params, FamilyLoadOptions)
+                         SharedFileSwitch, remap_to_shared, plain_family_params, FamilyLoadOptions,
+                         nested_shared_families)
 import config_store                                                              # lib/config_store.py
 
 TITLE = "Family Audit"
@@ -95,7 +97,8 @@ def file_text(guid, name, index):
 # ---------- Reading the families ----------
 def shared_params(fam):
     """(OrderedDict {guid: (name, Instance / Type / NOT_FAMILY_PARAM)} of the shared parameters in a family,
-    [names of its plain (not shared, not built-in) family parameters]). Raises if the family can't be opened."""
+    [names of its plain (not shared, not built-in) family parameters], [(name, category, instances)] of the
+    shared families nested in it). Raises if the family can't be opened."""
     fdoc = doc.EditFamily(fam)
     try:
         plain = sorted(plain_family_params(fdoc), key=natural)
@@ -107,7 +110,7 @@ def shared_params(fam):
             g = str(spe.GuidValue).lower()
             if g not in found:
                 found[g] = (spe.Name, NOT_FAMILY_PARAM)
-        return found, plain
+        return found, plain, nested_shared_families(fdoc)
     finally:
         fdoc.Close(False)
 
@@ -331,12 +334,12 @@ def main():
                 break
             fam = symbols[0].Family
             r = {"category": cat, "family": fam_name, "types": len(symbols), "params": None, "note": "",
-                 "files": {}, "fam": fam, "plain": []}
+                 "files": {}, "fam": fam, "plain": [], "nested": []}
             if not fam.IsEditable:
                 r["note"] = "Can't be opened for editing"
             else:
                 try:
-                    r["params"], r["plain"] = shared_params(fam)
+                    r["params"], r["plain"], r["nested"] = shared_params(fam)
                     r["files"] = dict((g, file_text(g, n, index)) for g, (n, _k) in r["params"].items())
                     if not r["params"]:
                         r["note"] = "None"
@@ -366,6 +369,17 @@ def main():
     out.print_table(table, columns=["Family", "Types", "Shared Parameters", "Shared Parameter File"])
     out.print_md("\\* in the family but not one of its Family Types parameters (used by a label or a nested "
                  "family).")
+
+    # Shared families nested in the audited families
+    nested = [r for r in results if r["nested"]]
+    out.print_md("### Nested Shared Families")
+    if nested:
+        out.print_table([[r["family"], str(len(r["nested"])),
+                          "<br>".join("%s (%s)" % (n, c) for n, c, _i in r["nested"]),
+                          "<br>".join(str(i) for _n, _c, i in r["nested"])] for r in nested],
+                        columns=["Family", "Nested Shared Families", "Name (Category)", "Instances"])
+    else:
+        out.print_md("None of these families have shared families nested in them.")
 
     # Same name, different GUID: the usual cause of schedules and tags showing blanks
     guids_by_name = {}
