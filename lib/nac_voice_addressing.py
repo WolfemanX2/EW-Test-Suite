@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v8
+# nac_voice_addressing module - version v9
 # Change log (last change first):
+#   v9 - Auto Circuit - NAC v1 / Auto Circuit - Voice v1: hooks for the Auto Circuit tools: Session.load_table(),
+#        CONFIG_HINT (the config named when a type is asked about) and settings_line() (named in the report).
 #   v8 - Address NAC v6 / Address Voice v6: one kind per run (the leftovers of the combined NAC + Voice tool
 #        removed); Shift+Click opens the Address NAC / Voice - Config window (the old menu-based table manager
 #        removed); the EOL and the circuit totals come from nac_voice_eol (shared with Auto-Circuit), on every
@@ -247,6 +249,16 @@ def next_text(state):
 
 class Session(object):
     """One Address NAC (kind "N") or Address Voice (kind "V") run."""
+    CONFIG_HINT = "define it in Address NAC / Voice - Config, or Shift+Click the tool button, to keep it"
+
+    def load_table(self):
+        """{"Family : Type": device type} (anything with .get): the types the run knows without asking."""
+        return load_table()
+
+    def settings_line(self):
+        """The settings this run used, for the report."""
+        return "Lookup table: `%s`" % nv.table_path()
+
     def __init__(self, kind):
         self.kind = kind
         self.finished = False       # the user chose Finish after an automatic run
@@ -286,7 +298,7 @@ class Session(object):
         if picked.get("anchor") is not None:
             self.anchor = picked["anchor"]
         self.state[self.kind] = picked
-        self.table = load_table()
+        self.table = self.load_table()
         return True
 
     # ---- Per device ----
@@ -311,8 +323,7 @@ class Session(object):
         if len(options) == 1:
             label = options[0]
         else:
-            message = ("%s is not in the lookup table. What is it? (Asked once per run; define it in Address NAC / "
-                       "Voice - Config, or Shift+Click the tool button, to keep it.)" % key)
+            message = "%s is not in the lookup table. What is it? (Asked once per run; %s.)" % (key, self.CONFIG_HINT)
             if show:
                 self.show(el)   # found by the tool, not picked: show which one it is
                 message = "Element %d\n%s" % (nv.eid_int(el.Id), message)
@@ -765,7 +776,7 @@ class Session(object):
             output.print_md("- Types not defined in the lookup table (used for this run only):")
             for k in sorted(self.session_types):
                 output.print_md("    - %s -> %s" % (k, self.session_types[k]))
-        output.print_md("- Lookup table: `%s`" % nv.table_path())
+        output.print_md("- %s" % self.settings_line())
         for msg in self.problems:
             output.print_md("- Issue: %s" % msg)
 

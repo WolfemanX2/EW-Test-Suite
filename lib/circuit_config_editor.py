@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v3
+# circuit_config_editor module - version v4
 # Change log (last change first):
+#   v4 - Auto Circuit - SLC / NAC / Voice v1: the help text says what a blank Device Type does (asked when the
+#        device is addressed).
 #   v3 - Family Defaults Config v3: renamed from Auto Circuit - Config (window title and messages).
 #   v2 - Auto Circuit - Config v2: Address Groups are a table of Group / Subgroup / Addresses (one row per subgroup);
 #        Round To is typed on Family Defaults (the Address Rounding table is removed).
@@ -87,7 +89,7 @@ EDITOR_XAML = """
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the device is not addressed until it has a Device Type, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005)."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005)."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>

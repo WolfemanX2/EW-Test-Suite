@@ -10,6 +10,18 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ## Tools
 
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Circuit - SLC - Configurable
+- Readdresses SLC devices manually or automatically along the conduit; Route Conduit and Reroute and Readdress are coming next.
+- **Family Defaults Config:** Device Type, Address Group and rounding for each family and type
+
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Circuit - NAC - Configurable
+- Readdresses NAC devices manually or automatically along the conduit, then marks the EOL device and fills the circuit totals; Route Conduit and Reroute and Readdress are coming next.
+- **Family Defaults Config:** Device Type for each family and type
+
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Circuit - Voice - Configurable
+- Readdresses Voice devices manually or automatically along the conduit, then marks the EOL device and fills Circuit Wattage; Route Conduit and Reroute and Readdress are coming next.
+- **Family Defaults Config:** Device Type for each family and type
+
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
 - Automatically draws conduit between devices in order of selection.
 - Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
@@ -159,12 +171,17 @@ share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
+| Auto Circuit - SLC | v1 |
+| Auto Circuit - NAC | v1 |
+| Auto Circuit - Voice | v1 |
+| lib/auto_circuit.py | v1 |
+| lib/circuit_rules.py | v1 |
 | lib/ew_common.py | v3 |
-| lib/addressing_ui.py | v2 |
+| lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
-| Family Defaults Config | v3 |
+| Family Defaults Config | v4 |
 | lib/circuit_config.py | v3 |
-| lib/circuit_config_editor.py | v3 |
+| lib/circuit_config_editor.py | v4 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |
@@ -173,12 +190,12 @@ share are in `lib/addressing_ui.py`.
 | lib/conduit_routing.py | v3 |
 | lib/clash_rules.py | v6 |
 | Address SLC | v12 |
-| lib/slc_session.py | v3 |
+| lib/slc_session.py | v4 |
 | lib/slc_addressing.py | v8 |
 | lib/slc_config_editor.py | v4 |
 | Address NAC | v6 |
 | Address Voice | v6 |
-| lib/nac_voice_addressing.py | v8 |
+| lib/nac_voice_addressing.py | v9 |
 | lib/nac_voice_eol.py | v1 |
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |

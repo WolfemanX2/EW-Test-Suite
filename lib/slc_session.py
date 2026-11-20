@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_session module - version v3
+# slc_session module - version v4
 # Change log (last change first):
+#   v4 - Auto Circuit - SLC v1: hooks for the Auto Circuit tools: settings_line() (the settings named in the
+#        report); main() sets TITLE (Auto Circuit - SLC changes it for its run).
 #   v3 - Address SLC v12: follows conduit with conduit_trace.follow (it had its own copy of the same steps); the
 #        count / kind questions come from addressing_ui.SlcCountRules and the device's addresses from
 #        slc_addressing (shared with Auto-Circuit); saving through ew_common.commit; its messages are titled
@@ -510,9 +512,13 @@ class Session(aui.SlcCountRules):
             output.print_md("- Head End devices ignored (never addressed):")
             for eid in sorted(self.head_end):
                 output.print_md("    - %d : %s" % (eid, self.head_end[eid]))
-        output.print_md("- Lookup table: `%s`" % slc.table_path())
+        output.print_md("- %s" % self.settings_line())
         for msg in self.problems:
             output.print_md("- Issue: %s" % msg)
+
+    def settings_line(self):
+        """The settings this run used, for the report."""
+        return "Lookup table: `%s`" % slc.table_path()
 
     def run(self):
         if not self.load_table() or not self.choose_loop():
@@ -527,8 +533,9 @@ class Session(aui.SlcCountRules):
 
 def main(shift_clicked=False):
     """Runs Address SLC. Shift+Click opens Address SLC - Config instead."""
-    global doc, uidoc, output
+    global doc, uidoc, output, TITLE
     doc, uidoc, output = revit.doc, revit.uidoc, script.get_output()
+    TITLE = "Address SLC"
     if shift_clicked:
         slc_config_editor.show_editor(doc)
     else:

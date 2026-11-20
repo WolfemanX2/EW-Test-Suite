@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# addressing_ui module - version v2
+# addressing_ui module - version v3
 # Change log (last change first):
+#   v3 - Auto Circuit - SLC v1: SlcCountRules.CONFIG_NAME, the config named in its questions (Address SLC - Config,
+#        or Family Defaults Config for the Auto Circuit tools).
 #   v2 - Auto-Circuit v11 / Address SLC v12: SlcCountRules (how many SLC addresses a device gets, asking only
 #        when its rule leaves it open), moved here from the copies in Address SLC and Auto-Circuit.
 #   v1 - Code consolidation step 5 (Address SLC v9, Auto-Circuit v9): the windows and menus the addressing tools share,
@@ -226,6 +228,7 @@ class SlcCountRules(object):
     COUNT_TITLE = "Address SLC"
     SKIP_TEXT = "Skip Device"
     SKIP_WIDTH = 90
+    CONFIG_NAME = "Address SLC - Config"     # where a type's rule is defined, named in the questions
 
     def init_count_rules(self):
         self.last_choice = {}       # Family : Type -> (count, kind) chosen last, the window's default
@@ -246,9 +249,9 @@ class SlcCountRules(object):
             # Not in the table: ask for count and kind (not saved).
             self.undefined_seen.add(key)
             return self.ask(key,
-                            "%s\nThis type is not defined in Address SLC - Config.\nIt has %d address parameter(s). "
-                            "Choose the address kind and how many to fill.\n(Define the type in Address SLC - "
-                            "Config to keep it.)" % (key, total),
+                            "%s\nThis type is not defined in %s.\nIt has %d address parameter(s). Choose the "
+                            "address kind and how many to fill.\n(Define the type in %s to keep it.)"
+                            % (key, self.CONFIG_NAME, total, self.CONFIG_NAME),
                             [(None, i) for i in range(1, total + 1)], total, slc.MODULE, False, None)
 
         kind = rule["kind"]
