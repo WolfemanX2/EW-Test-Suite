@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v3
+# Family Audit script - version v4
+# v4 - fix: the remap step failed (too many values to unpack) - the same-name table reused the by_name list
 # v3 - remap step options: also map plain family parameters to the shared parameter of the same name, and
 #      reload the updated families into the project
 # v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
 #      parameter files but matching one there by name are swapped for it and the families saved to a folder
-__title__ = "Family\nAudit v3"
+__title__ = "Family\nAudit v4"
 __doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
@@ -365,11 +366,11 @@ def main():
                  "family).")
 
     # Same name, different GUID: the usual cause of schedules and tags showing blanks
-    by_name = {}
+    guids_by_name = {}
     for r in results:
         for g, (n, _k) in (r["params"] or {}).items():
-            by_name.setdefault(n, {}).setdefault(g, []).append(r["family"])
-    clashes = [(n, gs) for n, gs in by_name.items() if len(gs) > 1]
+            guids_by_name.setdefault(n, {}).setdefault(g, []).append(r["family"])
+    clashes = [(n, gs) for n, gs in guids_by_name.items() if len(gs) > 1]
     if clashes:
         out.print_md("### Same name, different GUID")
         ctable = []
