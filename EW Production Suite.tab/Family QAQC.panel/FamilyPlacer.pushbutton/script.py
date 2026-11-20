@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-# Family Placer script - version v2
+# Family Placer script - version v3
+# v3 - model families placed 5.5 ft above the level; type name labels removed (family names only)
 # v2 - text labels: family name to the left of each row, type name above each instance
-__title__ = "Family\nPlacer v2"
+__title__ = "Family\nPlacer v3"
 __doc__ = ("Places one of every loaded type of a chosen category in a grid, like a table: each row is a family "
            "and each column is one of that family's types. Pick the category, the families to include, the "
-           "spacing (6 ft by default) and the top-left corner of the grid in a plan view. Each row is labeled with its family name and each instance with its type name, using the project's default text type. Families that need a "
+           "spacing (6 ft by default) and the top-left corner of the grid in a plan view. Model families are placed 5.5 ft above the level. Each row is labeled with its family name, using the project's default text type. Families that need a "
            "host (wall, ceiling, etc.) or a curve are skipped and listed at the end.")
 
 import re
 from pyrevit import revit, forms
 from Autodesk.Revit.DB import (
     XYZ, FilteredElementCollector, FamilySymbol, FamilyPlacementType, CategoryType, ViewPlan,
-    Transaction, SubTransaction, ElementId, ElementTypeGroup, TextNote, TextNoteType, TextNoteOptions,
+    Transaction, SubTransaction, ElementId, BuiltInParameter, ElementTypeGroup, TextNote, TextNoteType, TextNoteOptions,
     HorizontalTextAlignment, VerticalTextAlignment
 )
 from Autodesk.Revit.DB.Structure import StructuralType
@@ -23,6 +24,9 @@ from ew_common import type_name, commit     # shared helpers (lib/ew_common.py)
 TITLE = "Family Placer"
 DEFAULT_SPACING = "6'"
 MANY = 300          # ask before placing more instances than this
+OFFSET = 5.5        # feet above the level for model families (annotations and detail items stay on the view)
+OFFSET_PARAMS = (BuiltInParameter.INSTANCE_ELEVATION_PARAM,          # Elevation from Level
+                 BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM)   # Offset from Host (on the level's plane)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -128,6 +132,16 @@ def label(view, pt, text, type_id, h_align, v_align, width=None):
 
 
 # ---------- Placing ----------
+def set_offset(inst, offset):
+    """Sets the instance's height above its level / work plane. Returns False if it has no such parameter."""
+    for bip in OFFSET_PARAMS:
+        p = inst.get_Parameter(bip)
+        if p is not None and not p.IsReadOnly:
+            p.Set(offset)
+            return True
+    return False
+
+
 def place(symbol, pt, level, level_ref, view):
     """Places one instance of symbol at pt. Returns the new instance; raises with the reason if it can't."""
     kind = symbol.Family.FamilyPlacementType
@@ -204,7 +218,7 @@ def main():
     labels = [0]
     label_errors = []
     tid = text_type_id()
-    up = down.Negate()
+    no_offset = []
 
     def work():
         for row, fam_name in enumerate(names):
@@ -217,19 +231,15 @@ def main():
                         sym.Activate()
                         doc.Regenerate()
                     inst = place(sym, pt, level, level_ref, view)
+                    if sym.Family.FamilyPlacementType != FamilyPlacementType.ViewBased \
+                            and not set_offset(inst, OFFSET):
+                        no_offset.append("%s : %s" % (fam_name, type_name(sym)))
                     st.Commit()
                     placed.Add(inst.Id)
                 except Exception as ex:
                     st.RollBack()
                     skipped.append("%s : %s - %s" % (fam_name, type_name(sym), ex))
                     continue
-                if tid is not None:         # type name just above the instance, wrapped to fit its column
-                    try:
-                        label(view, pt + up.Multiply(spacing * 0.3), type_name(sym), tid,
-                              HorizontalTextAlignment.Center, VerticalTextAlignment.Bottom, spacing * 0.9)
-                        labels[0] += 1
-                    except Exception as ex:
-                        label_errors.append(str(ex))
             if tid is not None:             # family name to the left of the row
                 try:
                     row_pt = origin + down.Multiply(row * spacing) - right.Multiply(spacing * 0.6)
@@ -251,6 +261,9 @@ def main():
     msg = "Placed %d instance%s of %d famil%s in %s at %s spacing." % (
         placed.Count, "" if placed.Count == 1 else "s", len(names), "y" if len(names) == 1 else "ies", cat,
         feet_text(spacing))
+    if no_offset:
+        msg += "\n%d placed at the level: no Elevation from Level / Offset parameter (%s%s)." % (
+            len(no_offset), ", ".join(no_offset[:5]), ", ..." if len(no_offset) > 5 else "")
     if labels[0]:
         msg += "\nAdded %d text label%s." % (labels[0], "" if labels[0] == 1 else "s")
     if tid is None:
