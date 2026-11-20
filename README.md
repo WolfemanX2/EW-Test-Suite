@@ -180,9 +180,9 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v2 |
 | lib/config_store.py | v1 |
-| Auto Circuit - Config | v1 |
-| lib/circuit_config.py | v1 |
-| lib/circuit_config_editor.py | v1 |
+| Auto Circuit - Config | v2 |
+| lib/circuit_config.py | v2 |
+| lib/circuit_config_editor.py | v2 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v3 |
 | Auto-Circuit | v12 |

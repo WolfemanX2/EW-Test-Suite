@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v1
+# circuit_config_editor module - version v2
 # Change log (last change first):
+#   v2 - Auto Circuit - Config v2: Address Groups are a table of Group / Subgroup / Addresses (one row per subgroup);
+#        Round To is typed on Family Defaults (the Address Rounding table is removed).
 #   v1 - Auto Circuit - Config v1: the combined routing and addressing settings window (Family Defaults; Address and
 #        Routing Defaults), replacing the Auto Conduit, Address SLC and Address NAC / Voice config windows.
 """The Auto Circuit - Config window (lib/circuit_config.py holds the settings). show_editor(doc).
@@ -8,7 +10,7 @@
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
 that aren't loaded), each with its types under it (double-click a family, or Expand All). Setting a value on a family
 sets it on all its types; a family whose types differ shows <varies>. A blank value is not set.
-Address and Routing Defaults tab: conduit elevations per conduit type, Address Groups and Address Rounding values."""
+Address and Routing Defaults tab: conduit elevations per conduit type and the Address Groups with their subgroups."""
 import os
 
 import clr
@@ -84,7 +86,7 @@ EDITOR_XAML = """
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the device is not addressed until it has a Device Type, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types; the groups and rounding values are on the Address and Routing Defaults tab."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the device is not addressed until it has a Device Type, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005)."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>
@@ -113,7 +115,7 @@ EDITOR_XAML = """
                             <DataGridComboBoxColumn Header="Device Type" SelectedItemBinding="{Binding DeviceType}" Width="120"/>
                             <DataGridComboBoxColumn Header="Conduit Type" SelectedItemBinding="{Binding ConduitType}" Width="220"/>
                             <DataGridComboBoxColumn Header="Address Group" SelectedItemBinding="{Binding AddressGroup}" Width="140"/>
-                            <DataGridComboBoxColumn Header="Round To" SelectedItemBinding="{Binding RoundTo}" Width="80"/>
+                            <DataGridTextColumn Header="Round To" Binding="{Binding RoundTo}" Width="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -143,54 +145,28 @@ EDITOR_XAML = """
                             </DataGrid>
                         </Grid>
                     </GroupBox>
-                    <Grid Grid.Column="2">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="2*"/>
-                            <RowDefinition Height="12"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-                        <GroupBox Grid.Row="0" Header="Address Groups">
-                            <Grid Margin="6">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,6"
-                                           Text="A name and how many addresses it fills (1-24), e.g. Dual Zone = 12. A type set to 'Choose a group' is offered these when it is addressed. Type in the blank bottom row to add one."/>
-                                <DataGrid x:Name="group_grid" Grid.Row="1" AutoGenerateColumns="False"
-                                          CanUserAddRows="True" CanUserDeleteRows="True" HeadersVisibility="Column"
-                                          GridLinesVisibility="All">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Group Name" Binding="{Binding Name}" Width="*"/>
-                                        <DataGridTextColumn Header="Addresses" Binding="{Binding Count}" Width="90"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <Button Grid.Row="2" Content="Delete Selected Groups" Width="160" Margin="0,6,0,0"
-                                        HorizontalAlignment="Left" Click="delete_group_click"/>
-                            </Grid>
-                        </GroupBox>
-                        <GroupBox Grid.Row="2" Header="Address Rounding">
-                            <Grid Margin="6">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,6"
-                                           Text="Values offered under Round To: a device starts on the next multiple (5: M004 becomes M005)."/>
-                                <DataGrid x:Name="round_grid" Grid.Row="1" AutoGenerateColumns="False"
-                                          CanUserAddRows="True" CanUserDeleteRows="True" HeadersVisibility="Column"
-                                          GridLinesVisibility="All">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Round up to a multiple of" Binding="{Binding Value}" Width="*"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <Button Grid.Row="2" Content="Delete Selected Values" Width="160" Margin="0,6,0,0"
-                                        HorizontalAlignment="Left" Click="delete_round_click"/>
-                            </Grid>
-                        </GroupBox>
-                    </Grid>
+                    <GroupBox Grid.Column="2" Header="Address Groups">
+                        <Grid Margin="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,6"
+                                       Text="One row per subgroup: rows with the same Group name make one group, e.g. MMS Cabinet: Single Zone 6, Dual Zone 12, Triple Zone 18, Quad Zone 24. A device whose Address Group has several subgroups chooses one when it is addressed; a group with one subgroup always fills that many addresses (its Subgroup can be left blank). Addresses: 1-24. Type in the blank bottom row to add one."/>
+                            <DataGrid x:Name="group_grid" Grid.Row="1" AutoGenerateColumns="False"
+                                      CanUserAddRows="True" CanUserDeleteRows="True" HeadersVisibility="Column"
+                                      GridLinesVisibility="All">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="*"/>
+                                    <DataGridTextColumn Header="Subgroup" Binding="{Binding Subgroup}" Width="*"/>
+                                    <DataGridTextColumn Header="Addresses" Binding="{Binding Count}" Width="80"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Button Grid.Row="2" Content="Delete Selected Rows" Width="160" Margin="0,6,0,0"
+                                    HorizontalAlignment="Left" Click="delete_group_click"/>
+                        </Grid>
+                    </GroupBox>
                 </Grid>
             </TabItem>
         </TabControl>
@@ -223,17 +199,14 @@ class ConfigEditor(forms.WPFWindow):
         self.dt_elev.Columns.Add("ConduitType", text)
         self.dt_elev.Columns.Add("Elevation", text)
         self.dt_groups = DataTable("Groups")
-        self.dt_groups.Columns.Add("Name", text)
-        self.dt_groups.Columns.Add("Count", text)
-        self.dt_round = DataTable("Rounding")
-        self.dt_round.Columns.Add("Value", text)
+        for name in ("Group", "Subgroup", "Count"):
+            self.dt_groups.Columns.Add(name, text)
 
         self._fill(cfg)
         self.dt.ColumnChanging += self._column_changing
         self.dt.ColumnChanged += self._column_changed
-        for table in (self.dt_groups, self.dt_round):
-            table.RowChanged += self._lists_changed
-            table.RowDeleted += self._lists_changed
+        self.dt_groups.RowChanged += self._lists_changed
+        self.dt_groups.RowDeleted += self._lists_changed
         if cfg["notes"]:
             self.Loaded += lambda sender, args: forms.alert(
                 "Your settings were filled from the configs this one replaces (they are left as they were):\n\n- "
@@ -246,7 +219,6 @@ class ConfigEditor(forms.WPFWindow):
             self.dt.Clear()
             self.dt_elev.Clear()
             self.dt_groups.Clear()
-            self.dt_round.Clear()
             in_project = project_types(self.doc)
             families = set(in_project) | set(cfg["families"]) | set(cc.family_of(k) for k in cfg["types"])
             self.family_rows, self.type_rows = {}, {}
@@ -267,21 +239,18 @@ class ConfigEditor(forms.WPFWindow):
                         frow[column] = self._summary(self.type_rows[family], column)
                     else:
                         frow[column] = self._shown((cfg["families"].get(family) or {}).get(field))
-            for name, count in cfg["address_groups"]:
-                row = self.dt_groups.NewRow()
-                row["Name"], row["Count"] = name, str(count)
-                self.dt_groups.Rows.Add(row)
-            for value in cfg["rounding"]:
-                row = self.dt_round.NewRow()
-                row["Value"] = str(value)
-                self.dt_round.Rows.Add(row)
+            for name, subs in cfg["address_groups"]:
+                for sub, count in subs:
+                    row = self.dt_groups.NewRow()
+                    row["Group"], row["Subgroup"], row["Count"] = name, sub, str(count)
+                    self.dt_groups.Rows.Add(row)
             labels = list(self.conduit_labels) + sorted(l for l in cfg["elevations"] if l not in self.conduit_labels)
             for label in labels:
                 row = self.dt_elev.NewRow()
                 row["ConduitType"], row["Elevation"] = label, cfg["elevations"].get(label, u"")
                 self.dt_elev.Rows.Add(row)
             self.notes = list(cfg["notes"])
-            for table in (self.dt, self.dt_elev, self.dt_groups, self.dt_round):
+            for table in (self.dt, self.dt_elev, self.dt_groups):
                 table.AcceptChanges()
         finally:
             self._busy = False
@@ -290,7 +259,6 @@ class ConfigEditor(forms.WPFWindow):
         self.grid.ItemsSource = self.view
         self.elev_grid.ItemsSource = self.dt_elev.DefaultView
         self.group_grid.ItemsSource = self.dt_groups.DefaultView
-        self.round_grid.ItemsSource = self.dt_round.DefaultView
         self._set_choices(cfg)
         self.status_text.Text = "%d families, %d types" % (len(self.family_rows),
                                                            sum(len(v) for v in self.type_rows.values()))
@@ -316,9 +284,12 @@ class ConfigEditor(forms.WPFWindow):
         return values.pop() if len(values) == 1 else VARIES
 
     def _set_choices(self, cfg=None):
-        """The values each drop-down offers (the current lists of groups and rounding values)."""
-        groups = [cell_text(r["Name"]) for r in self._live(self.dt_groups) if cell_text(r["Name"])]
-        rounding = [cell_text(r["Value"]) for r in self._live(self.dt_round) if cell_text(r["Value"])]
+        """The values each drop-down offers (the Address Groups as they are in the window now)."""
+        groups = []
+        for r in self._live(self.dt_groups):
+            name = cell_text(r["Group"])
+            if name and name not in groups:
+                groups.append(name)
         used = dict((c, set(cell_text(r[c]) for r in self._live(self.dt))) for c, _f in SETTINGS)
 
         def choices(base, column):
@@ -329,8 +300,7 @@ class ConfigEditor(forms.WPFWindow):
         columns[3].ItemsSource = choices(list(cc.MOUNTINGS), "Mounting")
         columns[4].ItemsSource = choices(list(cc.DEVICE_TYPES), "DeviceType")
         columns[5].ItemsSource = choices(list(self.conduit_labels), "ConduitType")
-        columns[6].ItemsSource = choices([cc.CHOOSE_GROUP] + groups, "AddressGroup")
-        columns[7].ItemsSource = choices(rounding, "RoundTo")
+        columns[6].ItemsSource = choices(groups, "AddressGroup")
 
     @staticmethod
     def _live(table):
@@ -346,7 +316,7 @@ class ConfigEditor(forms.WPFWindow):
         self.view.RowFilter = rule
 
     def _commit(self):
-        for grid in (self.grid, self.elev_grid, self.group_grid, self.round_grid):
+        for grid in (self.grid, self.elev_grid, self.group_grid):
             try:
                 grid.CommitEdit()       # the cell being typed in
                 grid.CommitEdit()       # its row
@@ -444,41 +414,37 @@ class ConfigEditor(forms.WPFWindow):
     def delete_group_click(self, sender, args):
         self._delete_selected(self.group_grid)
 
-    def delete_round_click(self, sender, args):
-        self._delete_selected(self.round_grid)
-
     # ---------- Saving ----------
     def _collect(self):
         """(config, [errors]) from the window."""
         cfg, errors = cc.empty(), []
-        names = set()
+        groups, order = {}, []
         for n, row in enumerate(self._live(self.dt_groups), start=1):
-            name, count = cell_text(row["Name"]), cell_text(row["Count"])
-            if not name and not count:
+            name, sub, count = cell_text(row["Group"]), cell_text(row["Subgroup"]), cell_text(row["Count"])
+            if not name and not sub and not count:
                 continue
+            where = "Address Groups row %d%s" % (n, (" (%s)" % name) if name else "")
             if not name:
-                errors.append("Address Groups row %d: the group name is blank." % n)
+                errors.append("%s: the Group name is blank." % where)
                 continue
-            if name in names or name in (cc.CHOOSE_GROUP, VARIES):
-                errors.append("Address Groups row %d: '%s' is %s." % (n, name, "used twice" if name in names
-                                                                       else "a reserved name"))
+            if name == VARIES:
+                errors.append("%s: '%s' can't be a group name." % (where, name))
                 continue
             if not count.isdigit() or not 1 <= int(count) <= cc.MAX_ADDRESSES:
-                errors.append("Address Groups row %d (%s): Addresses must be a whole number from 1 to %d."
-                              % (n, name, cc.MAX_ADDRESSES))
+                errors.append("%s: Addresses must be a whole number from 1 to %d." % (where, cc.MAX_ADDRESSES))
                 continue
-            names.add(name)
-            cfg["address_groups"].append((name, int(count)))
-        for n, row in enumerate(self._live(self.dt_round), start=1):
-            value = cell_text(row["Value"])
-            if not value:
+            if name not in groups:
+                groups[name] = []
+                order.append(name)
+            if sub in [s_ for s_, _c in groups[name]]:
+                errors.append("%s: the subgroup '%s' is in the group twice." % (where, sub or "(blank)"))
                 continue
-            if not value.isdigit() or int(value) < 2:
-                errors.append("Address Rounding row %d: '%s' must be a whole number, 2 or more." % (n, value))
-                continue
-            if int(value) not in cfg["rounding"]:
-                cfg["rounding"].append(int(value))
-        cfg["rounding"].sort()
+            groups[name].append((sub, int(count)))
+        for name in order:
+            if len(groups[name]) > 1 and any(not sub for sub, _c in groups[name]):
+                errors.append("Address Groups (%s): a group with several subgroups needs a name for each, so it can "
+                              "be chosen." % name)
+            cfg["address_groups"].append((name, groups[name]))
         cr.bind(self.doc, None, TITLE)
         for row in self._live(self.dt_elev):
             label, text = cell_text(row["ConduitType"]), cell_text(row["Elevation"])
@@ -489,7 +455,6 @@ class ConfigEditor(forms.WPFWindow):
                 continue
             cfg["elevations"][label] = text
 
-        groups = set(name for name, _c in cfg["address_groups"])
         for family in sorted(self.family_rows, key=lambda f: f.lower()):
             frow, trows = self.family_rows[family], self.type_rows[family]
             for column, field in SETTINGS:
@@ -497,10 +462,10 @@ class ConfigEditor(forms.WPFWindow):
                 for row in rows:
                     value = cell_text(row[column])
                     where = cell_text(row["Key"]) or family
-                    if field == "address_group" and value and value not in groups and value != cc.CHOOSE_GROUP:
+                    if field == "address_group" and value and value not in groups and value != VARIES:
                         errors.append("%s: Address Group '%s' is not one of the Address Groups." % (where, value))
-                    if field == "round_to" and value and (not value.isdigit() or int(value) not in cfg["rounding"]):
-                        errors.append("%s: Round To %s is not one of the Address Rounding values." % (where, value))
+                    if field == "round_to" and value and value != VARIES and (not value.isdigit() or int(value) < 2):
+                        errors.append("%s: Round To '%s' must be a whole number, 2 or more." % (where, value))
                 values = set(cell_text(r[column]) for r in rows)
                 if len(values) == 1:
                     value = values.pop()        # the same on every type: kept on the family
@@ -527,12 +492,12 @@ class ConfigEditor(forms.WPFWindow):
         except Exception as ex:
             forms.alert("Could not save the settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
             return
-        for table in (self.dt, self.dt_elev, self.dt_groups, self.dt_round):
+        for table in (self.dt, self.dt_elev, self.dt_groups):
             table.AcceptChanges()
         self.status_text.Text = "Saved"
 
     def _unsaved(self):
-        return any(t.GetChanges() is not None for t in (self.dt, self.dt_elev, self.dt_groups, self.dt_round))
+        return any(t.GetChanges() is not None for t in (self.dt, self.dt_elev, self.dt_groups))
 
     # ---------- File ----------
     def open_click(self, sender, args):
