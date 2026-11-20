@@ -1,5 +1,6 @@
 title: Tool Configs
 layout:
+  - AutoCircuitConfig
   - AutoConduitConfig
   - LinkClashConfig
   - AddressSlcConfig

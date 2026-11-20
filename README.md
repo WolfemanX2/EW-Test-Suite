@@ -109,12 +109,15 @@ it. Users who already have their own file keep it.
 
 | Config tool | User's file | Office default in `config/` |
 |---|---|---|
+| Auto Circuit - Config | `circuit_config.json` | `circuit_config.default.json` |
 | Auto Conduit - Config | `mounting_rules.json` | `mounting_rules.default.json` |
 | Link Clash - Config | `clash_rules.json` | `clash_rules.default.json` |
 | Address SLC - Config | `AddressCounts.json` (in `MyTools`) | `address_config.default.json` |
 | Address NAC / Voice - Config | `nac_voice_types.json` | `nac_voice_types.default.json` |
 | SLC Riser - Config (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
 | SLC Riser - Config (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
+
+Auto Circuit - Config replaces Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config (being built: the tools don't read it yet). The first time it opens, it is filled from those three files, which are only read.
 
 To make everyone share one file instead, set the `*_PATH` setting at the top of that config's `lib` file to a
 network location (then no default is copied).
@@ -177,6 +180,9 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v2 |
 | lib/config_store.py | v1 |
+| Auto Circuit - Config | v1 |
+| lib/circuit_config.py | v1 |
+| lib/circuit_config_editor.py | v1 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v3 |
 | Auto-Circuit | v12 |
