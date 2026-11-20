@@ -1,5 +1,5 @@
 title: Tool Configs
 layout:
-  - AutoCircuitConfig
+  - FamilyDefaultsConfig
   - LinkClashConfig
   - SlcRiserConfig

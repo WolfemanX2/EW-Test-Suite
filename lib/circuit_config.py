@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# circuit_config module - version v2
+# circuit_config module - version v3
 # Change log (last change first):
+#   v3 - Family Defaults Config v3: the window was renamed from Auto Circuit - Config (no change to the file).
 #   v2 - Auto Circuit - Config v2: Address Groups have subgroups, each with its own number of addresses (a device of
 #        a group with several subgroups chooses one when it is addressed); Round To is any number typed per family /
 #        type (no list of rounding values); 'Choose a group' removed. A v1 file is converted when it is read.
@@ -8,7 +9,7 @@
 #        type, Address Group and rounding per family / type; Address Groups and conduit elevations), filled the
 #        first time from the Auto Conduit, Address SLC and Address NAC / Voice configs.
 """The Auto Circuit settings: one file, %APPDATA%\\pyRevit\\EWTestSuite\\circuit_config.json, edited with
-Auto Circuit - Config.
+Family Defaults Config.
 
 Family Defaults (per family and per Family : Type; a type's own value wins, otherwise its family's):
     mounting       Wall / Ceiling

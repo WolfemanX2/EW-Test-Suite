@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v2
+# circuit_config_editor module - version v3
 # Change log (last change first):
+#   v3 - Family Defaults Config v3: renamed from Auto Circuit - Config (window title and messages).
 #   v2 - Auto Circuit - Config v2: Address Groups are a table of Group / Subgroup / Addresses (one row per subgroup);
 #        Round To is typed on Family Defaults (the Address Rounding table is removed).
 #   v1 - Auto Circuit - Config v1: the combined routing and addressing settings window (Family Defaults; Address and
 #        Routing Defaults), replacing the Auto Conduit, Address SLC and Address NAC / Voice config windows.
-"""The Auto Circuit - Config window (lib/circuit_config.py holds the settings). show_editor(doc).
+"""The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
 that aren't loaded), each with its types under it (double-click a family, or Expand All). Setting a value on a family
@@ -26,7 +27,7 @@ import mounting_rules         # conduit type labels in the project
 import conduit_routing as cr  # reading a length such as 15'-0"
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 
-TITLE = "Auto Circuit - Config"
+TITLE = "Family Defaults Config"
 VARIES = "<varies>"
 NOT_LOADED = "(not in project)"
 CATEGORIES = [(BuiltInCategory.OST_FireAlarmDevices, "Fire Alarm Device"),
@@ -68,7 +69,7 @@ def project_types(doc):
 EDITOR_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Auto Circuit - Config"
+        Title="Family Defaults Config"
         Width="1180" Height="640" MinWidth="980" MinHeight="420"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">

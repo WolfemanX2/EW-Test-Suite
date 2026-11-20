@@ -12,11 +12,11 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
 - Automatically draws conduit between devices in order of selection.
-- **Auto Circuit - Config:** mounting (Wall/Ceiling), conduit type and conduit elevations
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
 - Draws conduit between devices and addresses them based on order of selection. It can also insert new devices into an existing circuit and renumber the devices after them.
-- **Auto Circuit - Config:** mounting, conduit type, Device Type, Address Groups and rounding
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Clash.panel/LinkClash.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Clash.panel/LinkClash.pushbutton/icon.png" width="32" height="32" alt=""></picture> Link Clash - Configurable
 - Checks selected elements for clashes with MEP and structural elements in loaded Revit links and lists them in a results window with statuses. Auto Fix can shift or jog a clashing conduit to clear it.
@@ -24,15 +24,15 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
 - Fills in the SLC addresses of devices in the order you select them. It can also address them automatically by following the conduit downstream from a selected device.
-- **Auto Circuit - Config:** Device Type (Module, Detector or **Head End**, never addressed), Address Group and rounding
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
 - Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Current and estimated Circuit Voltage.
-- **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
 - Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Wattage.
-- **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
@@ -40,7 +40,7 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
-- **Auto Circuit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
+- Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.png" width="32" height="32" alt=""></picture> Line Nuke
 - Creates the 15 standard "Detail Line - Color - Size" line styles and merges any line styles with the same color, weight and pattern into them.
@@ -108,13 +108,14 @@ it. Users who already have their own file keep it.
 
 | Config tool | User's file | Office default in `config/` |
 |---|---|---|
-| Auto Circuit - Config | `circuit_config.json` | `circuit_config.default.json` |
+| Family Defaults Config | `circuit_config.json` | `circuit_config.default.json` |
 | Link Clash - Config | `clash_rules.json` | `clash_rules.default.json` |
 | SLC Riser - Config (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
 | SLC Riser - Config (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
 
-Auto Circuit - Config replaced Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config (being
-built: the tools still read those three files until the next step). The first time it opens, it is filled from them.
+Family Defaults Config replaced Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config, and is
+read by the Auto Circuit tools (the tools in Obsolete still read those three files). The first time it opens, it is
+filled from them.
 
 To make everyone share one file instead, set the `*_PATH` setting at the top of that config's `lib` file to a
 network location (then no default is copied).
@@ -140,7 +141,7 @@ network location (then no default is copied).
 - Conduit routing settings for Auto Conduit and Auto-Circuit (obstacle avoidance, stub and leg lengths, default
   elevation, highlight color, prompt wording) are at the top of `lib/conduit_routing.py`. Both tools use the same
   routing code from that file, so a change there applies to both.
-- Auto Circuit - Config: `%APPDATA%\pyRevit\EWTestSuite\circuit_config.json` per user. To share it, set
+- Family Defaults Config: `%APPDATA%\pyRevit\EWTestSuite\circuit_config.json` per user. To share it, set
   `CONFIG_PATH` in `lib/circuit_config.py` to a network location.
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/slc_riser.py` to a network location.
@@ -161,9 +162,9 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v2 |
 | lib/config_store.py | v1 |
-| Auto Circuit - Config | v2 |
-| lib/circuit_config.py | v2 |
-| lib/circuit_config_editor.py | v2 |
+| Family Defaults Config | v3 |
+| lib/circuit_config.py | v3 |
+| lib/circuit_config_editor.py | v3 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |
