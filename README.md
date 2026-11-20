@@ -145,28 +145,31 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 Each script has its version on line 2, and each lib file lists its last five changes at the top. Small
 helpers every tool uses (ElementId numbers, the Fire Alarm Device check, Family : Type keys, picking an
-element or its tag, the pick highlight) are in `lib/ew_common.py`.
+element or its tag, the pick highlight) are in `lib/ew_common.py`; the windows and menus the addressing tools
+share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
 | lib/ew_common.py | v2 |
+| lib/addressing_ui.py | v1 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v2 |
-| Auto-Circuit | v8 |
+| Auto-Circuit | v9 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
 | lib/conduit_routing.py | v3 |
 | lib/clash_rules.py | v5 |
-| Address SLC | v8 |
+| Address SLC | v9 |
+| lib/slc_session.py | v1 |
 | Address SLC - Config | v4 |
-| lib/slc_addressing.py | v4 |
-| lib/slc_config_editor.py | v3 |
+| lib/slc_addressing.py | v5 |
+| lib/slc_config_editor.py | v4 |
 | Address NAC | v4 |
 | Address Voice | v4 |
-| lib/nac_voice_addressing.py | v4 |
+| lib/nac_voice_addressing.py | v6 |
 | Address NAC / Voice - Config | v4 |
-| lib/nac_voice_types.py | v7 |
+| lib/nac_voice_types.py | v9 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v33 |
 | SLC Riser - Config | v7 |
@@ -175,3 +178,7 @@ element or its tag, the pick highlight) are in `lib/ew_common.py`.
 | lib/riser_layout.py | v20 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
+| Device Shared Params | v1 |
+| Tag Shared Params | v1 |
+| Transfer Family Params | v1 |
+| lib/family_shared_params.py | v1 |

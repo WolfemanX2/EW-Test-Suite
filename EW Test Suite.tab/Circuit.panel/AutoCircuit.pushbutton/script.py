@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v8
-__title__ = "Auto-\nCircuit v8"
+# Auto-Circuit script - version v9
+__title__ = "Auto-\nCircuit v9"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
@@ -27,7 +27,7 @@ __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
 
 from pyrevit import revit, forms, script
 from Autodesk.Revit.DB import (
-    FilteredElementCollector, BuiltInCategory, ElementId,
+    BuiltInCategory, ElementId,
     Transaction, TransactionGroup, TransactionStatus, FamilyInstance, OverrideGraphicSettings
 )
 from Autodesk.Revit.DB.Electrical import Conduit
@@ -41,6 +41,7 @@ import nac_voice_types as nv     # Address NAC / Voice - Config and address form
 import slc_addressing as slc     # Address SLC - Config and address format (read only here)
 import conduit_trace as ct       # follows conduit from a device (shared with Address NAC / Voice)
 import conduit_routing as cr     # routing and settings shared with Auto Conduit (lib/conduit_routing.py)
+import addressing_ui as aui      # windows and menus shared with the addressing tools (lib/addressing_ui.py)
 from conduit_routing import (
     AVOID_EXISTING_CONDUIT, AVOID_MODEL_OBSTACLES, DEFAULT_ELEVATION_TEXT, DeviceOrTagFilter,
     HIGHLIGHT_PICKED, MARGIN, OPT_ADD_AGAIN, OPT_ADJUST, OPT_CANCEL, OPT_CANCEL_CHAIN, OPT_CLOSEST,
@@ -62,10 +63,7 @@ output = script.get_output()
 # ======================================================================================
 
 TITLE = "Auto-Circuit"
-FROM_SELECTED = "Continue from Selected"
-NEW_CIRCUIT = "New Circuit"
-FROM_EXISTING = "Continue from Existing Circuit"
-BUTTON_LIMIT = 10     # more choices than this -> searchable list instead of buttons
+FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING = aui.FROM_SELECTED, aui.NEW_CIRCUIT, aui.FROM_EXISTING
 PREVIEW_LIMIT = 25    # devices listed in the confirmation before anything is created
 AMP_TOLERANCE = 1e-6
 CIRCUIT_TYPES = ["NAC", "Voice", "SLC"]
@@ -77,24 +75,11 @@ OPT_FINISH_HERE = "Finished - create conduit without it"
 
 
 def all_devices():
-    found = []
-    for cat in nv.DEVICE_CATEGORIES:
-        found.extend(FilteredElementCollector(doc).OfCategory(cat)
-                     .WhereElementIsNotElementType().ToElements())
-    return found
+    return nv.all_devices(doc)
 
 
 def preselected_device():
-    """The one device selected (directly or by its tag) when the tool was started, or None."""
-    devices = {}
-    try:
-        for i in uidoc.Selection.GetElementIds():
-            el = resolve_element(doc.GetElement(i))
-            if el is not None and nv.is_device(el):
-                devices[eid(el)] = el
-    except Exception:
-        return None
-    return list(devices.values())[0] if len(devices) == 1 else None
+    return aui.preselected_device(doc, uidoc)
 
 
 def pick_addressed_device(prompt):
@@ -110,11 +95,7 @@ def pick_addressed_device(prompt):
         forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.", title=TITLE)
 
 
-def choose(options, message):
-    """One of options, or None. Buttons for a short list, a searchable list for a long one."""
-    if len(options) > BUTTON_LIMIT:
-        return forms.SelectFromList.show(options, title=message, button_name="Select", multiselect=False)
-    return forms.CommandSwitchWindow.show(options, message=message)
+choose = aui.choose                      # from addressing_ui
 
 
 def element_key(el):
@@ -144,121 +125,12 @@ def commit(t, work):
 # ======================================================================================
 
 
-def nv_address_on(el, kind):
-    """(source, circuit, number) written on a device for that kind, or None."""
-    p = nv.get_param(el, nv.PARAM_NAMES[kind]["address"])
-    if p is None:
-        return None
-    try:
-        return nv.parse_address(kind, p.AsString())
-    except Exception:
-        return None
+nv_address_on = nv.address_on           # from nac_voice_types
 
 
 def nv_scan_existing(kind):
     """{(power supply, circuit): highest device number} from the addresses already written."""
-    found = {}
-    for el in all_devices():
-        parsed = nv_address_on(el, kind)
-        if not parsed:
-            continue
-        key = (parsed[0], parsed[1])
-        if parsed[2] > found.get(key, 0):
-            found[key] = parsed[2]
-    return found
-
-
-NEW_CIRCUIT_XAML = """
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="New circuit"
-        SizeToContent="WidthAndHeight"
-        WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize"
-        Topmost="True">
-    <StackPanel Margin="16">
-        <TextBlock x:Name="msg_text" TextWrapping="Wrap" MaxWidth="340" Margin="0,0,0,12"/>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock x:Name="source_label" Width="240" VerticalAlignment="Center"/>
-            <TextBox x:Name="source_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Circuit number:" Width="240" VerticalAlignment="Center"/>
-            <ComboBox x:Name="circuit_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Starting device number:" Width="240" VerticalAlignment="Center"/>
-            <TextBox x:Name="start_box" Width="90"/>
-        </StackPanel>
-        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="340"
-                   Margin="0,0,0,10"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
-            <Button Content="Back" Width="80" IsCancel="True" Click="cancel_click"/>
-        </StackPanel>
-    </StackPanel>
-</Window>
-"""
-
-
-class NewCircuitDialog(forms.WPFWindow):
-    """Power supply, circuit and starting device number. self.result = (source, circuit, start) or None."""
-    def __init__(self, kind, existing):
-        forms.WPFWindow.__init__(self, NEW_CIRCUIT_XAML, literal_string=True)
-        self.kind = kind
-        self.existing = existing
-        self.result = None
-        name = nv.KIND_NAMES[kind]
-        self.Title = "%s - new %s circuit" % (TITLE, name)
-        self.msg_text.Text = ("%s Address = %s#-#.#  (%s - circuit . device order)"
-                              % (name, kind, nv.SOURCE_NAMES[kind]))
-        label = "%s number:" % nv.SOURCE_NAMES[kind]
-        self.source_label.Text = label[0].upper() + label[1:]
-        self.source_box.Text = "1"
-        for n in nv.CIRCUIT_RANGES[kind]:
-            self.circuit_box.Items.Add(str(n))
-        self.circuit_box.SelectedIndex = 0
-        self.start_box.Text = "1"
-        self.source_box.Focus()
-        self.source_box.SelectAll()
-
-    def _read(self, box, what, min_val):
-        text = (box.Text or "").strip()
-        if not text.isdigit() or int(text) < min_val:
-            self.error_text.Text = "%s must be a whole number, %d or higher." % (what, min_val)
-            box.Focus()
-            box.SelectAll()
-            return None
-        return int(text)
-
-    def ok_click(self, sender, args):
-        source = self._read(self.source_box, "The %s number" % nv.SOURCE_NAMES[self.kind], 0)
-        if source is None:
-            return
-        if self.circuit_box.SelectedItem is None:
-            self.error_text.Text = "Choose a circuit number."
-            return
-        circuit = int(str(self.circuit_box.SelectedItem))
-        start = self._read(self.start_box, "The starting device number", 1)
-        if start is None:
-            return
-        last = self.existing.get((source, circuit))
-        if last and start <= last:
-            go_on = forms.alert("%s already has addresses up to %s in this project. Starting at %s can create "
-                                "duplicate addresses.\n\nUse it anyway?"
-                                % (nv.fmt_circuit(self.kind, source, circuit),
-                                   nv.fmt_address(self.kind, source, circuit, last),
-                                   nv.fmt_address(self.kind, source, circuit, start)),
-                                title=self.Title, yes=True, no=True)
-            if not go_on:
-                self.error_text.Text = "Change the numbers, or press Back to choose something else."
-                return
-        self.result = (source, circuit, start)
-        self.Close()
-
-    def cancel_click(self, sender, args):
-        self.result = None
-        self.Close()
+    return nv.scan_existing(doc)[kind]
 
 
 LIMITS_XAML = """
@@ -453,7 +325,7 @@ class NotificationRun(object):
                 source, circuit, num = parsed
                 return {"source": source, "circuit": circuit, "next": num + 1, "resumed": True,
                         "from": nv.fmt_address(kind, source, circuit, num), "anchor": el}
-            dlg = NewCircuitDialog(kind, existing)     # New Circuit
+            dlg = aui.NewCircuitDialog(kind, existing, TITLE)     # New Circuit
             dlg.ShowDialog()
             if dlg.result is None:
                 continue
@@ -733,149 +605,6 @@ class NotificationRun(object):
 # SLC
 # ======================================================================================
 
-NEW_LOOP_XAML = """
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Auto-Circuit - New SLC Loop"
-        SizeToContent="WidthAndHeight"
-        WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize"
-        Topmost="True">
-    <StackPanel Margin="16">
-        <TextBlock TextWrapping="Wrap" MaxWidth="340" Margin="0,0,0,12"
-                   Text="Addresses are written as N#L#M000 for modules and N#L#D000 for detectors. Modules and detectors are counted separately."/>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="N# (number only):" Width="250" VerticalAlignment="Center"/>
-            <TextBox x:Name="n_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="L# (number only):" Width="250" VerticalAlignment="Center"/>
-            <TextBox x:Name="l_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Starting MODULE number (M):" Width="250" VerticalAlignment="Center"/>
-            <TextBox x:Name="module_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Starting DETECTOR number (D):" Width="250" VerticalAlignment="Center"/>
-            <TextBox x:Name="detector_box" Width="90"/>
-        </StackPanel>
-        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="340"
-                   Margin="0,0,0,10"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
-            <Button Content="Back" Width="80" IsCancel="True" Click="cancel_click"/>
-        </StackPanel>
-    </StackPanel>
-</Window>
-"""
-
-
-class NewLoopDialog(forms.WPFWindow):
-    """N#, L# and the two starting numbers. self.result = (n, l, start module, start detector), or None."""
-    def __init__(self):
-        forms.WPFWindow.__init__(self, NEW_LOOP_XAML, literal_string=True)
-        self.result = None
-        for box in (self.n_box, self.l_box, self.module_box, self.detector_box):
-            box.Text = "1"
-        self.n_box.Focus()
-        self.n_box.SelectAll()
-
-    def _read(self, box, what, max_val):
-        text = (box.Text or "").strip()
-        if text.isdigit() and (max_val is None or int(text) <= max_val):
-            return int(text)
-        if max_val is None:
-            self.error_text.Text = "%s must be a whole number." % what
-        else:
-            self.error_text.Text = "%s must be a whole number from 0 to %d." % (what, max_val)
-        box.Focus()
-        box.SelectAll()
-        return None
-
-    def ok_click(self, sender, args):
-        values = []
-        for box, what, max_val in ((self.n_box, "N#", None), (self.l_box, "L#", None),
-                                   (self.module_box, "The starting module number", slc.MAX_NUMBER),
-                                   (self.detector_box, "The starting detector number", slc.MAX_NUMBER)):
-            value = self._read(box, what, max_val)
-            if value is None:
-                return
-            values.append(value)
-        self.result = tuple(values)
-        self.Close()
-
-    def cancel_click(self, sender, args):
-        self.result = None
-        self.Close()
-
-
-COUNT_XAML = """
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Auto-Circuit - SLC addresses"
-        SizeToContent="WidthAndHeight"
-        WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize"
-        Topmost="True">
-    <StackPanel Margin="16">
-        <TextBlock x:Name="msg_text" TextWrapping="Wrap" MaxWidth="400" Margin="0,0,0,10"/>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Address kind:" Width="170" VerticalAlignment="Center"/>
-            <ComboBox x:Name="kind_box" MinWidth="110"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
-            <TextBlock x:Name="count_label" Text="Addresses to fill:" Width="170" VerticalAlignment="Center"/>
-            <ComboBox x:Name="count_box" MinWidth="110"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="OK" Width="84" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
-            <Button Content="Don't Address" Width="100" IsCancel="True" Click="skip_click"/>
-        </StackPanel>
-    </StackPanel>
-</Window>
-"""
-
-
-class CountDialog(forms.WPFWindow):
-    """How many addresses to fill on a device and, when allowed, which kind (as in Address SLC).
-    choices = [(label or None, count)]. self.result = (count, kind, label or None), or None."""
-    def __init__(self, message, choices, default_count, default_kind, lock_kind, count_label):
-        forms.WPFWindow.__init__(self, COUNT_XAML, literal_string=True)
-        self.result = None
-        self.choices = choices
-        self.msg_text.Text = message
-        if count_label:
-            self.count_label.Text = count_label
-        for kind in slc.KINDS:
-            self.kind_box.Items.Add(slc.KIND_LABELS[kind])
-        self.kind_box.SelectedIndex = slc.KINDS.index(default_kind)
-        self.kind_box.IsEnabled = not lock_kind
-        index, fallback = -1, 0
-        for i, (label, count) in enumerate(choices):
-            if label is None:
-                self.count_box.Items.Add(str(count))
-                if count <= default_count:
-                    fallback = i
-            else:
-                self.count_box.Items.Add(slc.option_display(label, count))
-            if index < 0 and count == default_count:
-                index = i
-        self.count_box.SelectedIndex = index if index >= 0 else fallback
-        self.count_box.Focus()
-
-    def ok_click(self, sender, args):
-        i = self.count_box.SelectedIndex
-        if i < 0:
-            return
-        label, count = self.choices[i]
-        self.result = (count, slc.KINDS[max(self.kind_box.SelectedIndex, 0)], label)
-        self.Close()
-
-    def skip_click(self, sender, args):
-        self.result = None
-        self.Close()
-
 
 class SlcRun(object):
     """An SLC loop, addressed as Address SLC does: each Family : Type by its rule in Address SLC - Config,
@@ -946,7 +675,7 @@ class SlcRun(object):
                 resumed = "element %d (M%s / D%s next)" % (eid(anchor), slc.fmt_number(picked[2]),
                                                            slc.fmt_number(picked[3]))
             elif choice == NEW_CIRCUIT:
-                dlg = NewLoopDialog()
+                dlg = aui.NewLoopDialog("Auto-Circuit - New SLC Loop", "Back")
                 dlg.ShowDialog()
                 if dlg.result is None:
                     continue
@@ -1178,7 +907,8 @@ class SlcRun(object):
             default_count = self.last_choice[key][0]
             if not lock_kind:
                 default_kind = self.last_choice[key][1]
-        dlg = CountDialog(message, choices, default_count, default_kind, lock_kind, count_label)
+        dlg = aui.CountDialog(message, choices, default_count, default_kind, lock_kind, count_label,
+                              title="Auto-Circuit - SLC addresses", skip_text="Don't Address", skip_width=100)
         dlg.ShowDialog()
         if dlg.result is None:
             return None

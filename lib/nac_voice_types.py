@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v8
+# nac_voice_types module - version v9
 # Change log (last change first):
+#   v9 - Code consolidation step 5 (Auto-Circuit v9): all_devices, address_on and scan_existing (the devices
+#        already addressed), moved here from nac_voice_addressing so Auto-Circuit shares them.
 #   v8 - Address NAC v4 / Address Voice v4 / Auto-Circuit v8 / Address NAC / Voice - Config v4: Head End
 #        device type (never addressed) and type_options().
 #   v7 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORIES come
 #        from ew_common.
 #   v6 - Address NAC v1 / Address Voice v1: Address NAC / Voice split into two tools.
 #   v5 - Address NAC / Voice v7: EOL current and voltage estimate in Comments.
-#   v4 - Address NAC / Voice v5: Voice circuits in Notification Circuit too.
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -17,7 +18,7 @@ import os
 import re
 import json
 
-from Autodesk.Revit.DB import StorageType
+from Autodesk.Revit.DB import StorageType, FilteredElementCollector
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 # Set this to a shared path (e.g. r"\\server\share\nac_voice_types.json") so everyone uses one table.
@@ -290,3 +291,44 @@ def save_table(table):
     data = dict((key, {"type": label}) for key, label in table.items())
     with open(path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)
+
+
+# ---------- Devices already addressed ----------
+def all_devices(doc):
+    """Every placed device (Fire Alarm Devices) in the model."""
+    found = []
+    for cat in DEVICE_CATEGORIES:
+        found.extend(FilteredElementCollector(doc).OfCategory(cat)
+                     .WhereElementIsNotElementType().ToElements())
+    return found
+
+
+def address_on(el, kind):
+    """(source, circuit, number) written on a device for that kind, or None."""
+    p = get_param(el, PARAM_NAMES[kind]["address"])
+    if p is None:
+        return None
+    try:
+        return parse_address(kind, p.AsString())
+    except Exception:
+        return None
+
+
+def scan_existing(doc):
+    """{"N": {(power supply, circuit): highest device number}, "V": {...}} from the addresses already written."""
+    found = dict((kind, {}) for kind in KINDS)
+    for el in all_devices(doc):
+        for kind in KINDS:
+            p = get_param(el, PARAM_NAMES[kind]["address"])
+            if p is None:
+                continue
+            try:
+                parsed = parse_address(kind, p.AsString())
+            except Exception:
+                parsed = None
+            if not parsed:
+                continue
+            key = (parsed[0], parsed[1])
+            if parsed[2] > found[kind].get(key, 0):
+                found[kind][key] = parsed[2]
+    return found

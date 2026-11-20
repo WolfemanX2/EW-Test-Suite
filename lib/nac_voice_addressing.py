@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v5
+# nac_voice_addressing module - version v6
 # Change log (last change first):
+#   v6 - Code consolidation step 5 (no tool change): the New Circuit window, choose, the start choices and the
+#        preselected device come from addressing_ui; the device scans from nac_voice_types.
 #   v5 - Address NAC v4 / Address Voice v4: Head End devices are never addressed (skipped when picked, passed
 #        over downstream, listed in the summary).
 #   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
@@ -8,7 +10,6 @@
 #   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
 #   v2 - Auto-Circuit v4, Address SLC v5, Address NAC v2, Address Voice v2: circuit choice menu (Continue
 #        from Selected / New Circuit / Continue from Existing Circuit).
-#   v1 - Address NAC v1 / Address Voice v1: shared session, split from Address NAC / Voice v7.
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -27,24 +28,20 @@ from pyrevit import revit, forms, script
 import nac_voice_types as nv
 import conduit_trace as ct
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import addressing_ui as aui     # shared addressing windows and menus
 
 doc = revit.doc
 uidoc = revit.uidoc
 output = script.get_output()
 
 TITLE = "Address NAC / Voice"   # set by main() to "Address NAC" / "Address Voice"
-BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
 PREVIEW_LIMIT = 25  # devices listed in the confirmation before a downstream run is addressed
 AMP_TOLERANCE = 1e-6
 
 
 # ---------- Devices and tags ----------
 def all_devices():
-    found = []
-    for cat in nv.DEVICE_CATEGORIES:
-        found.extend(FilteredElementCollector(doc).OfCategory(cat)
-                     .WhereElementIsNotElementType().ToElements())
-    return found
+    return nv.all_devices(doc)
 
 
 resolve_device = ec.resolve_device          # from ew_common
@@ -80,154 +77,21 @@ def save_table(table):
 
 # ---------- Existing address scan (resume) ----------
 def scan_existing():
-    """{"N": {(power supply, circuit): highest device number}, "V": {...}} from the addresses already written."""
-    found = dict((kind, {}) for kind in nv.KINDS)
-    for el in all_devices():
-        for kind in nv.KINDS:
-            p = nv.get_param(el, nv.PARAM_NAMES[kind]["address"])
-            if p is None:
-                continue
-            try:
-                parsed = nv.parse_address(kind, p.AsString())
-            except Exception:
-                parsed = None
-            if not parsed:
-                continue
-            key = (parsed[0], parsed[1])
-            if parsed[2] > found[kind].get(key, 0):
-                found[kind][key] = parsed[2]
-    return found
+    return nv.scan_existing(doc)
 
 
 # ---------- Prompts ----------
-def choose(options, message):
-    """One of options, or None. Buttons for a short list, a searchable list for a long one."""
-    if len(options) > BUTTON_LIMIT:
-        return forms.SelectFromList.show(options, title=message, button_name="Select", multiselect=False)
-    return forms.CommandSwitchWindow.show(options, message=message)
+choose = aui.choose                      # from addressing_ui
 
 
-NEW_CIRCUIT_XAML = """
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="New circuit"
-        SizeToContent="WidthAndHeight"
-        WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize"
-        Topmost="True">
-    <StackPanel Margin="16">
-        <TextBlock x:Name="msg_text" TextWrapping="Wrap" MaxWidth="340" Margin="0,0,0,12"/>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock x:Name="source_label" Width="240" VerticalAlignment="Center"/>
-            <TextBox x:Name="source_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Circuit number:" Width="240" VerticalAlignment="Center"/>
-            <ComboBox x:Name="circuit_box" Width="90"/>
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Starting device number:" Width="240" VerticalAlignment="Center"/>
-            <TextBox x:Name="start_box" Width="90"/>
-        </StackPanel>
-        <TextBlock x:Name="error_text" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="340"
-                   Margin="0,0,0,10"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click"/>
-            <Button Content="Back" Width="80" IsCancel="True" Click="cancel_click"/>
-        </StackPanel>
-    </StackPanel>
-</Window>
-"""
-
-
-class NewCircuitDialog(forms.WPFWindow):
-    """One window for a new circuit: power supply, circuit and starting device number.
-    self.result = (source, circuit, start), or None if the user went back."""
-    def __init__(self, kind, existing):
-        forms.WPFWindow.__init__(self, NEW_CIRCUIT_XAML, literal_string=True)
-        self.kind = kind
-        self.existing = existing
-        self.result = None
-        name = nv.KIND_NAMES[kind]
-        self.Title = "%s - new %s circuit" % (TITLE, name)
-        self.msg_text.Text = ("%s Address = %s#-#.#  (%s - circuit . device order)"
-                              % (name, kind, nv.SOURCE_NAMES[kind]))
-        label = "%s number:" % nv.SOURCE_NAMES[kind]
-        self.source_label.Text = label[0].upper() + label[1:]
-        self.source_box.Text = "1"
-        for n in nv.CIRCUIT_RANGES[kind]:
-            self.circuit_box.Items.Add(str(n))
-        self.circuit_box.SelectedIndex = 0
-        self.start_box.Text = "1"
-        self.source_box.Focus()
-        self.source_box.SelectAll()
-
-    def _read(self, box, what, min_val):
-        text = (box.Text or "").strip()
-        if not text.isdigit() or int(text) < min_val:
-            self.error_text.Text = "%s must be a whole number, %d or higher." % (what, min_val)
-            box.Focus()
-            box.SelectAll()
-            return None
-        return int(text)
-
-    def ok_click(self, sender, args):
-        source = self._read(self.source_box, "The %s number" % nv.SOURCE_NAMES[self.kind], 0)
-        if source is None:
-            return
-        if self.circuit_box.SelectedItem is None:
-            self.error_text.Text = "Choose a circuit number."
-            return
-        circuit = int(str(self.circuit_box.SelectedItem))
-        start = self._read(self.start_box, "The starting device number", 1)
-        if start is None:
-            return
-        last = self.existing.get((source, circuit))
-        if last and start <= last:
-            go_on = forms.alert("%s already has addresses up to %s in this project. Starting at %s can create "
-                                "duplicate addresses.\n\nUse it anyway?"
-                                % (nv.fmt_circuit(self.kind, source, circuit),
-                                   nv.fmt_address(self.kind, source, circuit, last),
-                                   nv.fmt_address(self.kind, source, circuit, start)),
-                                title=self.Title, yes=True, no=True)
-            if not go_on:
-                self.error_text.Text = "Change the numbers, or press Back to choose something else."
-                return
-        self.result = (source, circuit, start)
-        self.Close()
-
-    def cancel_click(self, sender, args):
-        self.result = None
-        self.Close()
-
-
-def address_on(el, kind):
-    """(source, circuit, number) written on a device for that kind, or None."""
-    p = nv.get_param(el, nv.PARAM_NAMES[kind]["address"])
-    if p is None:
-        return None
-    try:
-        return nv.parse_address(kind, p.AsString())
-    except Exception:
-        return None
+address_on = nv.address_on              # from nac_voice_types
 
 
 def preselected_device():
-    """The one device selected (directly or by its tag) when the tool was started, or None."""
-    devices = {}
-    try:
-        for eid in uidoc.Selection.GetElementIds():
-            el = resolve_device(doc.GetElement(eid))
-            if el is not None:
-                devices[nv.eid_int(el.Id)] = el
-    except Exception:
-        return None
-    return list(devices.values())[0] if len(devices) == 1 else None
+    return aui.preselected_device(doc, uidoc)
 
 
-FROM_SELECTED = "Continue from Selected"
-NEW_CIRCUIT = "New Circuit"
-FROM_EXISTING = "Continue from Existing Circuit"
+FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING = aui.FROM_SELECTED, aui.NEW_CIRCUIT, aui.FROM_EXISTING
 
 
 def choose_circuit(kind, existing, preselected, allow_skip=False):
@@ -283,7 +147,7 @@ def choose_circuit(kind, existing, preselected, allow_skip=False):
                     "from": nv.fmt_address(kind, source, circuit, num), "anchor": el}
 
         if choice == NEW_CIRCUIT:
-            dlg = NewCircuitDialog(kind, existing)
+            dlg = aui.NewCircuitDialog(kind, existing, TITLE)
             dlg.ShowDialog()
             if dlg.result is None:
                 continue    # back to the list
