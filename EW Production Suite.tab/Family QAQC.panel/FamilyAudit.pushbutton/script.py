@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v1
-__title__ = "Family\nAudit v1"
-__doc__ = ("Lists the loaded families of the chosen categories with their number of types and the shared "
+# Family Audit script - version v2
+# v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
+#      parameter files but matching one there by name are swapped for it and the families saved to a folder
+__title__ = "Family\nAudit v2"
+__doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
-           "parameters that have the same name but different GUIDs. Results can be saved as a CSV file.")
+           "parameters that have the same name but different GUIDs. Results can be saved as a CSV file. Shared "
+           "parameters not found in any file, but with a parameter of the same name in one, can then be remapped "
+           "to that file's parameter, and the changed families saved to a folder you pick.")
 
 import os
 from collections import OrderedDict
 from pyrevit import revit, forms, script
-from Autodesk.Revit.DB import FilteredElementCollector, SharedParameterElement
-from family_qaqc import natural, loaded_by_category, read_shared_param_file     # lib/family_qaqc.py
+from Autodesk.Revit.DB import FilteredElementCollector, SharedParameterElement, Transaction, SaveAsOptions
+from family_qaqc import (natural, loaded_by_category, read_shared_param_file,     # lib/family_qaqc.py
+                         SharedFileSwitch, remap_to_shared)
 import config_store                                                              # lib/config_store.py
 
 TITLE = "Family Audit"
@@ -60,15 +65,17 @@ def pick_files():
 
 
 def guid_index(files):
-    """{guid: [(file name, parameter name in that file)]} and [(file name, error)] for files that couldn't be read."""
-    index, errors = {}, []
+    """({guid: [(file name, parameter name in that file)]}, {parameter name: [(file path, guid)]}, and
+    [(file name, error)] for files that couldn't be read."""
+    index, by_name, errors = {}, {}, []
     for path in files:
         try:
             for g, (name, _grp) in read_shared_param_file(path).items():
                 index.setdefault(g, []).append((os.path.basename(path), name))
+                by_name.setdefault(name, []).append((path, g))
         except Exception as ex:
             errors.append((os.path.basename(path), str(ex)))
-    return index, errors
+    return index, by_name, errors
 
 
 def file_text(guid, name, index):
@@ -110,21 +117,22 @@ class Item(forms.TemplateListItem):
 
 
 def pick_families(cats):
-    """[(category, family name, [FamilySymbol])] chosen by the user, or None if cancelled."""
-    names = sorted(cats, key=natural)
-    chosen = forms.SelectFromList.show([Item(c, "%s  (%d famil%s)" % (c, len(cats[c]), "y" if len(cats[c]) == 1
-                                                                       else "ies")) for c in names],
-                                       title=TITLE + " - Categories", button_name="Next", multiselect=True)
-    if not chosen:
+    """(category, [(family name, [FamilySymbol])]) chosen by the user, or None if cancelled. One category at a
+    time, picked the same way as in Family Placer."""
+    cat = forms.SelectFromList.show(sorted(cats, key=natural), title=TITLE + " - Category",
+                                    button_name="Next", multiselect=False)
+    if not cat:
         return None
-    rows = [(c, f, cats[c][f]) for c in names if c in chosen for f in sorted(cats[c], key=natural)]
-    if len(rows) > 1:
-        picked = forms.SelectFromList.show([Item(i, "%s  (%s)" % (r[1], r[0])) for i, r in enumerate(rows)],
-                                           title=TITLE + " - Families", button_name="Audit", multiselect=True)
+    fams = cats[cat]
+    names = sorted(fams, key=natural)
+    if len(names) > 1:
+        picked = forms.SelectFromList.show(
+            [Item(n, "%s  (%d type%s)" % (n, len(fams[n]), "" if len(fams[n]) == 1 else "s")) for n in names],
+            title=TITLE + " - Families in " + cat, button_name="Audit", multiselect=True)
         if not picked:
             return None
-        rows = [rows[i] for i in sorted(picked)]
-    return rows
+        names = [n for n in names if n in picked]
+    return cat, [(n, fams[n]) for n in names]
 
 
 # ---------- Results ----------
@@ -149,28 +157,147 @@ def save_csv(results):
     forms.alert("Saved:\n" + path, title=TITLE)
 
 
+# ---------- Remapping to the shared parameter file ----------
+def remap_candidates(results, index, by_name):
+    """[(result, guid, name, file path, file guid)] for each family parameter whose GUID is in none of the files
+    but whose name is: one entry per file that has that name."""
+    out = []
+    for r in results:
+        for g, (name, kind) in (r["params"] or {}).items():
+            if g in index or kind == NOT_FAMILY_PARAM:
+                continue
+            for path, fg in by_name.get(name, []):
+                out.append((r, g, name, path, fg))
+    return out
+
+
+def pick_remaps(cands):
+    """The remaps the user ticks (only the first file ticked for a parameter is used), or None if cancelled."""
+    items = [Item(i, "%s : %s  ->  %s" % (c[0]["family"], c[2], os.path.basename(c[3])))
+             for i, c in enumerate(cands)]
+    picked = forms.SelectFromList.show(items, title=TITLE + " - Remap to shared parameter file",
+                                       button_name="Remap", multiselect=True)
+    if not picked:
+        return None
+    chosen, seen = [], set()
+    for i in sorted(picked):
+        c = cands[i]
+        key = (c[0]["family"], c[1])
+        if key not in seen:
+            seen.add(key)
+            chosen.append(c)
+    return chosen
+
+
+def remap(results, index, by_name, out):
+    """Follow-up step: offers to swap 'Not found' parameters for the same-named parameter in a shared parameter
+    file, then saves the changed families to a folder the user picks."""
+    cands = remap_candidates(results, index, by_name)
+    if not cands:
+        return
+    if not forms.alert("%d shared parameter%s not found in the files %s a parameter of the same name in one.\n\n"
+                       "Remap them to the shared parameter file?" % (
+                           len(cands), "" if len(cands) == 1 else "s", "has" if len(cands) == 1 else "have"),
+                       title=TITLE, yes=True, no=True):
+        return
+    chosen = pick_remaps(cands)
+    if not chosen:
+        return
+    folder = forms.pick_folder(title="Folder to save the updated families in")
+    if not folder:
+        return
+
+    by_family = OrderedDict()
+    for c in chosen:
+        by_family.setdefault(c[0]["family"], []).append(c)
+    existing = [f for f in by_family if os.path.exists(os.path.join(folder, f + ".rfa"))]
+    if existing and not forms.alert("%d famil%s already in that folder:\n%s\n\nOverwrite?" % (
+            len(existing), "y is" if len(existing) == 1 else "ies are", "\n".join(existing[:15])),
+            title=TITLE, yes=True, no=True):
+        return
+
+    report = []
+    files = SharedFileSwitch(app)
+    try:
+        with forms.ProgressBar(title="Remapping families ({value} of {max_value})") as pb:
+            for n, (fam_name, items) in enumerate(by_family.items()):
+                pb.update_progress(n, len(by_family))
+                report += remap_family(items[0][0]["fam"], fam_name, items, files, folder)
+            pb.update_progress(len(by_family), len(by_family))
+    finally:
+        files.close()
+
+    out.print_md("### Remapped to the shared parameter file")
+    out.print_md("Saved to `%s`. The families in this project are unchanged: load the saved files to update them."
+                 % folder)
+    out.print_table(report, columns=["Family", "Parameter", "Shared Parameter File", "Result"])
+
+
+def remap_family(fam, fam_name, items, files, folder):
+    """Remaps one family's parameters and saves it to folder. Returns report rows."""
+    rows = []
+    try:
+        fdoc = doc.EditFamily(fam)
+    except Exception as ex:
+        return [[fam_name, c[2], os.path.basename(c[3]), "Couldn't open: %s" % ex] for c in items]
+    try:
+        params = dict((str(p.GUID).lower(), p) for p in fdoc.FamilyManager.Parameters if p.IsShared)
+        done = 0
+        t = Transaction(fdoc, "Remap shared parameters")
+        t.Start()
+        for _r, g, name, path, fg in sorted(items, key=lambda c: c[3]):    # one file switch per file
+            fname = os.path.basename(path)
+            try:
+                d = files.definition(path, fg)
+                if d is None:
+                    raise Exception("not found in the file")
+                if g not in params:
+                    raise Exception("not in the family any more")
+                remap_to_shared(fdoc, params[g], d)
+                done += 1
+                rows.append([fam_name, name, fname, "Remapped"])
+            except Exception as ex:
+                rows.append([fam_name, name, fname, "Not remapped: %s" % ex])
+        if done:
+            t.Commit()
+            opts = SaveAsOptions()
+            opts.OverwriteExistingFile = True
+            path = os.path.join(folder, fam_name + ".rfa")
+            fdoc.SaveAs(path, opts)
+            rows.append([fam_name, "", "", "Saved %s" % os.path.basename(path)])
+        else:
+            t.RollBack()
+            rows.append([fam_name, "", "", "Nothing changed, not saved"])
+    except Exception as ex:
+        rows.append([fam_name, "", "", "Failed: %s" % ex])
+    finally:
+        fdoc.Close(False)
+    return rows
+
+
 def main():
     cats = loaded_by_category(doc, include_tags=True)
     if not cats:
         forms.alert("No loaded families in this model.", title=TITLE)
         return
-    rows = pick_families(cats)
-    if not rows:
+    picked = pick_families(cats)
+    if not picked:
         return
+    cat, rows = picked
     files = pick_files()
     if files is None:
         return
-    index, file_errors = guid_index(files)
+    index, by_name, file_errors = guid_index(files)
 
     results, cancelled = [], False
     with forms.ProgressBar(title="Reading families ({value} of {max_value})", cancellable=True) as pb:
-        for i, (cat, fam_name, symbols) in enumerate(rows):
+        for i, (fam_name, symbols) in enumerate(rows):
             if pb.cancelled:
                 cancelled = True
                 break
             fam = symbols[0].Family
             r = {"category": cat, "family": fam_name, "types": len(symbols), "params": None, "note": "",
-                 "files": {}}
+                 "files": {}, "fam": fam}
             if not fam.IsEditable:
                 r["note"] = "Can't be opened for editing"
             else:
@@ -186,7 +313,7 @@ def main():
 
     out = script.get_output()
     out.set_title(TITLE)
-    out.print_md("## Family Audit - %s" % doc.Title)
+    out.print_md("## Family Audit - %s - %s" % (doc.Title, cat))
     out.print_md("Checked against: %s" % (", ".join("`%s`" % os.path.basename(p) for p in files) or
                                           "**no shared parameter file** (every parameter shows as Not found)"))
     for f, err in file_errors:
@@ -201,8 +328,8 @@ def main():
             where = "<br>".join(r["files"][g] for g in r["params"])
         else:
             names, where = r["note"], ""
-        table.append([r["family"], r["category"], str(r["types"]), names, where])
-    out.print_table(table, columns=["Family", "Category", "Types", "Shared Parameters", "Shared Parameter File"])
+        table.append([r["family"], str(r["types"]), names, where])
+    out.print_table(table, columns=["Family", "Types", "Shared Parameters", "Shared Parameter File"])
     out.print_md("\\* in the family but not one of its Family Types parameters (used by a label or a nested "
                  "family).")
 
@@ -222,6 +349,9 @@ def main():
 
     if results and forms.alert("Save the results as a CSV file?", title=TITLE, yes=True, no=True):
         save_csv(results)
+
+    if not cancelled:
+        remap(results, index, by_name, out)
 
 
 if __name__ == "__main__":

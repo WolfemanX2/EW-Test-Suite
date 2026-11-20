@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# family_qaqc module - version v1
+# family_qaqc module - version v2
 # Change log (last change first):
+#   v2 - Family Audit v2: SharedFileSwitch (open any shared parameter file through Revit and put the user's setting
+#        back) and remap_to_shared (swap a family parameter for the matching shared parameter).
 #   v1 - Family Audit v1 / Family Placer v4: loaded families by category (moved here from Family Placer) and
 #        reading shared parameter files by GUID.
 """Shared code for the Family QAQC tools (Family Placer, Family Audit). Check here before writing a new one.
@@ -9,6 +11,9 @@ natural                  sort key that puts 'Type 2' before 'Type 10'
 loaded_by_category       {category: {family: [FamilySymbol]}} for every loaded, loadable family
 read_shared_param_file   {guid: (name, group)} from a shared parameter file, read as text (Revit's setting is
                          left alone)
+SharedFileSwitch         get an ExternalDefinition from any shared parameter file; restores Revit's setting on close
+remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values
+                         and formulas
 """
 import re
 import codecs
@@ -67,3 +72,55 @@ def read_shared_param_file(path):
         elif cols[0] == "PARAM" and len(cols) >= 6:
             params.append((cols[1].strip().lower(), cols[2].strip(), cols[5].strip()))
     return dict((g, (n, groups.get(grp, ""))) for g, n, grp in params)
+
+
+class SharedFileSwitch(object):
+    """Revit only reads the shared parameter file named in its settings. This points it at each file in turn and
+    puts the user's setting back on close() (use in try/finally)."""
+
+    def __init__(self, app):
+        self.app = app
+        self.original = app.SharedParametersFilename
+        self.current = None
+        self.file = None
+
+    def definition(self, path, guid):
+        """ExternalDefinition with that GUID in the file at path, or None."""
+        if path != self.current:
+            self.app.SharedParametersFilename = path
+            self.file = self.app.OpenSharedParameterFile()
+            self.current = path
+        if self.file is None:
+            return None
+        for g in self.file.Groups:
+            for d in g.Definitions:
+                if str(d.GUID).lower() == guid:
+                    return d
+        return None
+
+    def close(self):
+        try:
+            if self.app.SharedParametersFilename != self.original:
+                self.app.SharedParametersFilename = self.original or ""
+        except Exception:
+            pass
+
+
+def _group(param):
+    try:
+        return param.Definition.GetGroupTypeId()     # Revit 2022+
+    except Exception:
+        return param.Definition.ParameterGroup      # older
+
+
+def remap_to_shared(fdoc, param, definition):
+    """Replaces the family parameter param with the shared parameter definition, in an open transaction of the
+    family document fdoc. Keeps Instance / Type, the group, values and formulas. Returns the new FamilyParameter.
+    A shared parameter can't be swapped straight for another of the same name, so it is first turned into a
+    plain family parameter under a temporary name."""
+    fm = fdoc.FamilyManager
+    group = _group(param)
+    instance = param.IsInstance
+    if param.IsShared:
+        param = fm.ReplaceParameter(param, param.Definition.Name + "__remap_tmp", group, instance)
+    return fm.ReplaceParameter(param, definition, group, instance)
