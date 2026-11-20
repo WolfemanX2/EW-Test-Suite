@@ -4,13 +4,17 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 
 Every tool's settings window lives in the **Tool Configs** drop-down (its own panel at the end of the tab) and is named `<Tool Name> - Config`.
 
+Tools being replaced are kept in the **Obsolete** panel at the end of the tab, in three drop-downs:
+**Addressing and Conduit Tools** (Auto Conduit, Auto-Circuit, Address SLC, Address NAC, Address Voice),
+**Template Cleanup** (Line Nuke, Consolidate Text Styles) and **Parameter Tools** (the family parameter tools).
+
 ## Tools
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Conduit.panel/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Conduit.panel/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
 - Automatically draws conduit between devices in order of selection.
 - **Auto Conduit - Config:** sets each family's mounting (Wall/Ceiling) and conduit type
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Circuit.panel/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Circuit.panel/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
 - Draws conduit between devices and addresses them based on order of selection. It can also insert new devices into an existing circuit and renumber the devices after them.
 - **Auto Conduit - Config**, **Address SLC - Config** and **Address NAC / Voice - Config:** Auto-Circuit uses their settings and has no config of its own
 
@@ -18,15 +22,15 @@ Every tool's settings window lives in the **Tool Configs** drop-down (its own pa
 - Checks selected elements for clashes with MEP and structural elements in loaded Revit links and lists them in a results window with statuses. Auto Fix can shift or jog a clashing conduit to clear it.
 - **Link Clash - Config:** sets the distances and allowed fixes that Auto Fix uses
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Addressing.panel/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Addressing.panel/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
 - Fills in the SLC addresses of devices in the order you select them. It can also address them automatically by following the conduit downstream from a selected device.
 - **Address SLC - Config:** sets the address rules for each device type; types set to **Head End** (panel, power supplies) are never addressed
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Addressing.panel/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Addressing.panel/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
 - Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Current and estimated Circuit Voltage.
 - **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Addressing.panel/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Addressing.panel/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
 - Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Wattage.
 - **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
 
@@ -38,19 +42,19 @@ Every tool's settings window lives in the **Tool Configs** drop-down (its own pa
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
 - **Auto Conduit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Project%20Cleanup.panel/LineNuke.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Project%20Cleanup.panel/LineNuke.pushbutton/icon.png" width="32" height="32" alt=""></picture> Line Nuke
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.png" width="32" height="32" alt=""></picture> Line Nuke
 - Creates the 15 standard "Detail Line - Color - Size" line styles and merges any line styles with the same color, weight and pattern into them.
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Project%20Cleanup.panel/ConsolidateTextStyles.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Project%20Cleanup.panel/ConsolidateTextStyles.pushbutton/icon.png" width="32" height="32" alt=""></picture> Consolidate Text Styles
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/ConsolidateTextStyles.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/ConsolidateTextStyles.pushbutton/icon.png" width="32" height="32" alt=""></picture> Consolidate Text Styles
 - Merges text styles that have the same text size into one style per size and renames it by size, font and modifiers (e.g. 1/8" Arial Bold).
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Families.panel/DeviceSharedParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Families.panel/DeviceSharedParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Device Shared Params
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/DeviceSharedParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/DeviceSharedParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Device Shared Params
 - Adds a batch of shared parameters to device families, either the family open in the Family Editor or families picked from the project.
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Families.panel/TagSharedParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Families.panel/TagSharedParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Tag Shared Params
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/TagSharedParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/TagSharedParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Tag Shared Params
 - Adds a batch of shared parameters to tag families, either for use in labels or as parameters of the tag itself.
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Families.panel/TransferFamilyParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Families.panel/TransferFamilyParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Transfer Family Params
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/TransferFamilyParams.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Parameter%20Tools.pulldown/TransferFamilyParams.pushbutton/icon.png" width="32" height="32" alt=""></picture> Transfer Family Params
 - Copies the parameters you choose, with their formulas and values if you want, from one open family to one or more other open families.
 
 ## Install

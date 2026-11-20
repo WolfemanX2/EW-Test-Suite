@@ -1,10 +1,6 @@
 layout:
-  - Conduit
-  - Circuit
   - Clash
-  - Addressing
   - Riser
   - Coverage
-  - Project Cleanup
-  - Families
   - Tool Configs
+  - Obsolete
