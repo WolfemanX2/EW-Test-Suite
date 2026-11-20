@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-# Family Placer script - version v1
-__title__ = "Family\nPlacer v1"
+# Family Placer script - version v2
+# v2 - text labels: family name to the left of each row, type name above each instance
+__title__ = "Family\nPlacer v2"
 __doc__ = ("Places one of every loaded type of a chosen category in a grid, like a table: each row is a family "
            "and each column is one of that family's types. Pick the category, the families to include, the "
-           "spacing (6 ft by default) and the top-left corner of the grid in a plan view. Families that need a "
+           "spacing (6 ft by default) and the top-left corner of the grid in a plan view. Each row is labeled with its family name and each instance with its type name, using the project's default text type. Families that need a "
            "host (wall, ceiling, etc.) or a curve are skipped and listed at the end.")
 
 import re
 from pyrevit import revit, forms
 from Autodesk.Revit.DB import (
     XYZ, FilteredElementCollector, FamilySymbol, FamilyPlacementType, CategoryType, ViewPlan,
-    Transaction, SubTransaction, ElementId
+    Transaction, SubTransaction, ElementId, ElementTypeGroup, TextNote, TextNoteType, TextNoteOptions,
+    HorizontalTextAlignment, VerticalTextAlignment
 )
 from Autodesk.Revit.DB.Structure import StructuralType
 from Autodesk.Revit.UI.Selection import ObjectSnapTypes
@@ -99,6 +101,32 @@ def ask_spacing():
         forms.alert("Couldn't read '%s' as a distance. Try 6, 6', 72\" or 4'-6\"." % text, title=TITLE)
 
 
+# ---------- Labels ----------
+def text_type_id():
+    """The project's default text type, or any text type. None if there are none."""
+    tid = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType)
+    if tid is not None and tid != ElementId.InvalidElementId:
+        return tid
+    tt = FilteredElementCollector(doc).OfClass(TextNoteType).FirstElement()
+    return tt.Id if tt is not None else None
+
+
+def label(view, pt, text, type_id, h_align, v_align, width=None):
+    """A text note in view at pt. width is in model feet (wraps the text); None for no wrapping."""
+    opts = TextNoteOptions(type_id)
+    opts.HorizontalAlignment = h_align
+    try:
+        opts.VerticalAlignment = v_align
+    except Exception:
+        pass
+    if width:
+        try:
+            return TextNote.Create(doc, view.Id, pt, width / float(view.Scale), text, opts)
+        except Exception:
+            pass        # narrower than Revit allows: fall back to a note that doesn't wrap
+    return TextNote.Create(doc, view.Id, pt, text, opts)
+
+
 # ---------- Placing ----------
 def place(symbol, pt, level, level_ref, view):
     """Places one instance of symbol at pt. Returns the new instance; raises with the reason if it can't."""
@@ -173,6 +201,10 @@ def main():
 
     placed = List[ElementId]()
     skipped = []
+    labels = [0]
+    label_errors = []
+    tid = text_type_id()
+    up = down.Negate()
 
     def work():
         for row, fam_name in enumerate(names):
@@ -190,6 +222,21 @@ def main():
                 except Exception as ex:
                     st.RollBack()
                     skipped.append("%s : %s - %s" % (fam_name, type_name(sym), ex))
+                    continue
+                if tid is not None:         # type name just above the instance, wrapped to fit its column
+                    try:
+                        label(view, pt + up.Multiply(spacing * 0.3), type_name(sym), tid,
+                              HorizontalTextAlignment.Center, VerticalTextAlignment.Bottom, spacing * 0.9)
+                        labels[0] += 1
+                    except Exception as ex:
+                        label_errors.append(str(ex))
+            if tid is not None:             # family name to the left of the row
+                try:
+                    row_pt = origin + down.Multiply(row * spacing) - right.Multiply(spacing * 0.6)
+                    label(view, row_pt, fam_name, tid, HorizontalTextAlignment.Right, VerticalTextAlignment.Middle)
+                    labels[0] += 1
+                except Exception as ex:
+                    label_errors.append(str(ex))
 
     err = commit(Transaction(doc, TITLE), work)
     if err:
@@ -204,6 +251,13 @@ def main():
     msg = "Placed %d instance%s of %d famil%s in %s at %s spacing." % (
         placed.Count, "" if placed.Count == 1 else "s", len(names), "y" if len(names) == 1 else "ies", cat,
         feet_text(spacing))
+    if labels[0]:
+        msg += "\nAdded %d text label%s." % (labels[0], "" if labels[0] == 1 else "s")
+    if tid is None:
+        msg += "\nNo labels were added: this project has no text types."
+    elif label_errors:
+        msg += "\n%d label%s couldn't be added (%s)." % (len(label_errors), "" if len(label_errors) == 1 else "s",
+                                                       label_errors[0])
     if skipped:
         shown = skipped[:25]
         more = "\n...and %d more" % (len(skipped) - 25) if len(skipped) > 25 else ""

@@ -13,7 +13,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 ## Tools
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Family%20QAQC.panel/FamilyPlacer.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Family%20QAQC.panel/FamilyPlacer.pushbutton/icon.png" width="32" height="32" alt=""></picture> Family Placer
-- Places one of every loaded type of a chosen category in a grid in the active plan view: one row per family, one column per type, 6 ft apart unless you enter another spacing. Families that need a host or a curve are skipped and listed.
+- Places one of every loaded type of a chosen category in a grid in the active plan view: one row per family, one column per type, 6 ft apart unless you enter another spacing. Each row is labeled with its family name and each instance with its type name. Families that need a host or a curve are skipped and listed.
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Routing%20and%20Addressing.panel/AutoCircuitSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Circuit - SLC - Configurable
 - Readdresses SLC devices manually or automatically along the conduit; Route Conduit and Reroute and Readdress are coming next.
