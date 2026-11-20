@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Link Clash script - version v11
-__title__ = "Link\nClash"
+# Link Clash script - version v12
+__title__ = "Link\nClash v12"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
            "When it finishes, the selected elements that clash are left selected and a results window "
@@ -34,6 +34,7 @@ from System.Windows.Controls.Primitives import Selector
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
+from ew_common import eid     # ElementId number helper (lib/ew_common.py)
 
 try:
     import clash_rules          # lib/clash_rules.py, edited with the Link Clash - Config tool
@@ -98,15 +99,6 @@ LINK_CATS = [               # categories tested inside the links
     # BuiltInCategory.OST_Columns,
 ]
 # ------------------------------------------
-
-
-def eid(x):
-    """Integer value of an ElementId (works across Revit versions)."""
-    i = x.Id if hasattr(x, "Id") else x
-    try:
-        return i.Value
-    except Exception:
-        return i.IntegerValue
 
 
 def describe(el):

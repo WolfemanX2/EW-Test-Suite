@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Consolidate Text Styles script - version v4
-__title__ = "Consolidate\nText Styles v4"
+# Consolidate Text Styles script - version v5
+__title__ = "Consolidate\nText Styles v5"
 __doc__ = ("Merges text styles that have the same text size into one style.\n\n"
            "Text styles are grouped by size (within a tolerance you enter as a fraction or decimal of an "
            "inch). Each group is merged into its most-used style: text notes and schedules using the "
@@ -14,6 +14,7 @@ __doc__ = ("Merges text styles that have the same text size into one style.\n\n"
 from collections import defaultdict
 
 from pyrevit import revit, DB, forms, script
+from ew_common import eid_int as id_val     # ElementId number helper (lib/ew_common.py)
 
 doc = revit.doc
 output = script.get_output()
@@ -25,11 +26,6 @@ SCHEDULE_TEXT_PROPS = ("BodyTextTypeId", "HeaderTextTypeId", "TitleTextTypeId")
 
 
 # --- helpers ---------------------------------------------------------------
-def id_val(eid):
-    try:
-        return eid.Value          # Revit 2024+
-    except AttributeError:
-        return eid.IntegerValue   # older versions
 
 
 def type_name(t):

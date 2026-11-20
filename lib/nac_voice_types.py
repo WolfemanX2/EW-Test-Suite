@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v6
+# nac_voice_types module - version v7
+# Change log (last change first):
+#   v7 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORIES come
+#        from ew_common.
+#   v6 - Address NAC v1 / Address Voice v1: Address NAC / Voice split into two tools.
+#   v5 - Address NAC / Voice v7: EOL current and voltage estimate in Comments.
+#   v4 - Address NAC / Voice v5: Voice circuits in Notification Circuit too.
+#   v3 - Address NAC / Voice v4: EOL flags, conduit circuit parameter, circuit number ranges.
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -9,7 +16,8 @@ import os
 import re
 import json
 
-from Autodesk.Revit.DB import BuiltInCategory, StorageType
+from Autodesk.Revit.DB import StorageType
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 # Set this to a shared path (e.g. r"\\server\share\nac_voice_types.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
@@ -18,7 +26,7 @@ TABLE_PATH = None
 LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
 
 # Categories the tools pick from and scan.
-DEVICE_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices]
+DEVICE_CATEGORIES = ec.DEVICE_CATEGORIES      # Fire Alarm Devices (lib/ew_common.py)
 
 # Kind codes: "N" = NAC, "V" = Voice. The code is also the letter the address starts with.
 KINDS = ["N", "V"]
@@ -127,23 +135,8 @@ def parse_address(kind, text):
 
 
 # ---------- Revit helpers ----------
-def eid_int(eid):
-    """Integer value of an ElementId in any Revit version."""
-    try:
-        return eid.Value            # Revit 2024+
-    except Exception:
-        return eid.IntegerValue     # older Revit
-
-
-def is_device(elem):
-    try:
-        cat = elem.Category
-        if cat is None:
-            return False
-        cid = eid_int(cat.Id)
-        return any(cid == int(c) for c in DEVICE_CATEGORIES)
-    except Exception:
-        return False
+eid_int = ec.eid_int            # from ew_common
+is_device = ec.is_device        # from ew_common
 
 
 def get_param(el, name):
@@ -249,13 +242,7 @@ def label_for_kinds(kinds):
     return NAC_ONLY if "N" in kinds else VOICE_ONLY
 
 
-def family_key(doc, el):
-    """'Family : Type' of an element, the key used in the table."""
-    try:
-        etype = doc.GetElement(el.GetTypeId())
-        return etype.FamilyName + " : " + etype.Name
-    except Exception:
-        return str(eid_int(el.GetTypeId()))
+family_key = ec.family_key      # from ew_common
 
 
 # ---------- Lookup table ----------

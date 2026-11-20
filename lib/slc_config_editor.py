@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_config_editor module - version v2
+# slc_config_editor module - version v3
+# Change log (last change first):
+#   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
+#   v2 - Address SLC - Config: the version in the repo when this log was started.
 """The Address SLC - Config window: editable table of the Family : Type rules used by Address SLC.
 Opened by the Address SLC - Config button and by Shift+Click on Address SLC."""
 import os
@@ -13,6 +16,7 @@ from Autodesk.Revit.DB import StorageType
 from pyrevit import forms
 
 import slc_addressing as slc
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 TITLE = "Address SLC - Config"
 KIND_BY_NAME = dict((name, kind) for kind, name in slc.KIND_NAMES.items())
@@ -77,7 +81,7 @@ def loaded_types_info(doc, family_cache):
         if fam is None:
             continue
         try:
-            key = s.FamilyName + " : " + s.Name
+            key = ec.type_key(s)
         except Exception:
             continue
         fams.setdefault(slc.eid_int(fam.Id), [fam, []])[1].append(key)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Coverage Checker script - version v2
-__title__ = "NAC\nCoverage v2"
+# NAC Coverage Checker script - version v3
+__title__ = "NAC\nCoverage v3"
 __doc__ = ("Checks visible (strobe) coverage with line of sight. Every Fire Alarm Device that has a candela value "
            "gets its NFPA 72 coverage square (wall or ceiling table), and a grid of points in each room is tested: "
            "a point is covered when it lies inside a strobe's square AND nothing in the model or the loaded links "
@@ -26,6 +26,7 @@ from Autodesk.Revit.DB import (
 )
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
+from ew_common import eid     # ElementId number helper (lib/ew_common.py)
 
 try:
     import mounting_rules          # lib/mounting_rules.py (Auto Conduit - Config)
@@ -99,14 +100,6 @@ def _api(name):
     """Analysis display classes live in DB in some Revit versions and DB.Analysis in others."""
     cls = getattr(DB, name, None)
     return cls if cls is not None else getattr(AN, name)
-
-
-def eid(x):
-    i = x.Id if hasattr(x, "Id") else x
-    try:
-        return i.Value
-    except Exception:
-        return i.IntegerValue
 
 
 def horiz(v):

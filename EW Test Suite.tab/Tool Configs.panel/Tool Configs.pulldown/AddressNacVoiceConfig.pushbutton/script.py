@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice - Config script - version v2
-__title__ = "Address NAC / Voice - Config v2"
+# Address NAC / Voice - Config script - version v3
+__title__ = "Address NAC / Voice - Config v3"
 __doc__ = ("Editable table of the Family : Type rules used by Address NAC / Voice. Each type is NAC Only, "
            "Voice Only, or NAC and Voice.\n\n"
            "'Add Types From Project' lists ALL loaded Fire Alarm Device types, including families that have "
@@ -14,6 +14,7 @@ from Autodesk.Revit.DB import StorageType, FilteredElementCollector
 from pyrevit import revit, forms
 
 import nac_voice_types as nv
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 doc = revit.doc
 TITLE = "Address NAC / Voice - Config"
@@ -81,7 +82,7 @@ def loaded_types_info(family_cache):
         if fam is None:
             continue
         try:
-            key = s.FamilyName + " : " + s.Name
+            key = ec.type_key(s)
         except Exception:
             continue
         fams.setdefault(nv.eid_int(fam.Id), [fam, []])[1].append(key)

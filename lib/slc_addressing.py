@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v3
+# slc_addressing module - version v4
 # Change log (last change first):
+#   v4 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORY come from
+#        ew_common.
 #   v3 - Code consolidation step 2 (Address SLC v6): eid_int, conduit_connectors, connected_elements,
 #        element_type_name and trace_downstream now come from conduit_trace (one copy, with SLC Riser's
 #        tee rule) instead of a copy here.
@@ -24,9 +26,10 @@ import re
 import json
 import shutil
 
-from Autodesk.Revit.DB import BuiltInCategory, StorageType, FilteredElementCollector
+from Autodesk.Revit.DB import StorageType, FilteredElementCollector
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 # Set this to a shared path (e.g. r"\\server\share\AddressCounts.json") so everyone edits one table.
 # Leave as None for a per-user file in %APPDATA% (recommended together with a default config).
@@ -37,7 +40,7 @@ DEFAULT_CONFIG = os.path.join(EXTENSION_DIR, "config", "address_config.default.j
 LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyTools")
 REMEMBERED_DEFAULT = os.path.join(LOCAL_DIR, "DefaultConfigPath.txt")   # last default file the user loaded
 
-DEVICE_CATEGORY = BuiltInCategory.OST_FireAlarmDevices
+DEVICE_CATEGORY = ec.DEVICE_CATEGORIES[0]     # Fire Alarm Devices (lib/ew_common.py)
 
 PAD = 3                 # digits in the number part (000)
 MAX_NUMBER = 999        # highest number that fits in PAD digits
@@ -104,15 +107,8 @@ def round_up(number, step):
 
 
 # ---------- Revit helpers ----------
-eid_int = ct.eid_int
-
-
-def is_device(elem):
-    try:
-        cat = elem.Category
-        return cat is not None and eid_int(cat.Id) == int(DEVICE_CATEGORY)
-    except Exception:
-        return False
+eid_int = ec.eid_int            # from ew_common
+is_device = ec.is_device        # from ew_common
 
 
 def device_instances(doc):
@@ -123,13 +119,7 @@ def device_types(doc):
     return FilteredElementCollector(doc).OfCategory(DEVICE_CATEGORY).WhereElementIsElementType()
 
 
-def family_key(doc, el):
-    """'Family : Type' of an element, the key used in the table."""
-    try:
-        etype = doc.GetElement(el.GetTypeId())
-        return etype.FamilyName + " : " + etype.Name
-    except Exception:
-        return str(eid_int(el.GetTypeId()))
+family_key = ec.family_key      # from ew_common
 
 
 class AddressParamReader(object):

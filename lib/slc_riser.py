@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v10
+# slc_riser module - version v11
 # Change log (last change first):
+#   v11 - Code consolidation step 3 (no change to SLC Riser): eid_int, is_device, type_name, type_key,
+#         family_key and DEVICE_CATEGORIES come from ew_common.
 #   v10 - Code consolidation step 2 (no change to SLC Riser): eid_int, conduit_connectors and
 #         connected_elements now come from conduit_trace instead of a copy here.
 #   v9 - SLC Riser v31: address_sort_key, address_loops and devices_on_loops (lowest address next at a
 #        split, devices with no conduit path added and flagged).
 #   v8 - SLC Riser v30 / Config v7: symbol rules by number of addresses.
 #   v7 - SLC Riser v29 / Config v6: several symbols per type, in order.
-#   v6 - SLC Riser v28 / Config v5: Generic Annotation address labels.
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -21,9 +22,10 @@ import os
 import re
 import json
 
-from Autodesk.Revit.DB import BuiltInCategory, BuiltInParameter, StorageType, FilteredElementCollector, FamilySymbol
+from Autodesk.Revit.DB import BuiltInCategory, StorageType, FilteredElementCollector, FamilySymbol
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
@@ -40,7 +42,7 @@ _SLC_ORDER = dict((name.lower(), i) for i, name in enumerate(SLC_ADDRESS_NAMES))
 # A written address: N1L2D015 = node 1, loop 2, detector 15 (M = module).
 ADDRESS_PATTERN = re.compile(r"^N\s*(\d+)\s*L\s*(\d+)\s*([MD])\s*(\d+)$", re.IGNORECASE)
 
-DEVICE_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices]
+DEVICE_CATEGORIES = ec.DEVICE_CATEGORIES      # Fire Alarm Devices (lib/ew_common.py)
 # Families that can be drawn in a drafting view.
 SYMBOL_CATEGORIES = [BuiltInCategory.OST_GenericAnnotation, BuiltInCategory.OST_DetailComponents]
 
@@ -181,39 +183,11 @@ def loop_label(address_lists):
 
 
 # ---------- Revit helpers ----------
-eid_int = ct.eid_int
-
-
-def is_device(elem):
-    try:
-        cat = elem.Category
-        if cat is None:
-            return False
-        cid = eid_int(cat.Id)
-        return any(cid == int(c) for c in DEVICE_CATEGORIES)
-    except Exception:
-        return False
-
-
-def type_name(etype):
-    try:
-        return etype.Name
-    except Exception:
-        p = etype.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
-        return p.AsString() if p is not None else ""
-
-
-def type_key(etype):
-    """'Family : Type' of an element type."""
-    return etype.FamilyName + " : " + type_name(etype)
-
-
-def family_key(doc, el):
-    """'Family : Type' of an element, the key used in the table."""
-    try:
-        return type_key(doc.GetElement(el.GetTypeId()))
-    except Exception:
-        return str(eid_int(el.GetTypeId()))
+eid_int = ec.eid_int            # from ew_common
+is_device = ec.is_device        # from ew_common
+type_name = ec.type_name        # from ew_common
+type_key = ec.type_key          # from ew_common
+family_key = ec.family_key      # from ew_common
 
 
 def slc_addresses(el):

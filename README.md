@@ -143,32 +143,35 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 ## Versions
 
-Each script has its version on line 2.
+Each script has its version on line 2, and each lib file lists its last five changes at the top. Small
+helpers every tool uses (ElementId numbers, the Fire Alarm Device check, Family : Type keys) are in
+`lib/ew_common.py`.
 
 | File | Version |
 |---|---|
+| lib/ew_common.py | v1 |
 | Auto Conduit | v5 |
 | Auto Conduit - Config | v2 |
 | Auto-Circuit | v6 |
-| Link Clash | v11 |
+| Link Clash | v12 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
-| lib/conduit_routing.py | v1 |
+| lib/conduit_routing.py | v2 |
 | lib/clash_rules.py | v5 |
 | Address SLC | v6 |
 | Address SLC - Config | v3 |
-| lib/slc_addressing.py | v3 |
-| lib/slc_config_editor.py | v2 |
+| lib/slc_addressing.py | v4 |
+| lib/slc_config_editor.py | v3 |
 | Address NAC | v3 |
 | Address Voice | v3 |
-| lib/nac_voice_addressing.py | v2 |
-| Address NAC / Voice - Config | v2 |
-| lib/nac_voice_types.py | v6 |
-| lib/conduit_trace.py | v4 |
+| lib/nac_voice_addressing.py | v3 |
+| Address NAC / Voice - Config | v3 |
+| lib/nac_voice_types.py | v7 |
+| lib/conduit_trace.py | v5 |
 | SLC Riser | v32 |
 | SLC Riser - Config | v7 |
-| NAC Coverage Checker | v2 |
-| lib/slc_riser.py | v10 |
+| NAC Coverage Checker | v3 |
+| lib/slc_riser.py | v11 |
 | lib/riser_layout.py | v20 |
-| Line Nuke | v3 |
-| Consolidate Text Styles | v4 |
+| Line Nuke | v4 |
+| Consolidate Text Styles | v5 |

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# conduit_trace module - version v4
+# conduit_trace module - version v5
 # Change log (last change first):
+#   v5 - Code consolidation step 3 (no tool change): eid_int comes from ew_common.
 #   v4 - Code consolidation step 2 (Address SLC v6, Address NAC v3, Address Voice v3, Auto-Circuit v6): the only
 #        copy of the conduit tracing (slc_addressing and slc_riser now use these functions); a split follows
 #        SLC Riser's tee rule (riser_layout.tee_order: the side with the most devices is the main run, taken
@@ -18,14 +19,10 @@ from Autodesk.Revit.DB import BuiltInParameter, Domain, ConnectorType, ElementId
 from Autodesk.Revit.DB.Electrical import Conduit
 
 from riser_layout import tee_order     # the tee rule, shared with SLC Riser
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 
-def eid_int(eid):
-    """Integer value of an ElementId in any Revit version."""
-    try:
-        return eid.Value            # Revit 2024+
-    except Exception:
-        return eid.IntegerValue     # older Revit
+eid_int = ec.eid_int            # from ew_common
 
 
 def conduit_connectors(el):

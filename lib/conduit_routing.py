@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-# conduit_routing module - version v1
+# conduit_routing module - version v2
+# Change log (last change first):
+#   v2 - Code consolidation step 3 (no tool change): eid comes from ew_common.
+#   v1 - Code consolidation step 1 (Auto Conduit v5, Auto-Circuit v5): the routing both tools use, moved
+#        here unchanged from Auto Conduit v4.
 """Conduit routing shared by Auto Conduit and Auto-Circuit (moved here from Auto Conduit v4, unchanged).
 
 Plans orthogonal conduit for a chain of picked devices and creates it with elbows: connector choice, wall and
@@ -24,6 +28,7 @@ from System.Collections.Generic import List
 from System.Windows.Input import Keyboard, ModifierKeys
 
 import mounting_rules
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 doc = None          # set by bind()
 uidoc = None        # set by bind()
@@ -100,13 +105,7 @@ def dlog(msg):
         DEBUG_LOG.append(msg)
 
 
-def eid(x):
-    """Integer value of an ElementId (works across Revit versions)."""
-    i = x.Id if hasattr(x, "Id") else x
-    try:
-        return i.Value
-    except Exception:
-        return i.IntegerValue
+eid = ec.eid                    # from ew_common
 
 
 def element_label(el):

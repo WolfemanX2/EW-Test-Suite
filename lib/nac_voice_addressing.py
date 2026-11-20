@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v2
+# nac_voice_addressing module - version v3
+# Change log (last change first):
+#   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
+#   v2 - Auto-Circuit v4, Address SLC v5, Address NAC v2, Address Voice v2: circuit choice menu (Continue
+#        from Selected / New Circuit / Continue from Existing Circuit).
+#   v1 - Address NAC v1 / Address Voice v1: shared session, split from Address NAC / Voice v7.
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -17,6 +22,7 @@ from pyrevit import revit, forms, script
 
 import nac_voice_types as nv
 import conduit_trace as ct
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -26,7 +32,6 @@ TITLE = "Address NAC / Voice"   # set by main() to "Address NAC" / "Address Voic
 BUTTON_LIMIT = 10   # more choices than this -> searchable list instead of buttons
 PREVIEW_LIMIT = 25  # devices listed in the confirmation before a downstream run is addressed
 AMP_TOLERANCE = 1e-6
-
 
 
 # ---------- Devices and tags ----------
@@ -336,7 +341,7 @@ def project_type_info():
     for cat in nv.DEVICE_CATEGORIES:
         for t in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsElementType().ToElements():
             try:
-                info[t.FamilyName + " : " + t.Name] = None
+                info[ec.type_key(t)] = None
             except Exception:
                 pass
     counted = set()

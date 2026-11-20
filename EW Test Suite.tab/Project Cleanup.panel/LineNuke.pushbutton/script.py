@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Line Nuke script - version v3
-__title__ = "Line\nNuke v3"
+# Line Nuke script - version v4
+__title__ = "Line\nNuke v4"
 __doc__ = ("Creates the standard line styles, then merges matching line styles into them.\n\n"
            "Step 1 creates 15 Solid line styles named Detail Line - <Color> - <Size> "
            "(Black, Blue, Red, Green, Magenta; Thin = weight 1, Medium = weight 3, Thick = weight 6). "
@@ -16,6 +16,7 @@ __doc__ = ("Creates the standard line styles, then merges matching line styles i
 from collections import defaultdict
 
 from pyrevit import revit, DB, forms, script
+from ew_common import eid_int as id_val     # ElementId number helper (lib/ew_common.py)
 
 doc = revit.doc
 output = script.get_output()
@@ -47,11 +48,6 @@ OPT_ALL = "Same as above, AND consolidate + rename all other line styles"
 
 
 # --- helpers ---------------------------------------------------------------
-def id_val(eid):
-    try:
-        return eid.Value          # Revit 2024+
-    except AttributeError:
-        return eid.IntegerValue   # older versions
 
 
 def clean(s):
