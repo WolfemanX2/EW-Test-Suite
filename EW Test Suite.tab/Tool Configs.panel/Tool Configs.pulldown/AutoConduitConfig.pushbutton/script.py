@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto Conduit - Config script - version v2
-__title__ = "Auto Conduit - Config v2"
+# Auto Conduit - Config script - version v3
+__title__ = "Auto Conduit - Config v3"
 __doc__ = ("Pull in all Fire Alarm Device families in the project and set each family's mounting (Wall/Ceiling) "
            "and default conduit type for runs leaving it.")
 

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v6
+# slc_addressing module - version v7
 # Change log (last change first):
+#   v7 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; the
+#        table stays in %APPDATA%\MyTools, shared with the standalone add-in.
 #   v6 - Code consolidation step 6 (Address SLC v11, Auto-Circuit v10, SLC Riser v34): the one SLC address
 #        reader for the addressing tools and SLC Riser; address_texts added; ADDRESS_VALUE also reads
 #        addresses typed with spaces (N1 L2 M007), as SLC Riser did.
@@ -11,7 +13,6 @@
 #   v3 - Code consolidation step 2 (Address SLC v6): eid_int, conduit_connectors, connected_elements,
 #        element_type_name and trace_downstream now come from conduit_trace (one copy, with SLC Riser's
 #        tee rule) instead of a copy here.
-#   v2 - Address SLC v2: follow conduit downstream (the tracing functions); Tool Configs rename.
 """Shared pieces of the SLC addressing tools (Address SLC, Address SLC - Config): the parameter names, the
 address format, the rules table and the default config.
 
@@ -27,21 +28,23 @@ no table yet starts from a copy of it, and 'Load Default Config' in Address SLC 
 only ever read a default file."""
 import os
 import re
-import json
 import shutil
 
 from Autodesk.Revit.DB import StorageType, FilteredElementCollector
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
 # Set this to a shared path (e.g. r"\\server\share\AddressCounts.json") so everyone edits one table.
 # Leave as None for a per-user file in %APPDATA% (recommended together with a default config).
 TABLE_PATH = None
 
-EXTENSION_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_CONFIG = os.path.join(EXTENSION_DIR, "config", "address_config.default.json")
-LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyTools")
+EXTENSION_DIR = cs.EXTENSION_DIR
+DEFAULT_CONFIG = cs.default_file("address_config.default.json")
+# Kept in %APPDATA%\MyTools rather than the EW Test Suite folder: the standalone Address Devices add-in uses the
+# same file.
+LOCAL_DIR = os.path.join(cs.APPDATA_DIR, "MyTools")
 REMEMBERED_DEFAULT = os.path.join(LOCAL_DIR, "DefaultConfigPath.txt")   # last default file the user loaded
 
 DEVICE_CATEGORY = ec.DEVICE_CATEGORIES[0]     # Fire Alarm Devices (lib/ew_common.py)
@@ -72,7 +75,7 @@ _QUOTES = (u'"', u"\u201c", u"\u201d")
 
 
 def table_path():
-    return TABLE_PATH or os.path.join(LOCAL_DIR, "AddressCounts.json")
+    return cs.user_file("AddressCounts.json", TABLE_PATH, LOCAL_DIR)
 
 
 # ---------- Address text ----------
@@ -367,13 +370,9 @@ def read_table(path):
     Older files are accepted: "multiple_of" / "zone_size" N becomes the options N, 2N, 3N ..., and the oldest
     format, a plain integer, is a Module with that count."""
     table = {}
-    if not os.path.isfile(path):
+    data = cs.read_json(path)
+    if data is None:
         return table
-    with open(path, "r") as f:
-        text = f.read()
-    if not text.strip():
-        return table
-    data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError('The file does not contain a table of "Family : Type" entries.')
     for key, value in data.items():
@@ -401,21 +400,13 @@ def is_head_end(table, key):
 
 def write_table(path, table):
     """Write a table, creating the folder if needed. Raises if it can't be written."""
-    folder = os.path.dirname(path)
-    if folder and not os.path.isdir(folder):
-        os.makedirs(folder)
     data = {}
     for key, rule in table.items():
         data[key] = {"count": rule["count"],
                      "options": [{"label": label, "count": count} for label, count in rule["options"]],
                      "round_to": rule["round_to"],
                      "type": rule["kind"]}
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    if os.path.exists(path):
-        os.remove(path)
-    os.rename(tmp, path)
+    cs.write_json(path, data)
 
 
 def load_table():

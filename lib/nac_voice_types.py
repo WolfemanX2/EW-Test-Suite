@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v9
+# nac_voice_types module - version v10
 # Change log (last change first):
+#   v10 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store;
+#         a new user starts from config/nac_voice_types.default.json when it is added.
 #   v9 - Code consolidation step 5 (Auto-Circuit v9): all_devices, address_on and scan_existing (the devices
 #        already addressed), moved here from nac_voice_addressing so Auto-Circuit shares them.
 #   v8 - Address NAC v4 / Address Voice v4 / Auto-Circuit v8 / Address NAC / Voice - Config v4: Head End
@@ -8,24 +10,24 @@
 #   v7 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORIES come
 #        from ew_common.
 #   v6 - Address NAC v1 / Address Voice v1: Address NAC / Voice split into two tools.
-#   v5 - Address NAC / Voice v7: EOL current and voltage estimate in Comments.
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\nac_voice_types.json. It is changed with the
 Address NAC / Voice - Config tool (or Shift+Click on Address NAC / Voice). Updates never overwrite it."""
-import os
 import re
-import json
 
 from Autodesk.Revit.DB import StorageType, FilteredElementCollector
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
 # Set this to a shared path (e.g. r"\\server\share\nac_voice_types.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
 TABLE_PATH = None
 
-LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
+LOCAL_DIR = cs.USER_DIR
+# Office default: a user with no table yet starts from a copy of this file, when it is in the repository.
+DEFAULT_CONFIG = cs.default_file("nac_voice_types.default.json")
 
 # Categories the tools pick from and scan.
 DEVICE_CATEGORIES = ec.DEVICE_CATEGORIES      # Fire Alarm Devices (lib/ew_common.py)
@@ -100,7 +102,7 @@ _ALIASES = {"N": NAC_ONLY, "NAC": NAC_ONLY, "V": VOICE_ONLY, "VOICE": VOICE_ONLY
 
 
 def table_path():
-    return TABLE_PATH or os.path.join(LOCAL_DIR, "nac_voice_types.json")
+    return cs.user_file("nac_voice_types.json", TABLE_PATH)
 
 
 # ---------- Address text ----------
@@ -269,10 +271,9 @@ def load_table():
     """{"Family : Type": "NAC Only" | "Voice Only" | "NAC and Voice" | "Head End"}. Raises if the file can't be read."""
     table = {}
     path = table_path()
-    if not os.path.isfile(path):
-        return table
-    with open(path, "r") as f:
-        data = json.load(f)
+    if not TABLE_PATH:
+        cs.start_from(path, [DEFAULT_CONFIG])
+    data = cs.read_json(path, {})
     for key, value in data.items():
         if isinstance(value, dict):
             value = value.get("type")
@@ -284,13 +285,8 @@ def load_table():
 
 def save_table(table):
     """Write the table, creating the folder if needed. Raises if it can't be written."""
-    path = table_path()
-    folder = os.path.dirname(path)
-    if folder and not os.path.isdir(folder):
-        os.makedirs(folder)
     data = dict((key, {"type": label}) for key, label in table.items())
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+    cs.write_json(table_path(), data)
 
 
 # ---------- Devices already addressed ----------

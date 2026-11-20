@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-# clash_rules module - version v5
+# clash_rules module - version v6
+# Change log (last change first):
+#   v6 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store.
+#   v5 - Link Clash v11 / Auto Fix Rules v5: office default (config/clash_rules.default.json) and each
+#        user's copy in %APPDATA%\pyRevit\EWTestSuite.
 """Stores and reads the Auto Fix rules used by the Link Clash tool.
 
 Two files:
@@ -11,15 +15,16 @@ Two files:
 Lengths in the files are in inches when the file says "units": "inches" (both files do); older files without
 that line are in feet. Inside the tools every length is in feet."""
 import os
-import json
+
+import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
 # Set this to a shared path (e.g. r"\\server\share\clash_rules.json") so everyone uses one rules file.
 # Leave as None for a per-user file in %APPDATA%.
 RULES_PATH = None
 
-EXTENSION_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_CONFIG = os.path.join(EXTENSION_DIR, "config", "clash_rules.default.json")
-LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
+EXTENSION_DIR = cs.EXTENSION_DIR
+DEFAULT_CONFIG = cs.default_file("clash_rules.default.json")
+LOCAL_DIR = cs.USER_DIR
 OLD_LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clash_rules.json")   # before v5
 
 ELEV_NEVER = "Never (jogs only)"
@@ -60,26 +65,15 @@ BOOL_KEYS = ["ask_before", "allow_shift", "allow_h_jog", "allow_v_jog", "majorit
 
 
 def rules_path():
-    if RULES_PATH:
-        return RULES_PATH
-    return os.path.join(LOCAL_DIR, "clash_rules.json")
+    return cs.user_file("clash_rules.json", RULES_PATH)
 
 
 def _read(path):
-    with open(path, "r") as f:
-        return json.load(f)
+    return cs.read_json(path, {})
 
 
 def _write(path, rules):
-    folder = os.path.dirname(path)
-    if folder and not os.path.exists(folder):
-        os.makedirs(folder)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(_to_file(_clean(rules)), f, indent=2, sort_keys=True)
-    if os.path.exists(path):
-        os.remove(path)
-    os.rename(tmp, path)
+    cs.write_json(path, _to_file(_clean(rules)))
 
 
 def _to_file(rules):

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v12
+# slc_riser module - version v13
 # Change log (last change first):
+#   v13 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; a new
+#         user starts from config/riser_symbols.default.json / riser_settings.default.json when added.
 #   v12 - Code consolidation step 6 (SLC Riser v34): SLC addresses are read and parsed with
 #         slc_addressing's reader and format, the same as the addressing tools (text parameters, any
 #         SLC Address number); devices_on_loops reads with one reader.
@@ -10,7 +12,6 @@
 #         connected_elements now come from conduit_trace instead of a copy here.
 #   v9 - SLC Riser v31: address_sort_key, address_loops and devices_on_loops (lowest address next at a
 #        split, devices with no conduit path added and flagged).
-#   v8 - SLC Riser v30 / Config v7: symbol rules by number of addresses.
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -20,21 +21,22 @@ SLC Riser - Config tool. Updates never overwrite it.
 
 The drawing settings (view scale, device spacing, devices per line, label offset) are the user's own file,
 %APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed with SLC Riser - Config."""
-import os
-import json
-
 from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector, FamilySymbol
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import slc_addressing as slc   # the SLC address reader and format, shared with the addressing tools
+import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
 TABLE_PATH = None
 SETTINGS_PATH = None    # same idea, for the drawing settings (e.g. r"\\server\share\riser_settings.json")
 
-LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
+LOCAL_DIR = cs.USER_DIR
+# Office defaults: a user with no file yet starts from a copy of these, when they are in the repository.
+DEFAULT_TABLE = cs.default_file("riser_symbols.default.json")
+DEFAULT_SETTINGS_FILE = cs.default_file("riser_settings.default.json")
 
 # A device is on the SLC riser when at least one of its SLC Address parameters (SLC Address, SLC Address 2,
 # ...) has a value. They are read with slc_addressing's reader, the same one the addressing tools use.
@@ -47,11 +49,11 @@ SYMBOL_CATEGORIES = [BuiltInCategory.OST_GenericAnnotation, BuiltInCategory.OST_
 
 
 def table_path():
-    return TABLE_PATH or os.path.join(LOCAL_DIR, "riser_symbols.json")
+    return cs.user_file("riser_symbols.json", TABLE_PATH)
 
 
 def settings_path():
-    return SETTINGS_PATH or os.path.join(LOCAL_DIR, "riser_settings.json")
+    return cs.user_file("riser_settings.json", SETTINGS_PATH)
 
 
 # ---------- Drawing settings ----------
@@ -95,20 +97,15 @@ def clean_settings(data):
 def load_settings():
     """The drawing settings, with the defaults for anything missing. Raises if the file can't be read."""
     path = settings_path()
-    if not os.path.isfile(path):
-        return dict(DEFAULT_SETTINGS)
-    with open(path, "r") as f:
-        return clean_settings(json.load(f))
+    if not SETTINGS_PATH:
+        cs.start_from(path, [DEFAULT_SETTINGS_FILE])
+    data = cs.read_json(path)
+    return dict(DEFAULT_SETTINGS) if data is None else clean_settings(data)
 
 
 def save_settings(settings):
     """Write the drawing settings, creating the folder if needed. Raises if they can't be written."""
-    path = settings_path()
-    folder = os.path.dirname(path)
-    if folder and not os.path.isdir(folder):
-        os.makedirs(folder)
-    with open(path, "w") as f:
-        json.dump(clean_settings(settings), f, indent=2, sort_keys=True)
+    cs.write_json(settings_path(), clean_settings(settings))
 
 
 # ---------- Address text ----------
@@ -240,10 +237,9 @@ def load_table():
     can't be read."""
     table = {}
     path = table_path()
-    if not os.path.isfile(path):
-        return table
-    with open(path, "r") as f:
-        data = json.load(f)
+    if not TABLE_PATH:
+        cs.start_from(path, [DEFAULT_TABLE])
+    data = cs.read_json(path, {})
     for key, value in data.items():
         if isinstance(value, dict):
             symbols = value.get("symbols")
@@ -257,14 +253,9 @@ def load_table():
 
 def save_table(table):
     """Write the table, creating the folder if needed. Raises if it can't be written."""
-    path = table_path()
-    folder = os.path.dirname(path)
-    if folder and not os.path.isdir(folder):
-        os.makedirs(folder)
     data = {}
     for key, entry in table.items():
         symbols = list(entry.get("symbols") or [])
         data[key] = {"symbols": symbols, "rules": list(entry.get("rules") or []),
                      "symbol": symbols[0] if symbols else ""}     # read by older versions
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+    cs.write_json(table_path(), data)

@@ -71,14 +71,14 @@ This repository is private, so pyRevit needs a GitHub personal access token to d
 
 - `main` holds the released tools (Conduit, Clash, Addressing). Installs pull this branch by default.
 - `dev` holds every tool, including ones still being tested. To test on your own machine, reinstall from it
-  (back up `lib\mounting_rules.json` first; it lives in the extension folder and is removed with it):
+  (your saved settings are in `%APPDATA%`, so they are kept):
 
   ```
   pyrevit extensions delete EWTestSuite
   pyrevit extend ui EWTestSuite https://github.com/WolfemanX2/ew-test-suite.git --branch=dev --username=<your GitHub user> --password=<token>
   ```
 
-  Put `mounting_rules.json` back in `lib`, then Reload. pyRevit **Update** then pulls `dev` on that machine.
+  Then Reload. pyRevit **Update** then pulls `dev` on that machine.
   When a tool is ready, merge `dev` into `main`.
 
 ### Updating
@@ -95,6 +95,25 @@ If that folder isn't already a pyRevit extensions folder, add `%APPDATA%\pyRevit
 pyRevit Settings > Custom Extension Directories. Update later with `git pull` in that folder.
 
 ## Saved settings
+
+Every config tool saves each user's settings in `%APPDATA%\pyRevit\EWTestSuite\` (Address SLC - Config uses
+`%APPDATA%\MyTools\`, shared with the standalone add-in), so pyRevit updates and reinstalls never overwrite or
+remove them. All of them are read and written by `lib/config_store.py`.
+
+**Office defaults:** put a default file in `config/` and a user with no settings file yet starts from a copy of
+it. Users who already have their own file keep it.
+
+| Config tool | User's file | Office default in `config/` |
+|---|---|---|
+| Auto Conduit - Config | `mounting_rules.json` | `mounting_rules.default.json` |
+| Link Clash - Config | `clash_rules.json` | `clash_rules.default.json` |
+| Address SLC - Config | `AddressCounts.json` (in `MyTools`) | `address_config.default.json` |
+| Address NAC / Voice - Config | `nac_voice_types.json` | `nac_voice_types.default.json` |
+| SLC Riser - Config (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
+| SLC Riser - Config (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
+
+To make everyone share one file instead, set the `*_PATH` setting at the top of that config's `lib` file to a
+network location (then no default is copied).
 
 ### Auto Fix rules: office default + each user's copy
 
@@ -130,8 +149,9 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 - Conduit routing settings for Auto Conduit and Auto-Circuit (obstacle avoidance, stub and leg lengths, default
   elevation, highlight color, prompt wording) are at the top of `lib/conduit_routing.py`. Both tools use the same
   routing code from that file, so a change there applies to both.
-- `lib/mounting_rules.json` (Auto Conduit - Config). Not part of the repository, so updates never overwrite it.
-  To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
+- Auto Conduit - Config: `%APPDATA%\pyRevit\EWTestSuite\mounting_rules.json` per user. It used to be kept in
+  `lib\mounting_rules.json`; that file is copied over the first time any tool reads the settings, and can then be
+  deleted. To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
 - NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/nac_voice_types.py` to a network location.
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
@@ -152,29 +172,30 @@ share are in `lib/addressing_ui.py`.
 |---|---|
 | lib/ew_common.py | v2 |
 | lib/addressing_ui.py | v1 |
+| lib/config_store.py | v1 |
 | Auto Conduit | v6 |
-| Auto Conduit - Config | v2 |
+| Auto Conduit - Config | v3 |
 | Auto-Circuit | v10 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
-| lib/mounting_rules.py | v1 |
+| lib/mounting_rules.py | v2 |
 | lib/conduit_routing.py | v3 |
-| lib/clash_rules.py | v5 |
+| lib/clash_rules.py | v6 |
 | Address SLC | v11 |
 | lib/slc_session.py | v2 |
 | Address SLC - Config | v4 |
-| lib/slc_addressing.py | v6 |
+| lib/slc_addressing.py | v7 |
 | lib/slc_config_editor.py | v4 |
 | Address NAC | v4 |
 | Address Voice | v4 |
 | lib/nac_voice_addressing.py | v6 |
 | Address NAC / Voice - Config | v4 |
-| lib/nac_voice_types.py | v9 |
+| lib/nac_voice_types.py | v10 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v34 |
 | SLC Riser - Config | v7 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v12 |
+| lib/slc_riser.py | v13 |
 | lib/riser_layout.py | v20 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |

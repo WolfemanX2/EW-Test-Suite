@@ -1,15 +1,27 @@
 # -*- coding: utf-8 -*-
-# mounting_rules module - version v1
+# mounting_rules module - version v2
+# Change log (last change first):
+#   v2 - Code consolidation step 7 (Auto Conduit - Config v3): the file moves from lib\ to the user's
+#        %APPDATA%\pyRevit\EWTestSuite (the old one is copied over the first time); office default
+#        config/mounting_rules.default.json; paths, reading and the safe write from config_store.
+#   v1 - Auto Conduit v4 / Routing Preferences v1: mounting and conduit type per family.
 """Stores and reads routing preferences for Fire Alarm Device families:
  - mounting: 'Wall' or 'Ceiling'
  - conduit_type: the conduit type used for runs leaving that family
-Preferences are keyed by family name and saved in a JSON file, so no family parameters are touched."""
+Preferences are keyed by family name and saved in a JSON file, so no family parameters are touched.
+
+The file is each user's own %APPDATA%\\pyRevit\\EWTestSuite\\mounting_rules.json, so updates and reinstalls never remove
+it. It used to be kept next to this module (lib\\mounting_rules.json); that file is copied over the first time."""
 import os
-import json
+
+import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
 # Set this to a shared path (e.g. r"\\server\share\mounting_rules.json") to share rules between users.
-# Leave as None to store the file next to this module.
+# Leave as None for a per-user file in %APPDATA%.
 RULES_PATH = None
+
+OLD_LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mounting_rules.json")   # before v2
+DEFAULT_CONFIG = cs.default_file("mounting_rules.default.json")     # office default, when it is in the repository
 
 WALL = "Wall"
 CEILING = "Ceiling"
@@ -18,9 +30,7 @@ KEY_TYPE = "conduit_type"
 
 
 def rules_path():
-    if RULES_PATH:
-        return RULES_PATH
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "mounting_rules.json")
+    return cs.user_file("mounting_rules.json", RULES_PATH)
 
 
 def _normalize(raw):
@@ -44,23 +54,16 @@ def _normalize(raw):
 
 def load_rules():
     p = rules_path()
-    if not os.path.exists(p):
-        return {}
+    if not RULES_PATH:
+        cs.start_from(p, [OLD_LOCAL, DEFAULT_CONFIG])   # the first time: the old file in lib, or the office default
     try:
-        with open(p, "r") as f:
-            data = json.load(f)
-        return _normalize(data)
+        return _normalize(cs.read_json(p, {}))
     except Exception:
         return {}
 
 
 def save_rules(rules):
-    p = rules_path()
-    folder = os.path.dirname(p)
-    if folder and not os.path.exists(folder):
-        os.makedirs(folder)
-    with open(p, "w") as f:
-        json.dump(_normalize(rules), f, indent=2, sort_keys=True)
+    cs.write_json(rules_path(), _normalize(rules))
 
 
 def get_mounting(family_name, rules=None):
