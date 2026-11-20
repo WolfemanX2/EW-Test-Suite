@@ -5,16 +5,16 @@ pyRevit extension with conduit routing, link clash, device addressing, riser dia
 Every tool's settings window lives in the **Tool Configs** drop-down (its own panel at the end of the tab) and is named `<Tool Name> - Config`.
 
 Tools being replaced are kept in the **Obsolete** panel at the end of the tab, in three drop-downs:
-**Addressing and Conduit Tools** (Auto Conduit, Auto-Circuit, Address SLC, Address NAC, Address Voice),
+**Old Tools** (Auto Conduit, Auto-Circuit, Address SLC, Address NAC, Address Voice, NAC Coverage Checker),
 **Template Cleanup** (Line Nuke, Consolidate Text Styles) and **Parameter Tools** (the family parameter tools).
 
 ## Tools
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
 - Automatically draws conduit between devices in order of selection.
 - **Auto Circuit - Config:** mounting (Wall/Ceiling), conduit type and conduit elevations
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
 - Draws conduit between devices and addresses them based on order of selection. It can also insert new devices into an existing circuit and renumber the devices after them.
 - **Auto Circuit - Config:** mounting, conduit type, Device Type, Address Groups and rounding
 
@@ -22,15 +22,15 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 - Checks selected elements for clashes with MEP and structural elements in loaded Revit links and lists them in a results window with statuses. Auto Fix can shift or jog a clashing conduit to clear it.
 - **Link Clash - Config:** sets the distances and allowed fixes that Auto Fix uses
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
 - Fills in the SLC addresses of devices in the order you select them. It can also address them automatically by following the conduit downstream from a selected device.
 - **Auto Circuit - Config:** Device Type (Module, Detector or **Head End**, never addressed), Address Group and rounding
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
 - Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Current and estimated Circuit Voltage.
 - **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
 - Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Wattage.
 - **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
 
@@ -38,7 +38,7 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
 - **SLC Riser - Config:** sets the drawing settings and the symbols used for each device type
 
-### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Coverage.panel/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Coverage.panel/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
 - **Auto Circuit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
 
