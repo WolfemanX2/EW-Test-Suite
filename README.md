@@ -184,9 +184,9 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
-| Family Defaults Config | v5 |
+| Family Defaults Config | v6 |
 | lib/circuit_config.py | v3 |
-| lib/circuit_config_editor.py | v5 |
+| lib/circuit_config_editor.py | v6 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |

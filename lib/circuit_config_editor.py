@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v5
+# circuit_config_editor module - version v6
 # Change log (last change first):
+#   v6 - Family Defaults Config v6: editing a cell of a selected row sets that column on every selected row (the
+#        'Set selected rows' bar is removed).
 #   v5 - Family Defaults Config v5: several rows can be selected and set at once (Set selected rows); filters
 #        (Category, Circuit Type, Mounting, Device Type, Conduit Type, Address Group) and Sort by; a Circuit column
 #        (SLC: SLC Address parameters, NAC: a Notification Circuit parameter); unsaved changes tracked by edits
@@ -17,7 +19,7 @@
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
 that aren't loaded), each with its types under it (double-click a family, or Expand All). Setting a value on a family
 sets it on all its types; a family whose types differ shows <varies>. A blank value is not set. Several rows can be
-selected and set at once; the list can be filtered and sorted (families keep their types under them). The Circuit
+selected and edited together (a cell edited in a selected row sets that column on every selected row); the list can be filtered and sorted (families keep their types under them). The Circuit
 column: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter (families that
 aren't placed are opened in the background to check, the first time Circuit Type is filtered or sorted on).
 Address and Routing Defaults tab: conduit elevations per conduit type and the Address Groups with their subgroups."""
@@ -47,7 +49,7 @@ OPEN, CLOSED = u"▾", u"▸"
 SETTINGS = [("Mounting", "mounting"), ("DeviceType", "device_type"), ("ConduitType", "conduit_type"),
             ("AddressGroup", "address_group"), ("RoundTo", "round_to")]
 SETTING_COLUMNS = dict(SETTINGS)
-ANY, BLANK, NO_CHANGE, CLEAR = "(any)", "(blank)", "(no change)", "(clear)"
+ANY, BLANK = "(any)", "(blank)"
 NAC_PARAM = "notification circuit"      # a family with this parameter is a NAC device (Circuit Type filter)
 SLC_DEVICES, NAC_DEVICES, NEITHER = "SLC Devices", "NAC Devices", "Neither"
 NOT_CHECKED = "?"
@@ -58,10 +60,6 @@ FAMILY_FILTERS = ("Category", "Circuit")
 SORTS = [("Family", None), ("Category", "Category"), ("Circuit Type", "Circuit"), ("Mounting", "Mounting"),
          ("Device Type", "DeviceType"), ("Conduit Type", "ConduitType"), ("Address Group", "AddressGroup"),
          ("Round To", "RoundTo")]
-# Set selected rows: drop-down -> column
-SETTERS = [("s_mounting", "Mounting"), ("s_device", "DeviceType"), ("s_conduit", "ConduitType"),
-           ("s_group", "AddressGroup"), ("s_round", "RoundTo")]
-
 
 def cell_text(v):
     if v is None or isinstance(v, DBNull):
@@ -169,10 +167,9 @@ EDITOR_XAML = """
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows, then set them together at the bottom. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows; changing a cell in one of them changes that column on all of them. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>
@@ -200,7 +197,8 @@ EDITOR_XAML = """
                     <DataGrid x:Name="grid" Grid.Row="3" AutoGenerateColumns="False"
                               CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
                               SelectionMode="Extended" SelectionUnit="FullRow" GridLinesVisibility="All"
-                              HeadersVisibility="Column" MouseDoubleClick="grid_double_click">
+                              HeadersVisibility="Column" MouseDoubleClick="grid_double_click"
+                              PreviewMouseLeftButtonDown="grid_mouse_down">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Style.Triggers>
@@ -223,20 +221,6 @@ EDITOR_XAML = """
                             <DataGridTextColumn Header="Round To" Binding="{Binding RoundTo}" Width="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <WrapPanel Grid.Row="4" Margin="0,8,0,0">
-                        <TextBlock Text="Set selected rows -" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
-                        <TextBlock Text="Mounting:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="s_mounting" Width="100" Margin="0,0,10,0"/>
-                        <TextBlock Text="Device Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="s_device" Width="110" Margin="0,0,10,0"/>
-                        <TextBlock Text="Conduit Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="s_conduit" Width="160" Margin="0,0,10,0"/>
-                        <TextBlock Text="Address Group:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="s_group" Width="120" Margin="0,0,10,0"/>
-                        <TextBlock Text="Round To:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="s_round" Width="100" Margin="0,0,10,0" IsEditable="True"/>
-                        <Button Content="Apply to Selected" Width="120" Click="apply_selected_click"/>
-                    </WrapPanel>
                 </Grid>
             </TabItem>
             <TabItem Header="Address and Routing Defaults">
@@ -308,6 +292,8 @@ class ConfigEditor(forms.WPFWindow):
         self._busy = False      # True while values are copied between a family and its types, or filled in
         self._ready = False     # the drop-downs' events wait until the window is filled
         self._dirty = False     # an edit not saved yet
+        self._spreading = False  # True while an edit is copied to the other selected rows
+        self._selection = []    # the rows selected just before the last click in the grid
         self.circuits = {}      # family name -> circuit text ('SLC', 'NAC', 'SLC + NAC', 'None', NOT_CHECKED)
         self.conduit_labels = mounting_rules.list_conduit_type_labels(doc)
 
@@ -453,10 +439,6 @@ class ConfigEditor(forms.WPFWindow):
                                 ("f_circuit", [ANY, SLC_DEVICES, NAC_DEVICES, NEITHER]),
                                 ("f_mounting", [ANY, BLANK] + mountings), ("f_device", [ANY, BLANK] + devices),
                                 ("f_conduit", [ANY, BLANK] + conduits), ("f_group", [ANY, BLANK] + groups),
-                                ("s_mounting", [NO_CHANGE, CLEAR] + mountings),
-                                ("s_device", [NO_CHANGE, CLEAR] + devices),
-                                ("s_conduit", [NO_CHANGE, CLEAR] + conduits),
-                                ("s_group", [NO_CHANGE, CLEAR] + groups), ("s_round", [NO_CHANGE, CLEAR]),
                                 ("sort_box", [label for label, _c in SORTS])):
                 self._set_items(getattr(self, name), items)
         finally:
@@ -583,33 +565,6 @@ class ConfigEditor(forms.WPFWindow):
         self._match_rows()
         self._filter()
 
-    # ---------- Set selected rows ----------
-    def apply_selected_click(self, sender, args):
-        self._commit()
-        rows = [item.Row for item in list(self.grid.SelectedItems) if getattr(item, "Row", None) is not None]
-        if not rows:
-            self.status_text.Text = "Select the rows to set first (Ctrl+click or Shift+click for several)"
-            return
-        changes = []
-        for name, column in SETTERS:
-            box = getattr(self, name)
-            value = cell_text(box.Text if column == "RoundTo" else box.SelectedItem)
-            if not value or value == NO_CHANGE:
-                continue
-            if value == CLEAR:
-                value = u""
-            elif column == "RoundTo" and (not value.isdigit() or int(value) < 2):
-                forms.alert("Round To must be a whole number, 2 or more (or (clear)).", title=TITLE)
-                return
-            changes.append((column, value))
-        if not changes:
-            self.status_text.Text = "Choose a value to set at the bottom first"
-            return
-        for row in rows:
-            for column, value in changes:
-                row[column] = value
-        self.status_text.Text = "Set on %d selected row(s) (unsaved)" % len(rows)
-
     def _commit(self):
         for grid in (self.grid, self.elev_grid, self.group_grid):
             try:
@@ -617,6 +572,22 @@ class ConfigEditor(forms.WPFWindow):
                 grid.CommitEdit()       # its row
             except Exception:
                 pass
+
+    # ---------- Editing several rows at once ----------
+    def grid_mouse_down(self, sender, args):
+        """The rows selected just before a click: a click on a cell would otherwise narrow the selection to its row
+        before the edit."""
+        self._selection = self._selected_rows()
+
+    def _selected_rows(self):
+        return [item.Row for item in list(self.grid.SelectedItems) if getattr(item, "Row", None) is not None]
+
+    def _edit_group(self, row):
+        """The other selected rows an edit of this row also applies to."""
+        for rows in (self._selection, self._selected_rows()):
+            if any(r is row for r in rows):
+                return [r for r in rows if r is not row]
+        return []
 
     # ---------- A family sets its types; a type updates its family ----------
     def _column_changing(self, sender, e):
@@ -638,10 +609,10 @@ class ConfigEditor(forms.WPFWindow):
         self._dirty = True
         row = e.Row
         family = cell_text(row["Family"])
+        value = cell_text(row[column])
         self._busy = True
         try:
             if row["IsFamily"]:
-                value = cell_text(row[column])
                 if value != VARIES:
                     for trow in self.type_rows.get(family) or []:
                         trow[column] = value
@@ -649,6 +620,19 @@ class ConfigEditor(forms.WPFWindow):
                 self.family_rows[family][column] = self._summary(self.type_rows[family], column)
         finally:
             self._busy = False
+        if self._spreading or value == VARIES:
+            return
+        others = self._edit_group(row)          # the same value on every other selected row
+        if not others:
+            return
+        self._spreading = True
+        try:
+            for other in others:
+                if cell_text(other[column]) != value:
+                    other[column] = value
+        finally:
+            self._spreading = False
+        self.status_text.Text = "Set on %d selected row(s) (unsaved)" % (len(others) + 1)
 
     def _lists_changed(self, sender, e):
         if not self._busy:
