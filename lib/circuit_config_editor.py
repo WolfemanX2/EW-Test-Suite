@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v4
+# circuit_config_editor module - version v5
 # Change log (last change first):
+#   v5 - Family Defaults Config v5: several rows can be selected and set at once (Set selected rows); filters
+#        (Category, Circuit Type, Mounting, Device Type, Conduit Type, Address Group) and Sort by; a Circuit column
+#        (SLC: SLC Address parameters, NAC: a Notification Circuit parameter); unsaved changes tracked by edits
+#        (expanding a family no longer counts as one).
 #   v4 - Auto Circuit - SLC / NAC / Voice v1: the help text says what a blank Device Type does (asked when the
 #        device is addressed).
 #   v3 - Family Defaults Config v3: renamed from Auto Circuit - Config (window title and messages).
@@ -12,7 +16,10 @@
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
 that aren't loaded), each with its types under it (double-click a family, or Expand All). Setting a value on a family
-sets it on all its types; a family whose types differ shows <varies>. A blank value is not set.
+sets it on all its types; a family whose types differ shows <varies>. A blank value is not set. Several rows can be
+selected and set at once; the list can be filtered and sorted (families keep their types under them). The Circuit
+column: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter (families that
+aren't placed are opened in the background to check, the first time Circuit Type is filtered or sorted on).
 Address and Routing Defaults tab: conduit elevations per conduit type and the Address Groups with their subgroups."""
 import os
 
@@ -25,6 +32,7 @@ from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
 from pyrevit import forms
 
 import circuit_config as cc
+import slc_addressing as slc  # which parameters are SLC Address parameters
 import mounting_rules         # conduit type labels in the project
 import conduit_routing as cr  # reading a length such as 15'-0"
 import ew_common as ec        # shared helpers (lib/ew_common.py)
@@ -39,6 +47,20 @@ OPEN, CLOSED = u"▾", u"▸"
 SETTINGS = [("Mounting", "mounting"), ("DeviceType", "device_type"), ("ConduitType", "conduit_type"),
             ("AddressGroup", "address_group"), ("RoundTo", "round_to")]
 SETTING_COLUMNS = dict(SETTINGS)
+ANY, BLANK, NO_CHANGE, CLEAR = "(any)", "(blank)", "(no change)", "(clear)"
+NAC_PARAM = "notification circuit"      # a family with this parameter is a NAC device (Circuit Type filter)
+SLC_DEVICES, NAC_DEVICES, NEITHER = "SLC Devices", "NAC Devices", "Neither"
+NOT_CHECKED = "?"
+# filter drop-down -> column; Category and Circuit Type are about the family, the rest also show matching types
+FILTERS = [("f_category", "Category"), ("f_circuit", "Circuit"), ("f_mounting", "Mounting"),
+           ("f_device", "DeviceType"), ("f_conduit", "ConduitType"), ("f_group", "AddressGroup")]
+FAMILY_FILTERS = ("Category", "Circuit")
+SORTS = [("Family", None), ("Category", "Category"), ("Circuit Type", "Circuit"), ("Mounting", "Mounting"),
+         ("Device Type", "DeviceType"), ("Conduit Type", "ConduitType"), ("Address Group", "AddressGroup"),
+         ("Round To", "RoundTo")]
+# Set selected rows: drop-down -> column
+SETTERS = [("s_mounting", "Mounting"), ("s_device", "DeviceType"), ("s_conduit", "ConduitType"),
+           ("s_group", "AddressGroup"), ("s_round", "RoundTo")]
 
 
 def cell_text(v):
@@ -56,7 +78,8 @@ def _like(text):
 
 
 def project_types(doc):
-    """{family name: (category label, set of 'Family : Type' keys)} for the loaded device and equipment types."""
+    """{family name: (category label, set of 'Family : Type' keys, the Family)} for the loaded device and equipment
+    types."""
     found = {}
     for cat, label in CATEGORIES:
         for t in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsElementType().ToElements():
@@ -64,8 +87,66 @@ def project_types(doc):
                 family, key = t.FamilyName, ec.type_key(t)
             except Exception:
                 continue
-            found.setdefault(family, (label, set()))[1].add(key)
+            entry = found.setdefault(family, (label, set(), getattr(t, "Family", None)))
+            entry[1].add(key)
     return found
+
+
+def circuit_text(names):
+    """'SLC', 'NAC', 'SLC + NAC' or 'None' for a family with these parameter names."""
+    found = []
+    if any(slc.param_position(n) is not None for n in names):
+        found.append("SLC")
+    if any((n or u"").strip().lower() == NAC_PARAM for n in names):
+        found.append("NAC")
+    return " + ".join(found) or "None"
+
+
+def _param_names(element):
+    names = []
+    try:
+        for p in element.Parameters:
+            try:
+                names.append(p.Definition.Name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return names
+
+
+def placed_circuits(doc):
+    """{family name: circuit text} from a placed instance of each family (its instance and type parameters)."""
+    found = {}
+    for cat, _label in CATEGORIES:
+        for el in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType().ToElements():
+            try:
+                symbol = doc.GetElement(el.GetTypeId())
+                family = symbol.FamilyName
+            except Exception:
+                continue
+            if family not in found:
+                found[family] = circuit_text(_param_names(el) + _param_names(symbol))
+    return found
+
+
+def family_file_circuit(doc, family):
+    """Circuit text of a family that isn't placed, from its family file opened in the background (nothing is
+    changed or reloaded), or NOT_CHECKED if it can't be opened."""
+    fdoc = None
+    try:
+        if family is None or family.IsInPlace or not family.IsEditable:
+            return NOT_CHECKED
+        fdoc = doc.EditFamily(family)
+        return circuit_text([fp.Definition.Name for fp in fdoc.FamilyManager.Parameters])
+    except Exception:
+        return NOT_CHECKED
+    finally:
+        try:
+            if fdoc is not None:
+                fdoc.Close(False)
+        except Exception:
+            pass
 
 
 EDITOR_XAML = """
@@ -86,19 +167,39 @@ EDITOR_XAML = """
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005)."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows, then set them together at the bottom. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>
                         <Button Content="Expand All" Width="90" Margin="12,0,6,0" Click="expand_click" DockPanel.Dock="Left"/>
                         <Button Content="Collapse All" Width="90" Click="collapse_click" DockPanel.Dock="Left"/>
+                        <TextBlock Text="Sort by:" VerticalAlignment="Center" Margin="18,0,6,0" DockPanel.Dock="Left"/>
+                        <ComboBox x:Name="sort_box" Width="130" SelectionChanged="sort_changed" DockPanel.Dock="Left"/>
                     </DockPanel>
-                    <DataGrid x:Name="grid" Grid.Row="2" AutoGenerateColumns="False"
+                    <WrapPanel Grid.Row="2" Margin="0,0,0,8">
+                        <TextBlock Text="Filter -" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
+                        <TextBlock Text="Category:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_category" Width="140" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <TextBlock Text="Circuit Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_circuit" Width="100" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <TextBlock Text="Mounting:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_mounting" Width="80" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <TextBlock Text="Device Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_device" Width="110" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <TextBlock Text="Conduit Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_conduit" Width="160" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <TextBlock Text="Address Group:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="f_group" Width="120" Margin="0,0,10,0" SelectionChanged="filter_changed"/>
+                        <Button Content="Clear Filters" Width="90" Click="clear_filters_click"/>
+                    </WrapPanel>
+                    <DataGrid x:Name="grid" Grid.Row="3" AutoGenerateColumns="False"
                               CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
-                              SelectionMode="Single" SelectionUnit="FullRow" GridLinesVisibility="All"
+                              SelectionMode="Extended" SelectionUnit="FullRow" GridLinesVisibility="All"
                               HeadersVisibility="Column" MouseDoubleClick="grid_double_click">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
@@ -114,6 +215,7 @@ EDITOR_XAML = """
                             <DataGridTextColumn Header="" Binding="{Binding Arrow}" Width="22" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Family / Type" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="130" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Circuit" Binding="{Binding Circuit}" Width="80" IsReadOnly="True"/>
                             <DataGridComboBoxColumn Header="Mounting" SelectedItemBinding="{Binding Mounting}" Width="90"/>
                             <DataGridComboBoxColumn Header="Device Type" SelectedItemBinding="{Binding DeviceType}" Width="120"/>
                             <DataGridComboBoxColumn Header="Conduit Type" SelectedItemBinding="{Binding ConduitType}" Width="220"/>
@@ -121,6 +223,20 @@ EDITOR_XAML = """
                             <DataGridTextColumn Header="Round To" Binding="{Binding RoundTo}" Width="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
+                    <WrapPanel Grid.Row="4" Margin="0,8,0,0">
+                        <TextBlock Text="Set selected rows -" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
+                        <TextBlock Text="Mounting:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="s_mounting" Width="100" Margin="0,0,10,0"/>
+                        <TextBlock Text="Device Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="s_device" Width="110" Margin="0,0,10,0"/>
+                        <TextBlock Text="Conduit Type:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="s_conduit" Width="160" Margin="0,0,10,0"/>
+                        <TextBlock Text="Address Group:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="s_group" Width="120" Margin="0,0,10,0"/>
+                        <TextBlock Text="Round To:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="s_round" Width="100" Margin="0,0,10,0" IsEditable="True"/>
+                        <Button Content="Apply to Selected" Width="120" Click="apply_selected_click"/>
+                    </WrapPanel>
                 </Grid>
             </TabItem>
             <TabItem Header="Address and Routing Defaults">
@@ -189,15 +305,19 @@ class ConfigEditor(forms.WPFWindow):
     def __init__(self, doc, cfg):
         forms.WPFWindow.__init__(self, EDITOR_XAML, literal_string=True)
         self.doc = doc
-        self._busy = False      # True while values are copied between a family and its types
+        self._busy = False      # True while values are copied between a family and its types, or filled in
+        self._ready = False     # the drop-downs' events wait until the window is filled
+        self._dirty = False     # an edit not saved yet
+        self.circuits = {}      # family name -> circuit text ('SLC', 'NAC', 'SLC + NAC', 'None', NOT_CHECKED)
         self.conduit_labels = mounting_rules.list_conduit_type_labels(doc)
 
         text = clr.GetClrType(String)
         self.dt = DataTable("Families")
-        for name in ("Arrow", "Name", "Category", "Family", "Key", "Search") + tuple(c for c, _f in SETTINGS):
+        for name in (("Arrow", "Name", "Category", "Circuit", "Family", "Key", "Search", "SortKey")
+                     + tuple(c for c, _f in SETTINGS)):
             self.dt.Columns.Add(name, text)
-        self.dt.Columns.Add("IsFamily", clr.GetClrType(Boolean))
-        self.dt.Columns.Add("Expanded", clr.GetClrType(Boolean))
+        for name in ("IsFamily", "Expanded", "Match"):
+            self.dt.Columns.Add(name, clr.GetClrType(Boolean))
         self.dt_elev = DataTable("Elevations")
         self.dt_elev.Columns.Add("ConduitType", text)
         self.dt_elev.Columns.Add("Elevation", text)
@@ -210,6 +330,8 @@ class ConfigEditor(forms.WPFWindow):
         self.dt.ColumnChanged += self._column_changed
         self.dt_groups.RowChanged += self._lists_changed
         self.dt_groups.RowDeleted += self._lists_changed
+        self.dt_elev.ColumnChanged += self._elevation_changed
+        self._ready = True
         if cfg["notes"]:
             self.Loaded += lambda sender, args: forms.alert(
                 "Your settings were filled from the configs this one replaces (they are left as they were):\n\n- "
@@ -223,10 +345,17 @@ class ConfigEditor(forms.WPFWindow):
             self.dt_elev.Clear()
             self.dt_groups.Clear()
             in_project = project_types(self.doc)
+            try:
+                placed = placed_circuits(self.doc)
+            except Exception:
+                placed = {}
             families = set(in_project) | set(cfg["families"]) | set(cc.family_of(k) for k in cfg["types"])
-            self.family_rows, self.type_rows = {}, {}
+            self.family_rows, self.type_rows, self.family_elements = {}, {}, {}
             for family in sorted(families, key=lambda f: f.lower()):
-                category, keys = in_project.get(family, (NOT_LOADED, set()))
+                category, keys, element = in_project.get(family, (NOT_LOADED, set(), None))
+                self.family_elements[family] = element
+                if family not in self.circuits:
+                    self.circuits[family] = placed.get(family, NOT_CHECKED if element is not None else u"")
                 keys = sorted(set(keys) | set(k for k in cfg["types"] if cc.family_of(k) == family))
                 frow = self._new_row(family, family, category, "", True)
                 self.family_rows[family] = frow
@@ -255,14 +384,21 @@ class ConfigEditor(forms.WPFWindow):
             self.notes = list(cfg["notes"])
             for table in (self.dt, self.dt_elev, self.dt_groups):
                 table.AcceptChanges()
+            self._dirty = False
         finally:
             self._busy = False
         self.view = self.dt.DefaultView
+        self._ready = False
+        try:
+            self._set_choices(cfg)
+            self._sort_rows()
+            self._match_rows()
+        finally:
+            self._ready = True
         self._filter()
         self.grid.ItemsSource = self.view
         self.elev_grid.ItemsSource = self.dt_elev.DefaultView
         self.group_grid.ItemsSource = self.dt_groups.DefaultView
-        self._set_choices(cfg)
         self.status_text.Text = "%d families, %d types" % (len(self.family_rows),
                                                            sum(len(v) for v in self.type_rows.values()))
 
@@ -270,8 +406,10 @@ class ConfigEditor(forms.WPFWindow):
         row = self.dt.NewRow()
         row["Arrow"] = CLOSED if is_family else u""
         row["Name"], row["Family"], row["Category"], row["Key"] = name, family, category, key
+        row["Circuit"] = self.circuits.get(family, u"")
         row["Search"] = (key or family).lower()
-        row["IsFamily"], row["Expanded"] = is_family, False
+        row["SortKey"] = u""
+        row["IsFamily"], row["Expanded"], row["Match"] = is_family, False, True
         for column, _f in SETTINGS:
             row[column] = u""
         self.dt.Rows.Add(row)
@@ -300,10 +438,36 @@ class ConfigEditor(forms.WPFWindow):
             return [u""] + base + extra + [VARIES]
 
         columns = self.grid.Columns
-        columns[3].ItemsSource = choices(list(cc.MOUNTINGS), "Mounting")
-        columns[4].ItemsSource = choices(list(cc.DEVICE_TYPES), "DeviceType")
-        columns[5].ItemsSource = choices(list(self.conduit_labels), "ConduitType")
-        columns[6].ItemsSource = choices(groups, "AddressGroup")
+        mountings, devices = list(cc.MOUNTINGS), list(cc.DEVICE_TYPES)
+        conduits = list(self.conduit_labels) + sorted(v for v in used["ConduitType"]
+                                                      if v and v != VARIES and v not in self.conduit_labels)
+        columns[4].ItemsSource = choices(mountings, "Mounting")
+        columns[5].ItemsSource = choices(devices, "DeviceType")
+        columns[6].ItemsSource = choices(list(self.conduit_labels), "ConduitType")
+        columns[7].ItemsSource = choices(groups, "AddressGroup")
+
+        was_ready, self._ready = self._ready, False
+        try:
+            categories = sorted(set(cell_text(r["Category"]) for r in self._live(self.dt)) - set([u""]))
+            for name, items in (("f_category", [ANY] + categories),
+                                ("f_circuit", [ANY, SLC_DEVICES, NAC_DEVICES, NEITHER]),
+                                ("f_mounting", [ANY, BLANK] + mountings), ("f_device", [ANY, BLANK] + devices),
+                                ("f_conduit", [ANY, BLANK] + conduits), ("f_group", [ANY, BLANK] + groups),
+                                ("s_mounting", [NO_CHANGE, CLEAR] + mountings),
+                                ("s_device", [NO_CHANGE, CLEAR] + devices),
+                                ("s_conduit", [NO_CHANGE, CLEAR] + conduits),
+                                ("s_group", [NO_CHANGE, CLEAR] + groups), ("s_round", [NO_CHANGE, CLEAR]),
+                                ("sort_box", [label for label, _c in SORTS])):
+                self._set_items(getattr(self, name), items)
+        finally:
+            self._ready = was_ready
+
+    @staticmethod
+    def _set_items(box, items):
+        """New items for a drop-down, keeping what was chosen when it is still there."""
+        current = box.SelectedItem
+        box.ItemsSource = items
+        box.SelectedItem = current if current in items else items[0]
 
     @staticmethod
     def _live(table):
@@ -312,11 +476,139 @@ class ConfigEditor(forms.WPFWindow):
                 yield row
 
     def _filter(self):
+        """What the grid shows: families and their open types, narrowed by the filters and the search."""
         text = (self.search_box.Text or u"").strip().lower()
-        rule = "(IsFamily = True OR Expanded = True)"
+        show_types = any(column not in FAMILY_FILTERS for column in self._wanted())
+        rule = "Match = True AND (IsFamily = True OR Expanded = True%s)" % (" OR IsFamily = False" if show_types else "")
         if text:
             rule += " AND Search LIKE '*%s*'" % _like(text)
         self.view.RowFilter = rule
+
+    def _wanted(self):
+        """{column: value chosen in its filter}."""
+        wanted = {}
+        for name, column in FILTERS:
+            value = cell_text(getattr(self, name).SelectedItem)
+            if value and value != ANY:
+                wanted[column] = value
+        return wanted
+
+    @staticmethod
+    def _matches(row, wanted):
+        for column, value in wanted.items():
+            have = cell_text(row[column])
+            if column == "Circuit":
+                ok = {SLC_DEVICES: "SLC" in have.split(" + "), NAC_DEVICES: "NAC" in have.split(" + "),
+                      NEITHER: have == "None"}.get(value, False)
+            elif value == BLANK:
+                ok = have == u""
+            else:
+                ok = have == value
+            if not ok:
+                return False
+        return True
+
+    def _match_rows(self):
+        """Match = the row passes the filters; a family passes when any of its types does."""
+        wanted = self._wanted()
+        for family, frow in self.family_rows.items():
+            trows = self.type_rows[family]
+            hits = [self._matches(t, wanted) for t in trows]
+            for trow, hit in zip(trows, hits):
+                trow["Match"] = hit
+            frow["Match"] = any(hits) if trows else self._matches(frow, wanted)
+
+    def _sort_rows(self):
+        """Families in the chosen order, each with its types under it."""
+        column = dict(SORTS).get(cell_text(self.sort_box.SelectedItem))
+        for family, frow in self.family_rows.items():
+            value = cell_text(frow[column]) if column else u""
+            if column == "RoundTo" and value.isdigit():
+                value = value.zfill(6)
+            order = u"%s%s|%s" % ("1" if column and not value else "0", value.lower(), family.lower())
+            frow["SortKey"] = order + u"|0"
+            for trow in self.type_rows[family]:
+                trow["SortKey"] = order + u"|1|" + cell_text(trow["Name"]).lower()
+        self.view.Sort = "SortKey ASC"
+
+    def _check_circuits(self):
+        """Opens the families that aren't placed to see their parameters (once). False if cancelled."""
+        todo = [f for f, c in self.circuits.items() if c == NOT_CHECKED and self.family_elements.get(f) is not None]
+        if not todo:
+            return True
+        cancelled = False
+        with forms.ProgressBar(title="Checking families that aren't placed ({value} of {max_value})",
+                               cancellable=True) as pb:
+            for i, family in enumerate(todo, start=1):
+                if pb.cancelled:
+                    cancelled = True
+                    break
+                self.circuits[family] = family_file_circuit(self.doc, self.family_elements[family])
+                pb.update_progress(i, len(todo))
+        self._busy = True
+        try:
+            for family in todo:
+                self.family_rows[family]["Circuit"] = self.circuits[family]
+                for trow in self.type_rows[family]:
+                    trow["Circuit"] = self.circuits[family]
+        finally:
+            self._busy = False
+        return not cancelled
+
+    def filter_changed(self, sender, args):
+        if not self._ready:
+            return
+        self._commit()
+        if "Circuit" in self._wanted():
+            self._check_circuits()
+        self._match_rows()
+        self._filter()
+
+    def sort_changed(self, sender, args):
+        if not self._ready:
+            return
+        self._commit()
+        if dict(SORTS).get(cell_text(self.sort_box.SelectedItem)) == "Circuit":
+            self._check_circuits()
+        self._sort_rows()
+
+    def clear_filters_click(self, sender, args):
+        self._ready = False
+        try:
+            for name, _column in FILTERS:
+                box = getattr(self, name)
+                box.SelectedIndex = 0
+        finally:
+            self._ready = True
+        self._match_rows()
+        self._filter()
+
+    # ---------- Set selected rows ----------
+    def apply_selected_click(self, sender, args):
+        self._commit()
+        rows = [item.Row for item in list(self.grid.SelectedItems) if getattr(item, "Row", None) is not None]
+        if not rows:
+            self.status_text.Text = "Select the rows to set first (Ctrl+click or Shift+click for several)"
+            return
+        changes = []
+        for name, column in SETTERS:
+            box = getattr(self, name)
+            value = cell_text(box.Text if column == "RoundTo" else box.SelectedItem)
+            if not value or value == NO_CHANGE:
+                continue
+            if value == CLEAR:
+                value = u""
+            elif column == "RoundTo" and (not value.isdigit() or int(value) < 2):
+                forms.alert("Round To must be a whole number, 2 or more (or (clear)).", title=TITLE)
+                return
+            changes.append((column, value))
+        if not changes:
+            self.status_text.Text = "Choose a value to set at the bottom first"
+            return
+        for row in rows:
+            for column, value in changes:
+                row[column] = value
+        self.status_text.Text = "Set on %d selected row(s) (unsaved)" % len(rows)
 
     def _commit(self):
         for grid in (self.grid, self.elev_grid, self.group_grid):
@@ -343,6 +635,7 @@ class ConfigEditor(forms.WPFWindow):
         column = e.Column.ColumnName
         if self._busy or column not in SETTING_COLUMNS:
             return
+        self._dirty = True
         row = e.Row
         family = cell_text(row["Family"])
         self._busy = True
@@ -358,10 +651,16 @@ class ConfigEditor(forms.WPFWindow):
             self._busy = False
 
     def _lists_changed(self, sender, e):
+        if not self._busy:
+            self._dirty = True
         try:
             self._set_choices()
         except Exception:
             pass
+
+    def _elevation_changed(self, sender, e):
+        if not self._busy:
+            self._dirty = True
 
     # ---------- Showing types ----------
     def _expand(self, family, expanded):
@@ -374,9 +673,9 @@ class ConfigEditor(forms.WPFWindow):
 
     def grid_double_click(self, sender, args):
         column = self.grid.CurrentColumn
-        if column is not None and column.DisplayIndex > 2:
+        if column is not None and column.DisplayIndex > 3:
             return      # a double-click on a setting opens its drop-down instead
-        item = self.grid.SelectedItem
+        item = self.grid.CurrentItem
         row = getattr(item, "Row", None)
         if row is None or not row["IsFamily"]:
             return
@@ -406,12 +705,15 @@ class ConfigEditor(forms.WPFWindow):
         self._commit()
         self._filter()
 
+
     # ---------- Lists on the second tab ----------
     def _delete_selected(self, grid):
         self._commit()
         victims = [i for i in list(grid.SelectedItems) if hasattr(i, "Row")]
         for item in victims:
             item.Row.Delete()
+        if victims:
+            self._dirty = True
         self.status_text.Text = "%d row(s) deleted (unsaved)" % len(victims)
 
     def delete_group_click(self, sender, args):
@@ -497,10 +799,11 @@ class ConfigEditor(forms.WPFWindow):
             return
         for table in (self.dt, self.dt_elev, self.dt_groups):
             table.AcceptChanges()
+        self._dirty = False
         self.status_text.Text = "Saved"
 
     def _unsaved(self):
-        return any(t.GetChanges() is not None for t in (self.dt, self.dt_elev, self.dt_groups))
+        return self._dirty
 
     # ---------- File ----------
     def open_click(self, sender, args):

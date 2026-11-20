@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-# Family Defaults Config script - version v4
-__title__ = "Family Defaults Config v4"
+# Family Defaults Config script - version v5
+__title__ = "Family Defaults Config v5"
 __doc__ = ("One settings window for routing and addressing, used by Auto Circuit - SLC, NAC and Voice.\n\n"
            "Family Defaults: every Fire Alarm Device and Electrical Equipment family in the project, with its "
            "types under it (double-click a family). Set Mounting (Wall / Ceiling), Device Type (NAC Only, Voice "
            "Only, NAC and Voice, Module, Detector, Head End), Conduit Type, Address Group and Round To (a number "
            "you type). A value "
-           "set on a family is set on all its types; <varies> means its types differ.\n\n"
+           "set on a family is set on all its types; <varies> means its types differ. Select several rows "
+           "(Ctrl+click / Shift+click) and set them together at the bottom; filter by Category, Circuit Type (SLC: "
+           "SLC Address parameters, NAC: a Notification Circuit parameter), Mounting, Device Type, Conduit Type or "
+           "Address Group, and sort by any of them.\n\n"
            "Address and Routing Defaults: the elevation runs of each conduit type are drawn at, and the Address "
            "Groups: each group has subgroups with their own number of addresses (MMS Cabinet: Single Zone 6, Dual "
            "Zone 12 ...); a device of a group with several subgroups chooses one when it is addressed.\n\n"
