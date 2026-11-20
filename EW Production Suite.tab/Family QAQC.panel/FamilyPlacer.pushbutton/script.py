@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-# Family Placer script - version v3
+# Family Placer script - version v4
+# v4 - loaded families by category now come from lib/family_qaqc.py (shared with Family Audit)
 # v3 - model families placed 5.5 ft above the level; type name labels removed (family names only)
 # v2 - text labels: family name to the left of each row, type name above each instance
-__title__ = "Family\nPlacer v3"
+__title__ = "Family\nPlacer v4"
 __doc__ = ("Places one of every loaded type of a chosen category in a grid, like a table: each row is a family "
            "and each column is one of that family's types. Pick the category, the families to include, the "
            "spacing (6 ft by default) and the top-left corner of the grid in a plan view. Model families are placed 5.5 ft above the level. Each row is labeled with its family name, using the project's default text type. Families that need a "
@@ -11,7 +12,7 @@ __doc__ = ("Places one of every loaded type of a chosen category in a grid, like
 import re
 from pyrevit import revit, forms
 from Autodesk.Revit.DB import (
-    XYZ, FilteredElementCollector, FamilySymbol, FamilyPlacementType, CategoryType, ViewPlan,
+    XYZ, FilteredElementCollector, FamilySymbol, FamilyPlacementType, ViewPlan,
     Transaction, SubTransaction, ElementId, BuiltInParameter, ElementTypeGroup, TextNote, TextNoteType, TextNoteOptions,
     HorizontalTextAlignment, VerticalTextAlignment
 )
@@ -20,6 +21,7 @@ from Autodesk.Revit.UI.Selection import ObjectSnapTypes
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 from ew_common import type_name, commit     # shared helpers (lib/ew_common.py)
+from family_qaqc import natural, loaded_by_category     # lib/family_qaqc.py
 
 TITLE = "Family Placer"
 DEFAULT_SPACING = "6'"
@@ -34,32 +36,7 @@ uidoc = revit.uidoc
 PLAIN = (FamilyPlacementType.OneLevelBased, FamilyPlacementType.TwoLevelsBased)
 
 
-# ---------- Reading the loaded families ----------
-def natural(text):
-    """Sort key that puts 'Type 2' before 'Type 10'."""
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", text or "")]
-
-
-def loaded_by_category():
-    """{category name: {family name: [FamilySymbol, ...]}} for every placeable loaded family."""
-    out = {}
-    for s in FilteredElementCollector(doc).OfClass(FamilySymbol).ToElements():
-        try:
-            fam = s.Family
-            cat = s.Category
-            if fam is None or cat is None or fam.IsInPlace:
-                continue
-            if cat.CategoryType == CategoryType.Annotation and "Tag" in cat.Name:
-                continue            # tags are placed on elements, not on their own
-            out.setdefault(cat.Name, {}).setdefault(fam.Name, []).append(s)
-        except Exception:
-            continue
-    for fams in out.values():
-        for name in fams:
-            fams[name].sort(key=lambda s: natural(type_name(s)))
-    return out
-
-
+# ---------- Picking families ----------
 class FamilyItem(forms.TemplateListItem):
     """A family in the pick list, shown with its type count."""
     def __init__(self, name, count):
@@ -166,7 +143,7 @@ def main():
         return
     level = view.GenLevel
 
-    cats = loaded_by_category()
+    cats = loaded_by_category(doc)
     if not cats:
         forms.alert("No placeable families are loaded in this model.", title=TITLE)
         return
