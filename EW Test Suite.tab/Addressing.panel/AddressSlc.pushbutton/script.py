@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v6
-__title__ = "Address\nSLC v6"
+# Address SLC script - version v7
+__title__ = "Address\nSLC v7"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -18,14 +18,15 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "Shift+Click opens Address SLC - Config. Press Esc to finish picking.")
 
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import Transaction, TransactionStatus, IndependentTag, ElementId
+from Autodesk.Revit.DB import Transaction, TransactionStatus, ElementId
 from Autodesk.Revit.DB.Electrical import Conduit
-from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
+from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
 import slc_addressing as slc
 import slc_config_editor
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -45,58 +46,11 @@ except NameError:
 
 
 # ---------- Devices and tags ----------
-def tagged_host_ids(tag):
-    """ElementIds of local elements a tag is hosted to (version tolerant)."""
-    try:
-        return list(tag.GetTaggedLocalElementIds())     # Revit 2022+
-    except Exception:
-        pass
-    try:
-        return [tag.TaggedLocalElementId]               # older Revit
-    except Exception:
-        return []
 
 
-def resolve_device(elem):
-    """The device for a picked element (a device, or a tag hosted to one), or None."""
-    if elem is None:
-        return None
-    if slc.is_device(elem):
-        return elem
-    if isinstance(elem, IndependentTag):
-        for eid in tagged_host_ids(elem):
-            try:
-                host = doc.GetElement(eid)
-            except Exception:
-                continue
-            if host is not None and slc.is_device(host):
-                return host
-    return None
-
-
-class DeviceOrTagFilter(ISelectionFilter):
-    """Allows devices, or tags hosted to a device; with conduit=True also conduit (to follow it)."""
-    def __init__(self, conduit=False):
-        self.conduit = conduit
-
-    def AllowElement(self, elem):
-        try:
-            if self.conduit and isinstance(elem, Conduit):
-                return True
-            return resolve_device(elem) is not None
-        except Exception:
-            return False
-
-    def AllowReference(self, ref, pt):
-        return False
-
-
-class ConduitFilter(ISelectionFilter):
-    def AllowElement(self, elem):
-        return isinstance(elem, Conduit)
-
-    def AllowReference(self, ref, pt):
-        return False
+resolve_device = ec.resolve_device          # from ew_common
+DeviceOrTagFilter = ec.DeviceOrTagFilter    # from ew_common
+ConduitFilter = ec.ConduitFilter            # from ew_common
 
 
 MANUAL_LABEL = "Manual - pick each device"

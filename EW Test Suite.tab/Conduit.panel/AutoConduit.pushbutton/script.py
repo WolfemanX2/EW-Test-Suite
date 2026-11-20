@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto Conduit script - version v5
-__title__ = "Auto\nConduit v5"
+# Auto Conduit script - version v6
+__title__ = "Auto\nConduit v6"
 __doc__ = ("Pick devices or their tags in order (Esc when finished, then confirm); plans orthogonal conduit "
            "for the whole chain, choosing connectors to keep front approaches open, at a chosen elevation "
            "from the current view's level. Wall devices (per Auto Conduit - Config) are entered from the "

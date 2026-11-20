@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v32
-__title__ = "SLC\nRiser v32"
+# SLC Riser script - version v33
+__title__ = "SLC\nRiser v33"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -43,7 +43,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
-    ElementId, BuiltInParameter, IndependentTag, ElementTransformUtils, GroupType, SketchPlane, Plane,
+    ElementId, BuiltInParameter, ElementTransformUtils, GroupType, SketchPlane, Plane,
     ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference
 )
 from System.Collections.Generic import List
@@ -53,7 +53,7 @@ except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol, CurveElement
-from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter, ObjectSnapTypes
+from Autodesk.Revit.UI.Selection import ObjectType, ObjectSnapTypes
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
@@ -65,6 +65,7 @@ import System
 
 import slc_riser as sr
 import riser_layout as rl
+import ew_common as ec        # shared helpers (lib/ew_common.py)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -108,44 +109,9 @@ def paper(inches):
 
 
 # ---------- Starting element ----------
-def tagged_hosts(tag):
-    """Local elements a tag is hosted to (version tolerant)."""
-    ids = []
-    try:
-        ids = list(tag.GetTaggedLocalElementIds())      # Revit 2022+
-    except Exception:
-        try:
-            ids = [tag.TaggedLocalElementId]            # older Revit
-        except Exception:
-            ids = []
-    hosts = []
-    for eid in ids:
-        try:
-            el = doc.GetElement(eid)
-        except Exception:
-            el = None
-        if el is not None:
-            hosts.append(el)
-    return hosts
 
 
-def resolve(elem, ok):
-    """elem itself if ok(elem), or the first element a picked tag is hosted to that is ok; else None."""
-    if elem is None:
-        return None
-    try:
-        if ok(elem):
-            return elem
-    except Exception:
-        pass
-    if isinstance(elem, IndependentTag):
-        for host in tagged_hosts(elem):
-            try:
-                if ok(host):
-                    return host
-            except Exception:
-                pass
-    return None
+resolve = ec.resolve_pick                   # from ew_common: elem, or the element its tag is hosted to
 
 
 def is_conduit_source(el):
@@ -156,19 +122,7 @@ def is_addressed_device(el):
     return sr.is_device(el) and len(sr.slc_addresses(el)) > 0
 
 
-class ElementOrTagFilter(ISelectionFilter):
-    """Allows elements that pass ok, or tags hosted to one."""
-    def __init__(self, ok):
-        self.ok = ok
-
-    def AllowElement(self, elem):
-        try:
-            return resolve(elem, self.ok) is not None
-        except Exception:
-            return False
-
-    def AllowReference(self, ref, pt):
-        return False
+ElementOrTagFilter = ec.PickFilter          # from ew_common
 
 
 def starting_element():

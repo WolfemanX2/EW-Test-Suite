@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Link Clash script - version v12
-__title__ = "Link\nClash v12"
+# Link Clash script - version v13
+__title__ = "Link\nClash v13"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
            "When it finishes, the selected elements that clash are left selected and a results window "
@@ -22,7 +22,7 @@ from Autodesk.Revit.DB import (
     BooleanOperationsUtils, BooleanOperationsType,
     Transaction, SubTransaction, TransactionStatus, Line, Arc, CurveLoop,
     GeometryCreationUtilities, ElementTransformUtils, BuiltInParameter, Domain, ConnectorType,
-    FamilyInstance
+    FamilyInstance, IndependentTag
 )
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI import RevitCommandId, PostableCommand
@@ -34,7 +34,7 @@ from System.Windows.Controls.Primitives import Selector
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
-from ew_common import eid     # ElementId number helper (lib/ew_common.py)
+from ew_common import eid, tagged_hosts     # shared helpers (lib/ew_common.py)
 
 try:
     import clash_rules          # lib/clash_rules.py, edited with the Link Clash - Config tool
@@ -196,15 +196,18 @@ def get_selection():
     if not ids:
         try:
             refs = uidoc.Selection.PickObjects(ObjectType.Element,
-                                               "Select elements to clash-test against the links, then Finish")
+                                               "Select elements (or their tags) to clash-test against the links, then Finish")
         except OperationCanceledException:
             return []
         ids = [r.ElementId for r in refs]
-    out = []
+    out, seen = [], set()
     for i in ids:
         el = doc.GetElement(i)
-        if el is not None and not isinstance(el, RevitLinkInstance):
-            out.append(el)
+        # A tag stands for the element it is hosted to.
+        for e in (tagged_hosts(el) if isinstance(el, IndependentTag) else [el]):
+            if e is not None and not isinstance(e, RevitLinkInstance) and eid(e) not in seen:
+                seen.add(eid(e))
+                out.append(e)
     return out
 
 

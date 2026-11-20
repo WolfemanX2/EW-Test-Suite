@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# conduit_routing module - version v2
+# conduit_routing module - version v3
 # Change log (last change first):
+#   v3 - Code consolidation step 4 (Auto Conduit v6, Auto-Circuit v7): picking a device or its tag, Shift+click and
+#        the pick highlight come from ew_common. A tag can only be picked when it is hosted to a
+#        family instance in this model (other tags used to be pickable and then refused).
 #   v2 - Code consolidation step 3 (no tool change): eid comes from ew_common.
 #   v1 - Code consolidation step 1 (Auto Conduit v5, Auto-Circuit v5): the routing both tools use, moved
 #        here unchanged from Auto Conduit v4.
@@ -19,13 +22,10 @@ from pyrevit import forms
 from Autodesk.Revit.DB import (
     XYZ, Domain, FilteredElementCollector, BuiltInCategory,
     ElementMulticategoryFilter, BoundingBoxIntersectsFilter, Outline,
-    BuiltInParameter, Transaction, FamilyInstance, IndependentTag,
-    OverrideGraphicSettings, Color, FillPatternElement, ElementTransformUtils
+    BuiltInParameter, Transaction, FamilyInstance, ElementTransformUtils
 )
 from Autodesk.Revit.DB.Electrical import Conduit, ConduitType
-from Autodesk.Revit.UI.Selection import ISelectionFilter
 from System.Collections.Generic import List
-from System.Windows.Input import Keyboard, ModifierKeys
 
 import mounting_rules
 import ew_common as ec        # shared helpers (lib/ew_common.py)
@@ -115,13 +115,14 @@ def element_label(el):
         return "id {}".format(eid(el))
 
 
-class DeviceOrTagFilter(ISelectionFilter):
-    """Accepts family instances (devices) and tags."""
-    def AllowElement(self, e):
-        return isinstance(e, FamilyInstance) or isinstance(e, IndependentTag)
+def _is_family_instance(e):
+    return isinstance(e, FamilyInstance)
 
-    def AllowReference(self, r, p):
-        return False
+
+class DeviceOrTagFilter(ec.PickFilter):
+    """Accepts family instances (devices, boxes, panels), or tags hosted to one in this model."""
+    def __init__(self):
+        ec.PickFilter.__init__(self, _is_family_instance)
 
 
 def conduit_connectors(el):
@@ -142,32 +143,10 @@ def conduit_connectors(el):
     return out
 
 
-def tagged_elements(tag):
-    """Elements in this model that a tag is hosted to."""
-    out = []
-    try:
-        out = list(tag.GetTaggedLocalElements())
-    except Exception:
-        try:
-            e = doc.GetElement(tag.TaggedLocalElementId)
-            if e is not None:
-                out = [e]
-        except Exception:
-            pass
-    return out
-
-
 def resolve_element(el):
-    """A picked device returns itself; a picked tag returns the family instance it tags (or None)."""
-    if isinstance(el, FamilyInstance):
-        return el
-    if isinstance(el, IndependentTag):
-        cands = [e for e in tagged_elements(el) if isinstance(e, FamilyInstance)]
-        for e in cands:
-            if conduit_connectors(e):
-                return e
-        return cands[0] if cands else None
-    return None
+    """A picked device returns itself; a picked tag returns the family instance it tags, preferring one with
+    conduit connectors (or None)."""
+    return ec.resolve_pick(el, _is_family_instance, prefer=lambda e: bool(conduit_connectors(e)))
 
 
 def is_up(c):
@@ -828,50 +807,15 @@ def create_link(a, b, pts, ctype, level_id):
 
 def make_highlight():
     """Graphic override used to mark picked devices, or None if it can't be built."""
-    try:
-        col = Color(*HIGHLIGHT_COLOR)
-        ogs = OverrideGraphicSettings()
-        ogs.SetProjectionLineColor(col)
-        ogs.SetProjectionLineWeight(HIGHLIGHT_WEIGHT)
-    except Exception:
-        return None
-    try:   # solid colour fill as well, where the Revit version supports it
-        for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
-            if fp.GetFillPattern().IsSolidFill:
-                ogs.SetSurfaceForegroundPatternId(fp.Id)
-                ogs.SetSurfaceForegroundPatternColor(col)
-                break
-    except Exception:
-        pass
-    return ogs
+    return ec.make_highlight(doc, HIGHLIGHT_COLOR, HIGHLIGHT_WEIGHT)
 
 
 def highlight(ogs, ids):
     """Apply the highlight override to elements in the active view. Returns False if Revit refused."""
-    t = Transaction(doc, "{} highlight".format(TOOL_NAME))
-    try:
-        t.Start()
-        view = doc.ActiveView
-        for i in ids:
-            view.SetElementOverrides(i, ogs)
-        t.Commit()
-        uidoc.RefreshActiveView()
-        return True
-    except Exception:
-        try:
-            if t.HasStarted() and not t.HasEnded():
-                t.RollBack()
-        except Exception:
-            pass
-        return False
+    return ec.highlight(doc, uidoc, ogs, ids, TOOL_NAME)
 
 
-def shift_down():
-    """True while a Shift key is held."""
-    try:
-        return (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift
-    except Exception:
-        return False
+shift_down = ec.shift_down      # from ew_common
 
 
 def print_debug(z_target):

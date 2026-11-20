@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v3
+# nac_voice_addressing module - version v4
 # Change log (last change first):
+#   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
+#        ew_common.
 #   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
 #   v2 - Auto-Circuit v4, Address SLC v5, Address NAC v2, Address Voice v2: circuit choice menu (Continue
 #        from Selected / New Circuit / Continue from Existing Circuit).
@@ -13,10 +15,10 @@ Each button runs main() with its kind ("N" or "V")."""
 import os
 
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import (Transaction, TransactionStatus, FilteredElementCollector, IndependentTag,
+from Autodesk.Revit.DB import (Transaction, TransactionStatus, FilteredElementCollector,
                                ElementId, BuiltInParameter, BuiltInCategory)
 from Autodesk.Revit.DB.Electrical import Conduit
-from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
+from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
@@ -43,41 +45,8 @@ def all_devices():
     return found
 
 
-def tagged_host_ids(tag):
-    """ElementIds of local elements a tag is hosted to (version tolerant)."""
-    try:
-        return list(tag.GetTaggedLocalElementIds())     # Revit 2022+
-    except Exception:
-        pass
-    try:
-        return [tag.TaggedLocalElementId]               # older Revit
-    except Exception:
-        return []
-
-
-def resolve_device(elem):
-    """The device for a picked element (a device, or a tag hosted to one), or None."""
-    if elem is None:
-        return None
-    if nv.is_device(elem):
-        return elem
-    if isinstance(elem, IndependentTag):
-        for eid in tagged_host_ids(elem):
-            try:
-                host = doc.GetElement(eid)
-            except Exception:
-                continue
-            if host is not None and nv.is_device(host):
-                return host
-    return None
-
-
-class ConduitFilter(ISelectionFilter):
-    def AllowElement(self, elem):
-        return isinstance(elem, Conduit)
-
-    def AllowReference(self, ref, pt):
-        return False
+resolve_device = ec.resolve_device          # from ew_common
+ConduitFilter = ec.ConduitFilter            # from ew_common
 
 
 MANUAL_LABEL = "Manual - pick each device"
@@ -86,21 +55,7 @@ FINISH_LABEL = "Finish"
 CONTINUE_LABEL = "Continue adding to %s"
 
 
-class DeviceOrTagFilter(ISelectionFilter):
-    """Allows devices, or tags hosted to a device; with conduit=True also conduit (to address downstream)."""
-    def __init__(self, conduit=False):
-        self.conduit = conduit
-
-    def AllowElement(self, elem):
-        try:
-            if self.conduit and isinstance(elem, Conduit):
-                return True
-            return resolve_device(elem) is not None
-        except Exception:
-            return False
-
-    def AllowReference(self, ref, pt):
-        return False
+DeviceOrTagFilter = ec.DeviceOrTagFilter    # from ew_common
 
 
 # ---------- Lookup table ----------
