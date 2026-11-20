@@ -12,11 +12,11 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoConduit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto Conduit - Configurable
 - Automatically draws conduit between devices in order of selection.
-- **Auto Conduit - Config:** sets each family's mounting (Wall/Ceiling) and conduit type
+- **Auto Circuit - Config:** mounting (Wall/Ceiling), conduit type and conduit elevations
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AutoCircuit.pushbutton/icon.png" width="32" height="32" alt=""></picture> Auto-Circuit - Configurable
 - Draws conduit between devices and addresses them based on order of selection. It can also insert new devices into an existing circuit and renumber the devices after them.
-- **Auto Conduit - Config**, **Address SLC - Config** and **Address NAC / Voice - Config:** Auto-Circuit uses their settings and has no config of its own
+- **Auto Circuit - Config:** mounting, conduit type, Device Type, Address Groups and rounding
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Clash.panel/LinkClash.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Clash.panel/LinkClash.pushbutton/icon.png" width="32" height="32" alt=""></picture> Link Clash - Configurable
 - Checks selected elements for clashes with MEP and structural elements in loaded Revit links and lists them in a results window with statuses. Auto Fix can shift or jog a clashing conduit to clear it.
@@ -24,15 +24,15 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressSlc.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address SLC - Configurable
 - Fills in the SLC addresses of devices in the order you select them. It can also address them automatically by following the conduit downstream from a selected device.
-- **Address SLC - Config:** sets the address rules for each device type; types set to **Head End** (panel, power supplies) are never addressed
+- **Auto Circuit - Config:** Device Type (Module, Detector or **Head End**, never addressed), Address Group and rounding
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
 - Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Current and estimated Circuit Voltage.
-- **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
+- **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Addressing%20and%20Conduit%20Tools.pulldown/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
 - Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Wattage.
-- **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
+- **Auto Circuit - Config:** Device Type (NAC, Voice, both, or **Head End**, never addressed)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
@@ -40,7 +40,7 @@ Tools being replaced are kept in the **Obsolete** panel at the end of the tab, i
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Coverage.panel/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Coverage.panel/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
-- **Auto Conduit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
+- **Auto Circuit - Config:** its Wall/Ceiling setting decides how each device's coverage is laid out
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Obsolete.panel/Template%20Cleanup.pulldown/LineNuke.pushbutton/icon.png" width="32" height="32" alt=""></picture> Line Nuke
 - Creates the 15 standard "Detail Line - Color - Size" line styles and merges any line styles with the same color, weight and pattern into them.
@@ -100,9 +100,8 @@ pyRevit Settings > Custom Extension Directories. Update later with `git pull` in
 
 ## Saved settings
 
-Every config tool saves each user's settings in `%APPDATA%\pyRevit\EWTestSuite\` (Address SLC - Config uses
-`%APPDATA%\MyTools\`, shared with the standalone add-in), so pyRevit updates and reinstalls never overwrite or
-remove them. All of them are read and written by `lib/config_store.py`.
+Every config tool saves each user's settings in `%APPDATA%\pyRevit\EWTestSuite\`, so pyRevit updates and
+reinstalls never overwrite or remove them. All of them are read and written by `lib/config_store.py`.
 
 **Office defaults:** put a default file in `config/` and a user with no settings file yet starts from a copy of
 it. Users who already have their own file keep it.
@@ -110,14 +109,12 @@ it. Users who already have their own file keep it.
 | Config tool | User's file | Office default in `config/` |
 |---|---|---|
 | Auto Circuit - Config | `circuit_config.json` | `circuit_config.default.json` |
-| Auto Conduit - Config | `mounting_rules.json` | `mounting_rules.default.json` |
 | Link Clash - Config | `clash_rules.json` | `clash_rules.default.json` |
-| Address SLC - Config | `AddressCounts.json` (in `MyTools`) | `address_config.default.json` |
-| Address NAC / Voice - Config | `nac_voice_types.json` | `nac_voice_types.default.json` |
 | SLC Riser - Config (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
 | SLC Riser - Config (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
 
-Auto Circuit - Config replaces Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config (being built: the tools don't read it yet). The first time it opens, it is filled from those three files, which are only read.
+Auto Circuit - Config replaced Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config (being
+built: the tools still read those three files until the next step). The first time it opens, it is filled from them.
 
 To make everyone share one file instead, set the `*_PATH` setting at the top of that config's `lib` file to a
 network location (then no default is copied).
@@ -138,29 +135,13 @@ network location (then no default is copied).
   with **Reset to office defaults** in Link Clash - Config, then Save.
 - To make everyone share one rules file instead, set `RULES_PATH` in `lib/clash_rules.py` to a network location.
 
-### Address SLC - Config: default + each user's copy
-
-- Each user's own table is `%APPDATA%\MyTools\AddressCounts.json`, the same file and format as the
-  standalone Address Devices add-in, so both can be used side by side. Only the Address SLC - Config tool
-  changes it; pyRevit updates never overwrite it.
-- `config/address_config.default.json` (in this repository) is the office default. It is empty until rules are
-  put in it: set them up in Address SLC - Config, click **Open Table File**, and paste that file's contents here
-  on GitHub. A user with no table yet then starts from a copy of it.
-- **Load Default Config...** in Address SLC - Config opens at that file (or at the last default file the user
-  chose, which can be anywhere), and after a confirmation replaces the user's table with its rules. The default
-  file is only read. The previous table is kept as `AddressCounts.backup.json`.
-- To make everyone edit one table instead, set `TABLE_PATH` in `lib/slc_addressing.py` to a network location.
-
 ### Other settings
 
 - Conduit routing settings for Auto Conduit and Auto-Circuit (obstacle avoidance, stub and leg lengths, default
   elevation, highlight color, prompt wording) are at the top of `lib/conduit_routing.py`. Both tools use the same
   routing code from that file, so a change there applies to both.
-- Auto Conduit - Config: `%APPDATA%\pyRevit\EWTestSuite\mounting_rules.json` per user. It used to be kept in
-  `lib\mounting_rules.json`; that file is copied over the first time any tool reads the settings, and can then be
-  deleted. To share it, set `RULES_PATH` in `lib/mounting_rules.py` to a network location.
-- NAC / Voice lookup table: `%APPDATA%\pyRevit\EWTestSuite\nac_voice_types.json` per user. pyRevit updates never
-  overwrite it. To share it, set `TABLE_PATH` in `lib/nac_voice_types.py` to a network location.
+- Auto Circuit - Config: `%APPDATA%\pyRevit\EWTestSuite\circuit_config.json` per user. To share it, set
+  `CONFIG_PATH` in `lib/circuit_config.py` to a network location.
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/slc_riser.py` to a network location.
 - Riser drawing settings (view scale, spacing, devices per line, text offset): `%APPDATA%\pyRevit\EWTestSuite\riser_settings.json`
@@ -184,7 +165,6 @@ share are in `lib/addressing_ui.py`.
 | lib/circuit_config.py | v2 |
 | lib/circuit_config_editor.py | v2 |
 | Auto Conduit | v6 |
-| Auto Conduit - Config | v3 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
@@ -193,14 +173,12 @@ share are in `lib/addressing_ui.py`.
 | lib/clash_rules.py | v6 |
 | Address SLC | v12 |
 | lib/slc_session.py | v3 |
-| Address SLC - Config | v4 |
 | lib/slc_addressing.py | v8 |
 | lib/slc_config_editor.py | v4 |
 | Address NAC | v6 |
 | Address Voice | v6 |
 | lib/nac_voice_addressing.py | v8 |
 | lib/nac_voice_eol.py | v1 |
-| Address NAC / Voice - Config | v5 |
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
