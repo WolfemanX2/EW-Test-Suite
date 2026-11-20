@@ -23,11 +23,11 @@ Every tool's settings window lives in the **Tool Configs** drop-down (its own pa
 - **Address SLC - Config:** sets the address rules for each device type; types set to **Head End** (panel, power supplies) are never addressed
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Addressing.panel/AddressNac.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Addressing.panel/AddressNac.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address NAC - Configurable
-- Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and estimates the circuit's current and EOL voltage.
+- Fills in NAC addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Current and estimated Circuit Voltage.
 - **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Addressing.panel/AddressVoice.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Addressing.panel/AddressVoice.pushbutton/icon.png" width="32" height="32" alt=""></picture> Address Voice - Configurable
-- Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device.
+- Fills in Voice addresses and circuits on devices in the order you select them, or automatically along the conduit from a selected device. It also marks the end-of-line device and fills each device's Circuit Wattage.
 - **Address NAC / Voice - Config:** sets whether each device type is NAC, Voice, both, or **Head End** (never addressed)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
@@ -175,7 +175,7 @@ share are in `lib/addressing_ui.py`.
 | lib/config_store.py | v1 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v3 |
-| Auto-Circuit | v11 |
+| Auto-Circuit | v12 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v2 |
@@ -186,11 +186,13 @@ share are in `lib/addressing_ui.py`.
 | Address SLC - Config | v4 |
 | lib/slc_addressing.py | v8 |
 | lib/slc_config_editor.py | v4 |
-| Address NAC | v5 |
-| Address Voice | v5 |
-| lib/nac_voice_addressing.py | v7 |
-| Address NAC / Voice - Config | v4 |
-| lib/nac_voice_types.py | v10 |
+| Address NAC | v6 |
+| Address Voice | v6 |
+| lib/nac_voice_addressing.py | v8 |
+| lib/nac_voice_eol.py | v1 |
+| Address NAC / Voice - Config | v5 |
+| lib/nac_voice_config_editor.py | v1 |
+| lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v34 |
 | SLC Riser - Config | v7 |

@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v10
+# nac_voice_types module - version v11
 # Change log (last change first):
+#   v11 - Address NAC v6 / Address Voice v6 / Auto-Circuit v12: the circuit totals parameters (Circuit Current,
+#         Circuit Voltage, Circuit Wattage), get_wattage (Wattage), fmt_volts / fmt_watts; scan_existing can read
+#         one kind only. The EOL estimate is no longer written to Comments (fmt_eol_comment, EOL_COMMENT_KINDS
+#         removed; is_eol_comment kept to clear old ones).
 #   v10 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store;
 #         a new user starts from config/nac_voice_types.default.json when it is added.
 #   v9 - Code consolidation step 5 (Auto-Circuit v9): all_devices, address_on and scan_existing (the devices
@@ -9,7 +13,6 @@
 #        device type (never addressed) and type_options().
 #   v7 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORIES come
 #        from ew_common.
-#   v6 - Address NAC v1 / Address Voice v1: Address NAC / Voice split into two tools.
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -18,6 +21,7 @@ Address NAC / Voice - Config tool (or Shift+Click on Address NAC / Voice). Updat
 import re
 
 from Autodesk.Revit.DB import StorageType, FilteredElementCollector
+import Autodesk.Revit.DB as DB    # unit and data type names, which differ between Revit versions
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
 
@@ -61,26 +65,30 @@ VALUE_PATTERNS = {
 CURRENT_PARAM_NAMES = ["Current"]
 DEFAULT_MAX_CURRENT = 1.2   # amps
 
-# EOL estimate written to the Comments of the last NAC device: total circuit current and the voltage left at the
-# end of the line, point to point. Each conduit segment carries the current of every device past it, through
-# two conductors (out and back). Conduit length only: no allowance for fittings, boxes or slack.
+# Voice device load: the first of these names found on the device (instance first, then its type). A number or
+# electrical power parameter is in watts; a text value such as "0.5 W", "1/4 W" or "500 mW" is read too.
+WATTAGE_PARAM_NAMES = ["Wattage"]
+
+# Circuit totals (lib/nac_voice_eol.py), text parameters filled on every device of a circuit by its position:
+#   Circuit Current  NAC: the current of the devices numbered up to and including this one
+#   Circuit Voltage  NAC: the voltage left at the device, point to point. Each conduit segment carries the
+#                    current of every device past it, through two conductors (out and back); conduit length
+#                    only, no allowance for fittings, boxes or slack; the home run to the power supply included
+#                    when it is connected
+#   Circuit Wattage  Voice: the wattage of the devices numbered up to and including this one (no voltage drop)
+CIRCUIT_CURRENT_PARAM = "Circuit Current"
+CIRCUIT_VOLTAGE_PARAM = "Circuit Voltage"
+CIRCUIT_WATTAGE_PARAM = "Circuit Wattage"
 SOURCE_VOLTS = 20.4             # 24 V battery at end of discharge
 WIRE_OHMS_PER_1000FT = 3.07     # 14 AWG
-EOL_COMMENT_KINDS = ("N",)      # Voice circuits get no estimate
-MIN_DEVICE_VOLTS = 17.25         # warn when the estimate is below this
+MIN_DEVICE_VOLTS = 17.25        # warn when a device's estimate is below this
+# The EOL estimate Address NAC wrote to the EOL device's Comments before the totals had their own parameters.
 _COMMENT_PATTERN = re.compile(r"^\s*\d+(\.\d+)?\s*A(\s*,\s*EOL\s+-?\d+(\.\d+)?\s*V)?\s*$", re.IGNORECASE)
 
 
-def fmt_eol_comment(amps, volts):
-    """1.150 A, EOL 19.82 V  (or just the amps when the voltage couldn't be worked out)."""
-    text = "%.3f A" % amps
-    if volts is not None:
-        text += ", EOL %.2f V" % volts
-    return text
-
-
 def is_eol_comment(text):
-    """True for a comment this tool wrote (safe to clear when the device is no longer the EOL)."""
+    """True for an EOL estimate an older Address NAC wrote to Comments (safe to clear: the totals now have their
+    own parameters)."""
     return bool(text) and bool(_COMMENT_PATTERN.match(text))
 
 
@@ -201,8 +209,77 @@ def _param_amps(p):
     return None
 
 
-def get_current(doc, el):
-    """The device's Current in amps, or None if it has no Current parameter or no value."""
+# "0.5 W", "1/4W", "500 mW", "0.25 VA"
+_POWER = re.compile(r"([0-9]*\.?[0-9]+)(?:\s*/\s*([0-9]*\.?[0-9]+))?(?:\s*([km]?)(?:w|va)\b)?", re.IGNORECASE)
+_WATTS_PER_INTERNAL = 0.09290304   # Revit keeps power in kg.ft2/s3: 1 W = 10.7639 of them
+
+
+def _text_watts(text):
+    m = _POWER.search(text or "")
+    if not m:
+        return None
+    value = float(m.group(1))
+    if m.group(2):
+        divisor = float(m.group(2))
+        if divisor == 0:
+            return None
+        value /= divisor
+    prefix = (m.group(3) or "").lower()
+    if prefix == "k":
+        value *= 1000.0
+    elif prefix == "m":
+        value /= 1000.0
+    return value
+
+
+def _is_power(definition):
+    """True for an electrical power / apparent power parameter, False for any other kind, None if it can't be
+    told (then the value Revit shows is read instead)."""
+    try:
+        spec = definition.GetDataType()                    # Revit 2022+
+        return spec == DB.SpecTypeId.ElectricalPower or spec == DB.SpecTypeId.ApparentPower
+    except Exception:
+        pass
+    try:
+        kind = definition.ParameterType                     # Revit 2021 and older
+        return kind in (DB.ParameterType.ElectricalPower, DB.ParameterType.ElectricalApparentPower)
+    except Exception:
+        return None
+
+
+def _internal_watts(value):
+    try:
+        return DB.UnitUtils.ConvertFromInternalUnits(value, DB.UnitTypeId.Watts)            # Revit 2021+
+    except Exception:
+        pass
+    try:
+        return DB.UnitUtils.ConvertFromInternalUnits(value, DB.DisplayUnitType.DUT_WATTS)   # older
+    except Exception:
+        return value * _WATTS_PER_INTERNAL
+
+
+def _param_watts(p):
+    """Watts held by a parameter, or None if it is empty or not a number."""
+    try:
+        if not p.HasValue:
+            return None
+    except Exception:
+        pass
+    st = p.StorageType
+    if st == StorageType.Double:
+        power = _is_power(p.Definition)
+        if power is None:
+            return _text_watts(p.AsValueString())
+        return _internal_watts(p.AsDouble()) if power else p.AsDouble()
+    if st == StorageType.Integer:
+        return float(p.AsInteger())
+    if st == StorageType.String:
+        return _text_watts(p.AsString())
+    return None
+
+
+def _device_value(doc, el, names, read):
+    """The first value read() finds in a parameter with one of these names, on the device and then its type."""
     owners = [el]
     try:
         etype = doc.GetElement(el.GetTypeId())
@@ -211,22 +288,40 @@ def get_current(doc, el):
     except Exception:
         pass
     for owner in owners:
-        for name in CURRENT_PARAM_NAMES:
+        for name in names:
             wanted = name.strip().lower()
             for p in owner.Parameters:
                 try:
                     if p.Definition.Name.strip().lower() != wanted:
                         continue
-                    amps = _param_amps(p)
+                    value = read(p)
                 except Exception:
                     continue
-                if amps is not None:
-                    return amps
+                if value is not None:
+                    return value
     return None
+
+
+def get_current(doc, el):
+    """The device's Current in amps, or None if it has no Current parameter or no value."""
+    return _device_value(doc, el, CURRENT_PARAM_NAMES, _param_amps)
+
+
+def get_wattage(doc, el):
+    """The device's Wattage in watts, or None if it has no Wattage parameter or no value."""
+    return _device_value(doc, el, WATTAGE_PARAM_NAMES, _param_watts)
 
 
 def fmt_amps(amps):
     return "%.3f A" % amps
+
+
+def fmt_volts(volts):
+    return "%.2f V" % volts
+
+
+def fmt_watts(watts):
+    return "%.2f W" % watts
 
 
 def kinds_on_element(el):
@@ -310,11 +405,13 @@ def address_on(el, kind):
         return None
 
 
-def scan_existing(doc):
-    """{"N": {(power supply, circuit): highest device number}, "V": {...}} from the addresses already written."""
-    found = dict((kind, {}) for kind in KINDS)
+def scan_existing(doc, kinds=None):
+    """{"N": {(power supply, circuit): highest device number}, "V": {...}} from the addresses already written.
+    kinds: only read these ("N" and / or "V"); all by default."""
+    kinds = [k for k in KINDS if kinds is None or k in kinds]
+    found = dict((kind, {}) for kind in kinds)
     for el in all_devices(doc):
-        for kind in KINDS:
+        for kind in kinds:
             p = get_param(el, PARAM_NAMES[kind]["address"])
             if p is None:
                 continue

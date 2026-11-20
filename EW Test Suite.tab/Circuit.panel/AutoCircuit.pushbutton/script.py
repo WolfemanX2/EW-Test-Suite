@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v11
-__title__ = "Auto-\nCircuit v11"
+# Auto-Circuit script - version v12
+__title__ = "Auto-\nCircuit v12"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
@@ -17,7 +17,9 @@ __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "4. Conduit is planned and created as in Auto Conduit, using Auto Conduit - Config. After a "
            "confirmation the connected devices are addressed in order:\n"
            "   NAC / Voice: Address and Circuit parameters, Notification Circuit on the new conduit (N12 / V12), "
-           "and EOL on the last device of the circuit. Types from Address NAC / Voice - Config.\n"
+           "EOL on the last device of the circuit, and the circuit totals on every device of it, as Address NAC / "
+           "Voice: Circuit Current and Circuit Voltage (NAC), Circuit Wattage (Voice). Types from Address NAC / "
+           "Voice - Config.\n"
            "   SLC: each Family : Type by its rule in Address SLC - Config (count, Address Options, rounding); "
            "modules and detectors counted separately; unused address parameters cleared.\n\n"
            "Everything is one Undo; cancelling at any step after picking puts everything back.")
@@ -44,6 +46,7 @@ import conduit_trace as ct       # follows conduit from a device (shared with Ad
 import conduit_routing as cr     # routing and settings shared with Auto Conduit (lib/conduit_routing.py)
 import addressing_ui as aui      # windows and menus shared with the addressing tools (lib/addressing_ui.py)
 import ew_common as ec           # shared helpers (lib/ew_common.py)
+import nac_voice_eol as eol      # the EOL and circuit totals, shared with Address NAC / Voice (lib/nac_voice_eol.py)
 from conduit_routing import (
     AVOID_EXISTING_CONDUIT, AVOID_MODEL_OBSTACLES, DEFAULT_ELEVATION_TEXT, DeviceOrTagFilter,
     HIGHLIGHT_PICKED, MARGIN, OPT_ADD_AGAIN, OPT_ADJUST, OPT_CANCEL, OPT_CANCEL_CHAIN, OPT_CLOSEST,
@@ -522,57 +525,10 @@ class NotificationRun(object):
         return None
 
     def finish(self):
-        """Last device of each circuit touched: EOL = Yes; every other device on it: No."""
-        if not self.touched:
-            return
-        circuits = {}
-        for el in all_devices():
-            parsed = nv_address_on(el, self.kind)
-            if parsed and (self.kind, parsed[0], parsed[1]) in self.touched:
-                circuits.setdefault((self.kind, parsed[0], parsed[1]), []).append((parsed[2], el))
-        changes = []
-        for key in sorted(self.touched):
-            kind, source, circuit = key
-            members = circuits.get(key, [])
-            if not members:
-                continue
-            last = max(n for n, _el in members)
-            name = nv.EOL_PARAM_NAMES[kind]
-            ends, missing = [], 0
-            for n, el in members:
-                p = nv.get_yes_no(el, name)
-                if p is None:
-                    missing += 1
-                    if n == last:
-                        self.problems.append("%s: the last device (element %d) has no writable %s parameter."
-                                             % (nv.fmt_address(kind, source, circuit, n), eid(el), name))
-                    continue
-                value = 1 if n == last else 0
-                if n == last:
-                    ends.append(eid(el))
-                if p.AsInteger() != value:
-                    changes.append((p, value))
-            circuit_text = nv.fmt_circuit(kind, source, circuit)
-            if len(ends) > 1:
-                self.problems.append("%s: %d devices share the last address %s; all are set to %s = Yes."
-                                     % (circuit_text, len(ends), nv.fmt_address(kind, source, circuit, last), name))
-            if ends:
-                self.eol_lines.append("%s: %s = Yes on %s (element %s)"
-                                      % (circuit_text, name, nv.fmt_address(kind, source, circuit, last),
-                                         ", ".join(str(i) for i in ends)))
-            if missing:
-                self.problems.append("%s: %d device(s) have no writable %s parameter." % (circuit_text, missing, name))
-        if not changes:
-            return
-
-        def work():
-            for p, value in changes:
-                p.Set(value)
-
-        error = commit(Transaction(doc, "Auto-Circuit: set %s EOL" % self.name), work)
-        if error:
-            self.problems.append("EOL parameters were not set: %s" % error)
-            self.eol_lines = []
+        """The EOL and the circuit totals on each circuit touched, as Address NAC / Voice (nac_voice_eol)."""
+        lines, problems = eol.update(doc, self.touched, "Auto-Circuit: %s EOL and circuit totals" % self.name)
+        self.eol_lines.extend(lines)
+        self.problems.extend(problems)
 
     # ---- report ----
     def report_lines(self, addressed):
@@ -585,8 +541,7 @@ class NotificationRun(object):
                                  % (self.no_param, nv.CONDUIT_PARAM_NAMES[self.kind]))
         lines.append("Circuit total: %s%s" % (self._totals_text([eid(el) for el, _i, _t in addressed]),
                                               "" if self.limits["include"] else " (devices added this run only)"))
-        for line in self.eol_lines:
-            lines.append("EOL %s" % line)
+        lines.extend(self.eol_lines)
         if self.session_types:
             lines.append("Types not in the NAC / Voice lookup table (used for this run only): %s"
                          % "; ".join("%s -> %s" % (k, self.session_types[k]) for k in sorted(self.session_types)))

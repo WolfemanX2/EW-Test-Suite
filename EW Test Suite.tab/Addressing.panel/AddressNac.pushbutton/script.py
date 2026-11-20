@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address NAC script - version v5
-__title__ = "Address\nNAC v5"
+# Address NAC script - version v6
+__title__ = "Address\nNAC v6"
 __doc__ = """Fills NAC Address / NAC Circuit (N#-#.# / N#-#) on each picked Fire Alarm Device (or a tag hosted to one), in order of selection.
 
 Continue a circuit already in the project (resumes after its highest device number), continue from a selected
@@ -9,10 +9,12 @@ conduit leaving the device in the direction to check, then address to a device y
 for the circuit, or up to a max current (each device's Current, default 1.2 A). The conduit of the run gets
 Notification Circuit = N12. After an automatic run, choose Finish or keep adding to the circuit.
 
-When you finish, the last device of the circuit gets NAC EOL = Yes and every other device on it No. Its Comments get the total circuit current and the estimated EOL voltage
-(20.4 V source, 14 AWG at 3.07 ohms per 1000 ft, point to point, home run included when connected).
+When you finish, the last device of the circuit gets NAC EOL = Yes and every other device on it No. Every device on
+the circuit gets Circuit Current (the current of the devices numbered up to and including it) and Circuit Voltage
+(the estimated voltage left at it: 20.4 V source, 14 AWG at 3.07 ohms per 1000 ft, point to point, home run included
+when connected). Comments are left alone, apart from clearing the EOL estimate older versions wrote there.
 
-Device types come from Address NAC / Voice - Config. Shift+Click to define / remove table entries.
+Device types come from Address NAC / Voice - Config; Shift+Click opens it.
 Press Esc to finish picking."""
 
 import nac_voice_addressing

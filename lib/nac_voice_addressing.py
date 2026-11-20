@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v7
+# nac_voice_addressing module - version v8
 # Change log (last change first):
+#   v8 - Address NAC v6 / Address Voice v6: one kind per run (the leftovers of the combined NAC + Voice tool
+#        removed); Shift+Click opens the Address NAC / Voice - Config window (the old menu-based table manager
+#        removed); the EOL and the circuit totals come from nac_voice_eol (shared with Auto-Circuit), on every
+#        device instead of the EOL device's Comments; messages titled with the tool's name.
 #   v7 - Address NAC v5 / Address Voice v5: saving the addresses and the EOL through ew_common.commit (the same
 #        steps, one shared copy).
 #   v6 - Code consolidation step 5 (no tool change): the New Circuit window, choose, the start choices and the
@@ -9,17 +13,13 @@
 #        over downstream, listed in the summary).
 #   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
 #        ew_common.
-#   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
 Voice Address = V#-#.#, Voice Circuit = V#-#
 Each button runs main() with its kind ("N" or "V")."""
-import os
-
 from System.Collections.Generic import List
-from Autodesk.Revit.DB import (Transaction, FilteredElementCollector,
-                               ElementId, BuiltInParameter, BuiltInCategory)
+from Autodesk.Revit.DB import Transaction, ElementId
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -29,6 +29,8 @@ import nac_voice_types as nv
 import conduit_trace as ct
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import addressing_ui as aui     # shared addressing windows and menus
+import nac_voice_eol as eol     # the EOL and circuit totals, shared with Auto-Circuit (lib/nac_voice_eol.py)
+import nac_voice_config_editor  # the Address NAC / Voice - Config window (Shift+Click)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -66,20 +68,6 @@ def load_table():
         return {}
 
 
-def save_table(table):
-    try:
-        nv.save_table(table)
-        return True
-    except Exception as ex:
-        forms.alert("Could not save the lookup table:\n%s\n\nPath: %s" % (ex, nv.table_path()), title=TITLE)
-        return False
-
-
-# ---------- Existing address scan (resume) ----------
-def scan_existing():
-    return nv.scan_existing(doc)
-
-
 # ---------- Prompts ----------
 choose = aui.choose                      # from addressing_ui
 
@@ -94,9 +82,9 @@ def preselected_device():
 FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING = aui.FROM_SELECTED, aui.NEW_CIRCUIT, aui.FROM_EXISTING
 
 
-def choose_circuit(kind, existing, preselected, allow_skip=False):
-    """Ask what to do with one kind (NAC or Voice) this run.
-    Returns {"source", "circuit", "next", "resumed"}, "SKIP", or None if cancelled."""
+def choose_circuit(kind, existing, preselected):
+    """Continue a circuit already in the project, continue from a selected device, or start a new one.
+    Returns {"source", "circuit", "next", "resumed"}, or None if cancelled."""
     name = nv.KIND_NAMES[kind]
     # Continue from one device: the device selected when the tool started, or one picked now.
     pre = address_on(preselected, kind) if preselected is not None else None
@@ -106,15 +94,12 @@ def choose_circuit(kind, existing, preselected, allow_skip=False):
                                   nv.fmt_address(kind, key[0], key[1], existing[key]))
         labels[label] = key
         circuits.append(label)
-    skip_label = "Skip - do not address %s this run" % name
-    ordered = [FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING] + ([skip_label] if allow_skip else [])
 
     while True:
-        choice = forms.CommandSwitchWindow.show(ordered, message="%s: which circuit do you want to address?" % name)
+        choice = forms.CommandSwitchWindow.show([FROM_SELECTED, NEW_CIRCUIT, FROM_EXISTING],
+                                                message="%s: which circuit do you want to address?" % name)
         if not choice:
             return None
-        if choice == skip_label:
-            return "SKIP"
 
         if choice == FROM_EXISTING:
             if not circuits:
@@ -153,97 +138,6 @@ def choose_circuit(kind, existing, preselected, allow_skip=False):
                 continue    # back to the list
             source, circuit, start = dlg.result
             return {"source": source, "circuit": circuit, "next": start, "resumed": False}
-
-
-# ---------- Table manager (Shift+Click) ----------
-def project_type_info():
-    """{"Family : Type": set of kinds found on a placed instance, or None if none is placed}."""
-    info = {}
-    for cat in nv.DEVICE_CATEGORIES:
-        for t in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsElementType().ToElements():
-            try:
-                info[ec.type_key(t)] = None
-            except Exception:
-                pass
-    counted = set()
-    for el in all_devices():
-        key = nv.family_key(doc, el)
-        if key in counted:
-            continue
-        counted.add(key)
-        info[key] = nv.kinds_on_element(el)
-    return info
-
-
-def describe_kinds(kinds):
-    if kinds is None:
-        return "no placed instances"
-    if not kinds:
-        return "no NAC / Voice parameters"
-    return " + ".join(nv.KIND_NAMES[k] for k in nv.KINDS if k in kinds) + " parameters"
-
-
-def manage_table():
-    choice = forms.CommandSwitchWindow.show(
-        ["Define / Update Types", "Remove Defined Types", "Open Table File"],
-        message="NAC / Voice lookup table")
-    if not choice:
-        return
-    table = load_table()
-
-    if choice == "Define / Update Types":
-        scope = forms.CommandSwitchWindow.show(
-            ["Only types with NAC / Voice parameters", "All Fire Alarm Device types"],
-            message="Which types do you want to list?")
-        if not scope:
-            return
-        only_params = scope.startswith("Only")
-
-        labels = {}
-        for key, kinds in project_type_info().items():
-            if only_params and not kinds:
-                continue
-            status = ("currently %s" % table[key]) if key in table else "not defined"
-            labels["%s [%s | %s]" % (key, describe_kinds(kinds), status)] = key
-        if not labels:
-            forms.alert("No matching types found in this project.\n\nTypes only show under 'Only types with "
-                        "NAC / Voice parameters' if at least one device of that type is placed.", title=TITLE)
-            return
-
-        picked = forms.SelectFromList.show(sorted(labels.keys()), title="Select types to define",
-                                           button_name="Next", multiselect=True)
-        if not picked:
-            return
-        label = forms.CommandSwitchWindow.show(
-            nv.TYPE_LABELS, message="Device type for the selected %d type(s):" % len(picked))
-        if not label:
-            return
-        for item in picked:
-            table[labels[item]] = label
-        if save_table(table):
-            forms.toast("Saved %d type(s) as %s." % (len(picked), label))
-
-    elif choice == "Remove Defined Types":
-        if not table:
-            forms.alert("No defined types yet.\n\n%s" % nv.table_path(), title=TITLE)
-            return
-        labels = dict(("%s -> %s" % (k, v), k) for k, v in table.items())
-        picked = forms.SelectFromList.show(sorted(labels.keys()), title="Select types to remove",
-                                           button_name="Remove Selected", multiselect=True)
-        if not picked:
-            return
-        for item in picked:
-            table.pop(labels[item], None)
-        if save_table(table):
-            forms.toast("Removed %d type(s)." % len(picked))
-
-    elif choice == "Open Table File":
-        if not os.path.isfile(nv.table_path()):
-            save_table(table)   # create an empty file
-        try:
-            os.startfile(nv.table_path())
-        except Exception as ex:
-            forms.alert("Could not open the file:\n%s\n\nPath: %s" % (ex, nv.table_path()), title=TITLE)
 
 
 # ---------- Address downstream: how far to go ----------
@@ -352,8 +246,9 @@ def next_text(state):
 
 
 class Session(object):
-    def __init__(self, kinds=tuple(nv.KINDS)):
-        self.kinds = [k for k in nv.KINDS if k in kinds]
+    """One Address NAC (kind "N") or Address Voice (kind "V") run."""
+    def __init__(self, kind):
+        self.kind = kind
         self.finished = False       # the user chose Finish after an automatic run
         self.state = {}             # kind -> {"source", "circuit", "next", "resumed", "start", "from"}
         self.table = {}
@@ -364,7 +259,6 @@ class Session(object):
         self.not_this_run = []      # (element id, type key, device type): no kind being addressed this run
         self.head_end = {}          # element id -> type key: Head End devices picked or passed (never addressed)
         self.anchor = None          # device a downstream run starts from: the last one addressed or continued
-        self.run_kinds = {}         # conduit type id -> kind chosen for it this run
         self.runs = []              # summary lines of the downstream runs
         self.touched = set()        # (kind, source, circuit) given or losing a device this run: EOL is redone
         self.conduits_set = 0       # conduit segments given a circuit this run
@@ -381,23 +275,17 @@ class Session(object):
         s = self.state[kind]
         return nv.fmt_circuit(kind, s["source"], s["circuit"])
 
-    # ---- Start: for NAC and for Voice, continue a circuit, start a new one, or skip ----
-    def choose_circuits(self):
+    # ---- Start: continue a circuit or start a new one ----
+    def choose_circuit(self):
         preselected = preselected_device()
-        existing = scan_existing()
-        for kind in self.kinds:
-            picked = choose_circuit(kind, existing[kind], preselected, allow_skip=len(self.kinds) > 1)
-            if picked is None:
-                return False    # cancelled
-            if picked == "SKIP":
-                continue
-            picked["start"] = picked["next"]
-            if picked.get("anchor") is not None:
-                self.anchor = picked["anchor"]
-            self.state[kind] = picked
-        if not self.state:
-            forms.alert("NAC and Voice were both skipped, so there is nothing to address.", title=TITLE)
-            return False
+        existing = nv.scan_existing(doc, [self.kind])[self.kind]
+        picked = choose_circuit(self.kind, existing, preselected)
+        if picked is None:
+            return False    # cancelled
+        picked["start"] = picked["next"]
+        if picked.get("anchor") is not None:
+            self.anchor = picked["anchor"]
+        self.state[self.kind] = picked
         self.table = load_table()
         return True
 
@@ -423,8 +311,8 @@ class Session(object):
         if len(options) == 1:
             label = options[0]
         else:
-            message = ("%s is not in the lookup table. What is it? (Asked once per run; Shift+Click the tool "
-                       "button to define it permanently.)" % key)
+            message = ("%s is not in the lookup table. What is it? (Asked once per run; define it in Address NAC / "
+                       "Voice - Config, or Shift+Click the tool button, to keep it.)" % key)
             if show:
                 self.show(el)   # found by the tool, not picked: show which one it is
                 message = "Element %d\n%s" % (nv.eid_int(el.Id), message)
@@ -511,28 +399,28 @@ class Session(object):
             if not nv.kinds_on_element(el):
                 self.problems.append("%s (element %d): no writable NAC Address or Voice Address parameter. "
                                      "Skipped." % (key, eid))
-                forms.toast("No writable NAC / Voice address parameters on that device.")
+                forms.toast("No writable NAC / Voice address parameters on that device.", title=TITLE)
             else:
-                forms.toast("Skipped - no addresses assigned.")
+                forms.toast("Skipped - no addresses assigned.", title=TITLE)
             return
 
         if label == nv.HEAD_END:
             self.head_end[eid] = key
-            forms.toast("Head End device - never addressed. Skipped.")
+            forms.toast("Head End device - never addressed. Skipped.", title=TITLE)
             return
 
         todo = [k for k in nv.TYPE_KINDS[label] if k in self.state]
         if not todo:
             self.not_this_run.append((eid, key, label))
             forms.toast("%s device - %s is not being addressed this run. Skipped."
-                        % (label, " / ".join(nv.KIND_NAMES[k] for k in nv.TYPE_KINDS[label])))
+                        % (label, " / ".join(nv.KIND_NAMES[k] for k in nv.TYPE_KINDS[label])), title=TITLE)
             return
 
         targets, missing = self.targets_for(el, todo)
         if missing:
             self.problems.append("%s (element %d): defined as %s but has no writable %s. Skipped."
                                  % (key, eid, label, " / ".join(missing)))
-            forms.toast("Device has no writable %s. Skipped." % " / ".join(missing))
+            forms.toast("Device has no writable %s. Skipped." % " / ".join(missing), title=TITLE)
             return
 
         # Guard against picking the same device twice (directly or via its tag)
@@ -548,28 +436,11 @@ class Session(object):
         error = self.write([(el, key, targets)], "%s device" % TITLE)
         if error:
             self.problems.append("Element %d: %s" % (eid, error))
-            forms.toast("That device was not addressed: %s" % error)
+            forms.toast("That device was not addressed: %s" % error, title=TITLE)
             return False
         return True
 
     # ---- Address downstream ----
-    def run_kind(self, conduit, type_name):
-        """Which circuit (NAC or Voice) a conduit carries, asked once per conduit type when both are addressed."""
-        kinds = [k for k in nv.KINDS if k in self.state]
-        if len(kinds) == 1:
-            return kinds[0]
-        tid = ct.eid_int(conduit.GetTypeId())
-        if tid in self.run_kinds:
-            return self.run_kinds[tid]
-        labels = dict(("%s circuit (%s)" % (nv.KIND_NAMES[k], self.circuit(k)), k) for k in kinds)
-        choice = forms.CommandSwitchWindow.show(
-            sorted(labels.keys()),
-            message="Which circuit does '%s' conduit carry? (Asked once per conduit type this run.)" % type_name)
-        if not choice:
-            return None
-        self.run_kinds[tid] = labels[choice]
-        return labels[choice]
-
     def circuit_load(self, kind, leave_out):
         """(amps, device count) of the devices already addressed on the circuit, leaving out element ids in
         leave_out (the ones about to be addressed)."""
@@ -633,9 +504,7 @@ class Session(object):
             return
         anchor_id = nv.eid_int(self.anchor.Id)
         type_name = ct.element_type_name(doc, conduit) or "the picked"
-        kind = self.run_kind(conduit, type_name)
-        if kind is None:
-            return
+        kind = self.kind
         name = nv.KIND_NAMES[kind]
 
         found, problem = ct.follow(doc, self.anchor, conduit, nv.is_device)
@@ -775,7 +644,7 @@ class Session(object):
                            conduits)
         if error:
             self.problems.append("Downstream of element %d: nothing was addressed (%s)" % (anchor_id, error))
-            forms.toast("Nothing was addressed: %s" % error)
+            forms.toast("Nothing was addressed: %s" % error, title=TITLE)
             return
         line = ("Followed '%s' conduit from element %d %s: %s to %s (%d device(s))"
                 % (type_name, anchor_id, how, self.address(kind, first), self.address(kind, first + len(chosen) - 1),
@@ -791,7 +660,7 @@ class Session(object):
         self.runs.append(line)
         for eid, key, reason in passed:
             self.problems.append("Element %d (%s): on the followed conduit but passed over (%s)." % (eid, key, reason))
-        forms.toast("%d device(s) addressed downstream." % len(chosen))
+        forms.toast("%d device(s) addressed downstream." % len(chosen), title=TITLE)
         return True
 
     # ---- Manual or automatic ----
@@ -827,7 +696,7 @@ class Session(object):
         """A downstream run; afterwards asks whether to finish or keep adding to the circuit."""
         if not self.follow_conduit(conduit):
             return
-        circuits = ", ".join(self.circuit(k) for k in self.kinds if k in self.state)
+        circuits = self.circuit(self.kind)
         choice = forms.CommandSwitchWindow.show(
             [FINISH_LABEL, CONTINUE_LABEL % circuits],
             message="Addressed up to %s. Finish, or keep adding devices to %s?"
@@ -855,7 +724,7 @@ class Session(object):
                 continue
             el = resolve_device(picked)
             if el is None:
-                forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.")
+                forms.toast("Selection is not a Fire Alarm Device or a tag hosted to one.", title=TITLE)
                 continue
             if self.address_device(el):
                 self.ask_mode()
@@ -865,25 +734,21 @@ class Session(object):
     # ---- Summary ----
     def report(self):
         output.print_md("### Addressing complete")
-        for kind in self.kinds:
-            name = nv.KIND_NAMES[kind]
-            if kind not in self.state:
-                output.print_md("- %s: skipped this run" % name)
-                continue
-            s = self.state[kind]
-            how = "continued" if s["resumed"] else "new"
-            if s.get("from"):
-                how = "continued from %s" % s["from"]
-            if s["next"] > s["start"]:
-                output.print_md("- %s circuit **%s** (%s): %s to **%s**"
-                                % (name, self.circuit(kind), how, self.address(kind, s["start"]),
-                                   self.address(kind, s["next"] - 1)))
-            else:
-                output.print_md("- %s circuit **%s** (%s): nothing addressed" % (name, self.circuit(kind), how))
+        kind = self.kind
+        name, s = nv.KIND_NAMES[kind], self.state[kind]
+        how = "continued" if s["resumed"] else "new"
+        if s.get("from"):
+            how = "continued from %s" % s["from"]
+        if s["next"] > s["start"]:
+            output.print_md("- %s circuit **%s** (%s): %s to **%s**"
+                            % (name, self.circuit(kind), how, self.address(kind, s["start"]),
+                               self.address(kind, s["next"] - 1)))
+        else:
+            output.print_md("- %s circuit **%s** (%s): nothing addressed" % (name, self.circuit(kind), how))
         for line in self.runs:
             output.print_md("- %s" % line)
         for line in self.eol_lines:
-            output.print_md("- EOL %s" % line)
+            output.print_md("- %s" % line)
         output.print_md("- Devices addressed: **%d**" % len(self.log))
         for eid, key, written in self.log:
             output.print_md("    - %d : %s - %s"
@@ -905,183 +770,14 @@ class Session(object):
             output.print_md("- Issue: %s" % msg)
 
     # ---- End of line ----
-    def eol_estimate(self, source, circuit, members, eol_el):
-        """(total amps, EOL volts or None, [notes]) for a NAC circuit."""
-        notes = []
-        amps_by_id, total = {}, 0.0
-        no_current = 0
-        for _n, el in members:
-            amps = nv.get_current(doc, el)
-            if amps is None:
-                no_current += 1
-                amps = 0.0
-            amps_by_id[nv.eid_int(el.Id)] = amps
-            total += amps
-        if no_current:
-            notes.append("%d device(s) have no Current value (counted as 0 A)" % no_current)
-
-        pname = nv.CONDUIT_PARAM_NAMES.get("N")
-        token = nv.fmt_conduit("N", source, circuit)
-
-        def tagged(el):
-            p = nv.get_param(el, pname) if pname else None
-            return p is not None and token in nv.conduit_tokens(p.AsString())
-
-        # The circuit: conduit marked with this circuit (e.g. N12), through fittings, boxes and devices.
-        root = min(members, key=lambda m: m[0])[1]
-        parent, els, order = ct.walk(root, lambda el: tagged(el) if isinstance(el, Conduit) else True)
-        eol_id = nv.eid_int(eol_el.Id)
-        if eol_id not in parent:
-            notes.append("EOL voltage not worked out: the conduit from the first device to the EOL device isn't "
-                         "all marked %s in %s (address the circuit with Automatic)" % (token, pname))
-            return total, None, notes
-        unreached = len([i for i in amps_by_id if i not in parent])
-        if unreached:
-            notes.append("%d device(s) on the circuit aren't connected by %s conduit; their current is counted "
-                         "for the home run only" % (unreached, token))
-
-        # Point to point: each conduit carries the current of every device past it, out and back.
-        ohms_per_ft = 2 * nv.WIRE_OHMS_PER_1000FT / 1000.0
-        beyond = dict.fromkeys(order, 0.0)
-        for i in reversed(order):
-            beyond[i] += amps_by_id.get(i, 0.0)
-            if parent[i] is not None:
-                beyond[parent[i]] += beyond[i]
-        drop, i = 0.0, eol_id
-        while i is not None:
-            if isinstance(els[i], Conduit):
-                drop += beyond[i] * ct.conduit_length(els[i]) * ohms_per_ft
-            i = parent[i]
-
-        # Home run: conduit of the same type from the first device back to the power supply.
-        types = set(ct.eid_int(els[i].GetTypeId()) for i in order if isinstance(els[i], Conduit))
-        home = self.home_run_length(root, types, tagged)
-        if home is None:
-            notes.append("home run to the power supply not found (not connected?), so it is not included")
-        else:
-            drop += total * home * ohms_per_ft
-        return total, nv.SOURCE_VOLTS - drop, notes
-
-    def home_run_length(self, root, types, tagged):
-        """Feet of conduit from the first device back to the nearest power supply, or None if not connected."""
-        def is_supply(el):
-            try:
-                cid = nv.eid_int(el.Category.Id)
-            except Exception:
-                return False
-            if cid == int(BuiltInCategory.OST_ElectricalEquipment):
-                return True
-            # a fire alarm family that isn't a NAC device (no NAC Address): booster / power supply
-            return nv.is_device(el) and nv.get_param(el, nv.PARAM_NAMES["N"]["address"]) is None
-
-        def enter(el):
-            if isinstance(el, Conduit):
-                return ct.eid_int(el.GetTypeId()) in types and not tagged(el)
-            if nv.is_device(el):
-                return is_supply(el)    # never pass through another device
-            return True                 # fittings, boxes, panels
-
-        parent, els, order = ct.walk(root, enter)
-        for i in order[1:]:
-            if is_supply(els[i]):
-                feet = 0.0
-                while i is not None:
-                    if isinstance(els[i], Conduit):
-                        feet += ct.conduit_length(els[i])
-                    i = parent[i]
-                return feet
-        return None
-
-    def eol_comments(self, source, circuit, members, last):
-        """Comments changes: the estimate on the EOL device(s); an old estimate cleared from the rest."""
-        changes = []
-        eols = [el for n, el in members if n == last]
-        total, volts, notes = self.eol_estimate(source, circuit, members, eols[0])
-        text = nv.fmt_eol_comment(total, volts)
-        circuit_text = nv.fmt_circuit("N", source, circuit)
-        for n, el in members:
-            try:
-                p = el.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
-            except Exception:
-                p = None
-            if p is None or p.IsReadOnly:
-                if n == last:
-                    self.problems.append("%s: the EOL device (element %d) has no writable Comments parameter."
-                                         % (circuit_text, nv.eid_int(el.Id)))
-                continue
-            current = p.AsString() or ""
-            if n == last:
-                if current != text:
-                    changes.append((p, text))
-            elif nv.is_eol_comment(current):
-                changes.append((p, ""))     # no longer the EOL: clear the estimate this tool wrote
-        self.eol_lines.append("%s: Comments = %s%s" % (circuit_text, text,
-                                                       ("  (%s)" % "; ".join(notes)) if notes else ""))
-        if volts is not None and volts < nv.MIN_DEVICE_VOLTS:
-            self.problems.append("%s: estimated EOL voltage %.2f V is below %g V."
-                                 % (circuit_text, volts, nv.MIN_DEVICE_VOLTS))
-        return changes
-
     def set_eol(self):
-        """Last device of each circuit touched this run: EOL = Yes; every other device on it: No."""
-        if not self.touched:
-            return
-        circuits = {}       # (kind, source, circuit) -> [(number, element)]
-        for el in all_devices():
-            for kind in nv.KINDS:
-                parsed = address_on(el, kind)
-                if parsed and (kind, parsed[0], parsed[1]) in self.touched:
-                    circuits.setdefault((kind, parsed[0], parsed[1]), []).append((parsed[2], el))
-
-        changes = []        # (parameter, value)
-        for key in sorted(self.touched):
-            kind, source, circuit = key
-            members = circuits.get(key, [])
-            if not members:
-                continue
-            last = max(n for n, _el in members)
-            name = nv.EOL_PARAM_NAMES[kind]
-            ends, missing = [], 0
-            if kind in nv.EOL_COMMENT_KINDS:
-                changes.extend(self.eol_comments(source, circuit, members, last))
-            for n, el in members:
-                p = nv.get_yes_no(el, name)
-                if p is None:
-                    missing += 1
-                    if n == last:
-                        self.problems.append("%s: the last device (element %d) has no writable %s parameter."
-                                             % (nv.fmt_address(kind, source, circuit, n), nv.eid_int(el.Id), name))
-                    continue
-                value = 1 if n == last else 0
-                if n == last:
-                    ends.append(nv.eid_int(el.Id))
-                if p.AsInteger() != value:
-                    changes.append((p, value))
-            circuit_text = nv.fmt_circuit(kind, source, circuit)
-            if len(ends) > 1:
-                self.problems.append("%s: %d devices share the last address %s; all are set to %s = Yes."
-                                     % (circuit_text, len(ends), nv.fmt_address(kind, source, circuit, last), name))
-            if ends:
-                self.eol_lines.append("%s: %s = Yes on %s (element %s)"
-                                      % (circuit_text, name, nv.fmt_address(kind, source, circuit, last),
-                                         ", ".join(str(i) for i in ends)))
-            if missing:
-                self.problems.append("%s: %d device(s) have no writable %s parameter." % (circuit_text, missing, name))
-
-        if not changes:
-            return
-
-        def work():
-            for p, value in changes:
-                p.Set(value)
-
-        error = ec.commit(Transaction(doc, "Set NAC / Voice EOL and estimate"), work)
-        if error:
-            self.problems.append("EOL parameters were not set: %s" % error)
-            self.eol_lines = []
+        """The EOL and the circuit totals on every circuit given or losing a device this run (nac_voice_eol)."""
+        lines, problems = eol.update(doc, self.touched, "%s: EOL and circuit totals" % TITLE)
+        self.eol_lines.extend(lines)
+        self.problems.extend(problems)
 
     def run(self):
-        if not self.choose_circuits():
+        if not self.choose_circuit():
             return
         try:
             self.pick_devices()
@@ -1096,10 +792,11 @@ class Session(object):
 
 
 def main(kind, shift_clicked=False):
-    """Runs Address NAC (kind "N") or Address Voice (kind "V")."""
-    global TITLE
+    """Runs Address NAC (kind "N") or Address Voice (kind "V"). Shift+Click opens Address NAC / Voice - Config."""
+    global TITLE, doc, uidoc, output
+    doc, uidoc, output = revit.doc, revit.uidoc, script.get_output()
     TITLE = "Address %s" % nv.KIND_NAMES[kind]
     if shift_clicked:
-        manage_table()
+        nac_voice_config_editor.show_editor(doc)
     else:
-        Session(kinds=(kind,)).run()
+        Session(kind).run()
