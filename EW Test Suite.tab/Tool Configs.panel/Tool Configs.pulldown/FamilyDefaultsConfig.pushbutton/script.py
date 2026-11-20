@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Family Defaults Config script - version v6
-__title__ = "Family Defaults Config v6"
+# Family Defaults Config script - version v7
+__title__ = "Family Defaults Config v7"
 __doc__ = ("One settings window for routing and addressing, used by Auto Circuit - SLC, NAC and Voice.\n\n"
            "Family Defaults: every Fire Alarm Device and Electrical Equipment family in the project, with its "
            "types under it (double-click a family). Set Mounting (Wall / Ceiling), Device Type (NAC Only, Voice "

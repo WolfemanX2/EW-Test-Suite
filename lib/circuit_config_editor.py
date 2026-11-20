@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v6
+# circuit_config_editor module - version v7
 # Change log (last change first):
+#   v7 - Family Defaults Config v7: editing several selected rows works: a click on a cell of a selected row keeps
+#        the selection (the grid would narrow it to that row) and the rows are taken when the edit starts.
 #   v6 - Family Defaults Config v6: editing a cell of a selected row sets that column on every selected row (the
 #        'Set selected rows' bar is removed).
 #   v5 - Family Defaults Config v5: several rows can be selected and set at once (Set selected rows); filters
@@ -30,6 +32,12 @@ clr.AddReference("System.Data")
 from System import String, Boolean, DBNull
 from System.Data import DataTable, DataRowState
 from Microsoft.Win32 import OpenFileDialog
+from System.Windows import LogicalTreeHelper
+from System.Windows.Controls import DataGridCell, DataGridRow, DataGridCellInfo
+from System.Windows.Input import Keyboard, ModifierKeys
+from System.Windows.Media import VisualTreeHelper
+
+NO_KEYS = getattr(ModifierKeys, "None")     # no Ctrl / Shift / Alt held ('None' can't be written as an attribute)
 from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector
 from pyrevit import forms
 
@@ -198,7 +206,7 @@ EDITOR_XAML = """
                               CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
                               SelectionMode="Extended" SelectionUnit="FullRow" GridLinesVisibility="All"
                               HeadersVisibility="Column" MouseDoubleClick="grid_double_click"
-                              PreviewMouseLeftButtonDown="grid_mouse_down">
+                              PreviewMouseLeftButtonDown="grid_mouse_down" BeginningEdit="grid_beginning_edit">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Style.Triggers>
@@ -293,7 +301,7 @@ class ConfigEditor(forms.WPFWindow):
         self._ready = False     # the drop-downs' events wait until the window is filled
         self._dirty = False     # an edit not saved yet
         self._spreading = False  # True while an edit is copied to the other selected rows
-        self._selection = []    # the rows selected just before the last click in the grid
+        self._selection = []    # the rows selected when the last edit started
         self.circuits = {}      # family name -> circuit text ('SLC', 'NAC', 'SLC + NAC', 'None', NOT_CHECKED)
         self.conduit_labels = mounting_rules.list_conduit_type_labels(doc)
 
@@ -574,9 +582,40 @@ class ConfigEditor(forms.WPFWindow):
                 pass
 
     # ---------- Editing several rows at once ----------
+    @staticmethod
+    def _ancestor(element, kind):
+        """The nearest element of that kind containing element (or element itself), or None."""
+        while element is not None and not isinstance(element, kind):
+            try:
+                element = VisualTreeHelper.GetParent(element)
+            except Exception:
+                try:
+                    element = LogicalTreeHelper.GetParent(element)
+                except Exception:
+                    return None
+        return element
+
     def grid_mouse_down(self, sender, args):
-        """The rows selected just before a click: a click on a cell would otherwise narrow the selection to its row
-        before the edit."""
+        """A plain click on a cell of one of several selected rows: edit that cell and keep the rows selected (the
+        grid would narrow the selection to the clicked row)."""
+        try:
+            if self.grid.SelectedItems.Count < 2 or Keyboard.Modifiers != NO_KEYS:
+                return
+            cell = self._ancestor(args.OriginalSource, DataGridCell)
+            if cell is None or cell.IsEditing or cell.IsReadOnly:
+                return
+            row = self._ancestor(cell, DataGridRow)
+            if row is None or not row.IsSelected:
+                return
+            args.Handled = True
+            cell.Focus()
+            self.grid.CurrentCell = DataGridCellInfo(cell)
+            self.grid.BeginEdit()
+        except Exception:
+            pass        # the grid handles the click as usual
+
+    def grid_beginning_edit(self, sender, args):
+        """The rows selected when an edit starts: the edit is copied to all of them."""
         self._selection = self._selected_rows()
 
     def _selected_rows(self):
@@ -584,9 +623,8 @@ class ConfigEditor(forms.WPFWindow):
 
     def _edit_group(self, row):
         """The other selected rows an edit of this row also applies to."""
-        for rows in (self._selection, self._selected_rows()):
-            if any(r is row for r in rows):
-                return [r for r in rows if r is not row]
+        if any(r is row for r in self._selection):
+            return [r for r in self._selection if r is not row]
         return []
 
     # ---------- A family sets its types; a type updates its family ----------
