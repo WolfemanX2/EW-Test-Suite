@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v9
-__title__ = "Auto-\nCircuit v9"
+# Auto-Circuit script - version v10
+__title__ = "Auto-\nCircuit v10"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "

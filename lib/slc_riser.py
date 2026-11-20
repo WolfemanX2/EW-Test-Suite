@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v11
+# slc_riser module - version v12
 # Change log (last change first):
+#   v12 - Code consolidation step 6 (SLC Riser v34): SLC addresses are read and parsed with
+#         slc_addressing's reader and format, the same as the addressing tools (text parameters, any
+#         SLC Address number); devices_on_loops reads with one reader.
 #   v11 - Code consolidation step 3 (no change to SLC Riser): eid_int, is_device, type_name, type_key,
 #         family_key and DEVICE_CATEGORIES come from ew_common.
 #   v10 - Code consolidation step 2 (no change to SLC Riser): eid_int, conduit_connectors and
@@ -8,7 +11,6 @@
 #   v9 - SLC Riser v31: address_sort_key, address_loops and devices_on_loops (lowest address next at a
 #        split, devices with no conduit path added and flagged).
 #   v8 - SLC Riser v30 / Config v7: symbol rules by number of addresses.
-#   v7 - SLC Riser v29 / Config v6: several symbols per type, in order.
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -19,13 +21,13 @@ SLC Riser - Config tool. Updates never overwrite it.
 The drawing settings (view scale, device spacing, devices per line, label offset) are the user's own file,
 %APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed with SLC Riser - Config."""
 import os
-import re
 import json
 
-from Autodesk.Revit.DB import BuiltInCategory, StorageType, FilteredElementCollector, FamilySymbol
+from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector, FamilySymbol
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import slc_addressing as slc   # the SLC address reader and format, shared with the addressing tools
 
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
@@ -34,13 +36,10 @@ SETTINGS_PATH = None    # same idea, for the drawing settings (e.g. r"\\server\s
 
 LOCAL_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "pyRevit", "EWTestSuite")
 
-# A device is on the SLC riser when at least one of these has a value: SLC Address, SLC Address 2 ... 24.
-SLC_ADDRESS_COUNT = 24
-SLC_ADDRESS_NAMES = ["SLC Address"] + ["SLC Address %d" % i for i in range(2, SLC_ADDRESS_COUNT + 1)]
-_SLC_ORDER = dict((name.lower(), i) for i, name in enumerate(SLC_ADDRESS_NAMES))
-
-# A written address: N1L2D015 = node 1, loop 2, detector 15 (M = module).
-ADDRESS_PATTERN = re.compile(r"^N\s*(\d+)\s*L\s*(\d+)\s*([MD])\s*(\d+)$", re.IGNORECASE)
+# A device is on the SLC riser when at least one of its SLC Address parameters (SLC Address, SLC Address 2,
+# ...) has a value. They are read with slc_addressing's reader, the same one the addressing tools use.
+SLC_ADDRESS_COUNT = 24     # only used in messages ('SLC Address 2 ... 24')
+AddressParamReader = slc.AddressParamReader    # from slc_addressing
 
 DEVICE_CATEGORIES = ec.DEVICE_CATEGORIES      # Fire Alarm Devices (lib/ew_common.py)
 # Families that can be drawn in a drafting view.
@@ -113,14 +112,7 @@ def save_settings(settings):
 
 
 # ---------- Address text ----------
-def parse_address(text):
-    """(node, loop, "M" or "D", number) for a written N#L#(M/D)# address, or None."""
-    if not text:
-        return None
-    m = ADDRESS_PATTERN.match(text.strip())
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2)), m.group(3).upper(), int(m.group(4))
+parse_address = slc.parse_address            # from slc_addressing: (node, loop, M/D, number) or None
 
 
 def loop_letter(n):
@@ -159,10 +151,11 @@ def devices_on_loops(doc, loops):
     found = []
     if not loops:
         return found
+    reader = AddressParamReader()
     for cat in DEVICE_CATEGORIES:
         for el in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType().ToElements():
             try:
-                addresses = slc_addresses(el)
+                addresses = slc_addresses(el, reader)
             except Exception:
                 continue
             if addresses and address_loops(addresses) & loops:
@@ -190,21 +183,10 @@ type_key = ec.type_key          # from ew_common
 family_key = ec.family_key      # from ew_common
 
 
-def slc_addresses(el):
-    """The element's SLC addresses that have a value, in order: SLC Address, SLC Address 2, ... 24."""
-    found = {}
-    for p in el.Parameters:
-        try:
-            idx = _SLC_ORDER.get(p.Definition.Name.strip().lower())
-            if idx is None or not p.HasValue:
-                continue
-            text = p.AsString() if p.StorageType == StorageType.String else p.AsValueString()
-        except Exception:
-            continue
-        text = (text or "").strip()
-        if text and idx not in found:
-            found[idx] = text
-    return [found[i] for i in sorted(found)]
+def slc_addresses(el, reader=None):
+    """The element's SLC addresses that have a value, in order: SLC Address, SLC Address 2, ...
+    Pass one reader for a whole run (each type's parameters are then only looked up once)."""
+    return slc.address_texts(reader or AddressParamReader(), el)
 
 
 # ---------- Conduit connections ----------

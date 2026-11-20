@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v33
-__title__ = "SLC\nRiser v33"
+# SLC Riser script - version v34
+__title__ = "SLC\nRiser v34"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "Steps: select the head end panel (FACU, NCP, APS ...), then the first device in the circuit "
@@ -255,13 +255,14 @@ class Network(object):
         self.type_elem_ids = {} # conduit type id -> its ElementId
         self._cache = {}
         self.allowed = None
+        self.reader = sr.AddressParamReader()     # reads each type's SLC Address parameters once
 
     def remember(self, el):
         i = sr.eid_int(el.Id)
         if i not in self.elements:
             self.elements[i] = el
             if sr.is_device(el):
-                self.addresses[i] = sr.slc_addresses(el)
+                self.addresses[i] = sr.slc_addresses(el, self.reader)
             elif isinstance(el, Conduit):
                 tid = el.GetTypeId()
                 self.conduit_type[i] = sr.eid_int(tid)

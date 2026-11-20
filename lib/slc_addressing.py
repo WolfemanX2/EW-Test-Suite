@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v5
+# slc_addressing module - version v6
 # Change log (last change first):
+#   v6 - Code consolidation step 6 (Address SLC v11, Auto-Circuit v10, SLC Riser v34): the one SLC address
+#        reader for the addressing tools and SLC Riser; address_texts added; ADDRESS_VALUE also reads
+#        addresses typed with spaces (N1 L2 M007), as SLC Riser did.
 #   v5 - Address SLC v8 / Auto-Circuit v8 / Address SLC - Config v4: Head End Device Type (HEAD_END,
 #        RULE_KINDS, is_head_end): never addressed.
 #   v4 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORY come from
@@ -9,7 +12,6 @@
 #        element_type_name and trace_downstream now come from conduit_trace (one copy, with SLC Riser's
 #        tee rule) instead of a copy here.
 #   v2 - Address SLC v2: follow conduit downstream (the tracing functions); Tool Configs rename.
-#   v1 - Address Devices v1 + Addressing Config v1: SLC addressing tools as pyRevit scripts.
 """Shared pieces of the SLC addressing tools (Address SLC, Address SLC - Config): the parameter names, the
 address format, the rules table and the default config.
 
@@ -61,7 +63,9 @@ KIND_NAMES[HEAD_END] = "Head End"
 RULE_KINDS = [MODULE, DETECTOR, HEAD_END]      # Device Types offered in Address SLC - Config
 
 PARAM_NAME = re.compile(r"^SLC\s*Address\s*([0-9]*)$", re.IGNORECASE)
-ADDRESS_VALUE = re.compile(r"^N([0-9]+)L([0-9]+)([MD])([0-9]+)$", re.IGNORECASE)
+# A written address: N1L2D015 = node 1, loop 2, detector 15 (M = module). Spaces between the parts are
+# allowed when reading (N1 L2 D015), as SLC Riser always read them.
+ADDRESS_VALUE = re.compile(r"^N\s*([0-9]+)\s*L\s*([0-9]+)\s*([MD])\s*([0-9]+)$", re.IGNORECASE)
 
 OPTIONS_EXAMPLE = '"Single Zone":6, "Dual Zone":12'
 _QUOTES = (u'"', u"\u201c", u"\u201d")
@@ -176,6 +180,24 @@ class AddressParamReader(object):
         if tid > 0:
             self._by_type[tid] = [(pos, p.Definition) for pos, p in found]
         return found
+
+
+def address_texts(reader, el):
+    """The SLC addresses written on a device, in parameter order (SLC Address, SLC Address 2, ...): the
+    values that aren't empty, one per parameter position. reader: an AddressParamReader (one per run, so
+    each type's parameters are only looked up once)."""
+    found, seen = [], set()
+    for pos, p in reader.get(el):
+        if pos in seen:
+            continue
+        try:
+            text = (p.AsString() or "").strip()
+        except Exception:
+            continue
+        if text:
+            seen.add(pos)
+            found.append(text)
+    return found
 
 
 def scan_loops(doc, reader):

@@ -154,16 +154,16 @@ share are in `lib/addressing_ui.py`.
 | lib/addressing_ui.py | v1 |
 | Auto Conduit | v6 |
 | Auto Conduit - Config | v2 |
-| Auto-Circuit | v9 |
+| Auto-Circuit | v10 |
 | Link Clash | v13 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v1 |
 | lib/conduit_routing.py | v3 |
 | lib/clash_rules.py | v5 |
-| Address SLC | v10 |
+| Address SLC | v11 |
 | lib/slc_session.py | v2 |
 | Address SLC - Config | v4 |
-| lib/slc_addressing.py | v5 |
+| lib/slc_addressing.py | v6 |
 | lib/slc_config_editor.py | v4 |
 | Address NAC | v4 |
 | Address Voice | v4 |
@@ -171,10 +171,10 @@ share are in `lib/addressing_ui.py`.
 | Address NAC / Voice - Config | v4 |
 | lib/nac_voice_types.py | v9 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v33 |
+| SLC Riser | v34 |
 | SLC Riser - Config | v7 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v11 |
+| lib/slc_riser.py | v12 |
 | lib/riser_layout.py | v20 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |

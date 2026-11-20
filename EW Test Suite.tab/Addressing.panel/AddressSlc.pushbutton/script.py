@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v10
-__title__ = "Address\nSLC v10"
+# Address SLC script - version v11
+__title__ = "Address\nSLC v11"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
