@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-# Address NAC / Voice - Config script - version v3
-__title__ = "Address NAC / Voice - Config v3"
+# Address NAC / Voice - Config script - version v4
+__title__ = "Address NAC / Voice - Config v4"
 __doc__ = ("Editable table of the Family : Type rules used by Address NAC / Voice. Each type is NAC Only, "
-           "Voice Only, or NAC and Voice.\n\n"
+           "Voice Only, NAC and Voice, or Head End (never addressed by Address NAC, Address Voice or "
+           "Auto-Circuit).\n\n"
            "'Add Types From Project' lists ALL loaded Fire Alarm Device types, including families that have "
            "not been placed, and suggests the device type from the NAC / Voice parameters each one has.")
 
@@ -124,7 +125,7 @@ EDITOR_XAML = """
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                   Text="Define which addresses each Family Type gets. NAC Only fills NAC Address and NAC Circuit, Voice Only fills Voice Address and Voice Circuit, NAC and Voice fills all four. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
+                   Text="Define which addresses each Family Type gets. NAC Only fills NAC Address and NAC Circuit, Voice Only fills Voice Address and Voice Circuit, NAC and Voice fills all four. Head End (the panel, power supplies) is never addressed. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
 
         <DataGrid x:Name="grid" Grid.Row="1"
                   AutoGenerateColumns="False"

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_addressing module - version v4
+# slc_addressing module - version v5
 # Change log (last change first):
+#   v5 - Address SLC v8 / Auto-Circuit v8 / Address SLC - Config v4: Head End Device Type (HEAD_END,
+#        RULE_KINDS, is_head_end): never addressed.
 #   v4 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORY come from
 #        ew_common.
 #   v3 - Code consolidation step 2 (Address SLC v6): eid_int, conduit_connectors, connected_elements,
@@ -52,6 +54,11 @@ DETECTOR = "D"
 KINDS = [MODULE, DETECTOR]
 KIND_NAMES = {MODULE: "Module", DETECTOR: "Detector"}
 KIND_LABELS = {MODULE: "Module (M)", DETECTOR: "Detector (D)"}
+# Device Type for a rule that is never addressed (the panel, power supplies and other head-end equipment).
+# Not an address kind: it is never written in an address and has no counter, so it is not in KINDS.
+HEAD_END = "H"
+KIND_NAMES[HEAD_END] = "Head End"
+RULE_KINDS = [MODULE, DETECTOR, HEAD_END]      # Device Types offered in Address SLC - Config
 
 PARAM_NAME = re.compile(r"^SLC\s*Address\s*([0-9]*)$", re.IGNORECASE)
 ADDRESS_VALUE = re.compile(r"^N([0-9]+)L([0-9]+)([MD])([0-9]+)$", re.IGNORECASE)
@@ -66,9 +73,15 @@ def table_path():
 
 # ---------- Address text ----------
 def parse_kind(text):
-    """"D", "d", "Detector" and the older "Device" -> DETECTOR; anything else -> MODULE."""
+    """"D", "d", "Detector" and the older "Device" -> DETECTOR; "H" / "Head End" -> HEAD_END;
+    anything else -> MODULE."""
     text = (u"%s" % (text if text is not None else u"")).strip()
-    return DETECTOR if text[:1].upper() == "D" else MODULE
+    first = text[:1].upper()
+    if first == "D":
+        return DETECTOR
+    if first == "H":
+        return HEAD_END
+    return MODULE
 
 
 def param_position(name):
@@ -275,7 +288,7 @@ def parse_options(text):
 # ---------- Rules table ----------
 def new_rule(kind=MODULE, count=None, options=None, round_to=None):
     """One Family : Type rule.
-    kind      MODULE or DETECTOR
+    kind      MODULE, DETECTOR or HEAD_END (never addressed)
     count     fixed number of addresses (never prompts); None = ask each time
     options   [(label, count)] named choices offered when the device is picked; [] = not used
     round_to  round the counter up to the next multiple of this before addressing (M004 -> M005)"""
@@ -356,6 +369,12 @@ def read_table(path):
             raise ValueError('Entry "%s": %s' % (key, ex))
         table[key] = rule
     return table
+
+
+def is_head_end(table, key):
+    """True when the rules table marks this Family : Type as Head End: it is never addressed."""
+    rule = table.get(key)
+    return bool(rule) and rule["kind"] == HEAD_END
 
 
 def write_table(path, table):

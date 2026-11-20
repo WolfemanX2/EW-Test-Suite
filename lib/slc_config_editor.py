@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# slc_config_editor module - version v3
+# slc_config_editor module - version v4
 # Change log (last change first):
+#   v4 - Address SLC - Config v4: Head End Device Type (its count, options and rounding are not kept).
 #   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
 #   v2 - Address SLC - Config: the version in the repo when this log was started.
 """The Address SLC - Config window: editable table of the Family : Type rules used by Address SLC.
@@ -177,7 +178,7 @@ class ConfigEditor(forms.WPFWindow):
         self.dt.Columns.Add("Options", string_type).DefaultValue = ""
         self.dt.Columns.Add("RoundTo", string_type).DefaultValue = ""
 
-        self.grid.Columns[1].ItemsSource = [slc.KIND_NAMES[k] for k in slc.KINDS]
+        self.grid.Columns[1].ItemsSource = [slc.KIND_NAMES[k] for k in slc.RULE_KINDS]
         self.grid.Columns[2].ItemsSource = [""] + [str(i) for i in range(1, slc.MAX_ADDRESSES + 1)]
 
         self._fill(table)
@@ -361,7 +362,12 @@ class ConfigEditor(forms.WPFWindow):
 
             kind = KIND_BY_NAME.get(kind_text)
             if kind is None:
-                errors.append(where + "Device Type must be Module or Detector.")
+                errors.append(where + "Device Type must be Module, Detector or Head End.")
+                continue
+            if kind == slc.HEAD_END:
+                # Never addressed: the address count, options and rounding don't apply.
+                table[key] = slc.new_rule(slc.HEAD_END)
+                kept.append((row, table[key]))
                 continue
 
             count = None    # blank = prompt later

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto-Circuit script - version v7
-__title__ = "Auto-\nCircuit v7"
+# Auto-Circuit script - version v8
+__title__ = "Auto-\nCircuit v8"
 __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1. Choose the circuit type: NAC, Voice or SLC.\n"
            "2. NAC / Voice: continue a circuit already in the project, continue from a selected device, or start "
@@ -8,7 +8,8 @@ __doc__ = ("Runs conduit between devices and addresses them as one circuit.\n\n"
            "1.2 A, and max device count). SLC: continue a loop, continue from a selected device, or start a new "
            "one (N#L#M000 / N#L#D000, as Address SLC).\n"
            "3. Pick the new devices or their tags in order (Esc when finished). Elements that don't take an "
-           "address of this kind, such as the power supply or panel, are connected but not addressed.\n"
+           "address of this kind, such as the power supply or panel, and types set to Head End in Address SLC - "
+           "Config or Address NAC / Voice - Config, are connected but not addressed.\n"
            "   Continuing a circuit: choose to continue from its last device, or select a device on it. If devices "
            "come after the one you select (followed along the conduit), the new devices are inserted: the conduit "
            "to the next device is removed, new conduit runs through the new devices back to it, and every device "
@@ -504,7 +505,7 @@ class NotificationRun(object):
         if label:
             return label
         available = nv.kinds_on_element(el)
-        options = [t for t in nv.TYPE_LABELS if all(k in available for k in nv.TYPE_KINDS[t])]
+        options = nv.type_options(available)
         if not options:
             return None
         if len(options) == 1:
@@ -533,6 +534,8 @@ class NotificationRun(object):
             label = self.device_label(el, key)
             if label is None:
                 out["why"] = "no %s parameters, or skipped" % self.name
+            elif label == nv.HEAD_END:
+                out["why"] = "Head End - connected, never addressed"
             elif self.kind not in nv.TYPE_KINDS[label]:
                 out["why"] = label
             else:
@@ -1115,7 +1118,9 @@ class SlcRun(object):
             out["why"] = "not a Fire Alarm Device - conduit only"
         else:
             writable = [p for _pos, p in self.reader.get(el) if not p.IsReadOnly]
-            if not writable:
+            if slc.is_head_end(self.table, key):
+                out["why"] = "Head End - connected, never addressed"
+            elif not writable:
                 out["why"] = "no writable SLC Address parameters"
             else:
                 rule = self.table.get(key)

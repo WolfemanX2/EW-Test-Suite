@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v4
+# nac_voice_addressing module - version v5
 # Change log (last change first):
+#   v5 - Address NAC v4 / Address Voice v4: Head End devices are never addressed (skipped when picked, passed
+#        over downstream, listed in the summary).
 #   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
 #        ew_common.
 #   v3 - Code consolidation step 3 (no tool change): the 'Family : Type' key comes from ew_common.type_key.
@@ -496,6 +498,7 @@ class Session(object):
         self.addressed = {}         # element id -> {kind: number} written this run
         self.problems = []
         self.not_this_run = []      # (element id, type key, device type): no kind being addressed this run
+        self.head_end = {}          # element id -> type key: Head End devices picked or passed (never addressed)
         self.anchor = None          # device a downstream run starts from: the last one addressed or continued
         self.run_kinds = {}         # conduit type id -> kind chosen for it this run
         self.runs = []              # summary lines of the downstream runs
@@ -550,7 +553,7 @@ class Session(object):
         if label:
             return label
         available = nv.kinds_on_element(el)
-        options = [t for t in nv.TYPE_LABELS if all(k in available for k in nv.TYPE_KINDS[t])]
+        options = nv.type_options(available)
         if not options:
             return None
         if len(options) == 1:
@@ -658,6 +661,11 @@ class Session(object):
                 forms.toast("No writable NAC / Voice address parameters on that device.")
             else:
                 forms.toast("Skipped - no addresses assigned.")
+            return
+
+        if label == nv.HEAD_END:
+            self.head_end[eid] = key
+            forms.toast("Head End device - never addressed. Skipped.")
             return
 
         todo = [k for k in nv.TYPE_KINDS[label] if k in self.state]
@@ -785,7 +793,7 @@ class Session(object):
             return
 
         # Which of the devices found take an address of this kind
-        candidates, passed, done, declined = [], [], 0, set()
+        candidates, passed, done, declined, head_end = [], [], 0, set(), 0
         for el in found:
             eid = nv.eid_int(el.Id)
             if kind in self.addressed.get(eid, {}):
@@ -796,6 +804,10 @@ class Session(object):
             if label is None:
                 declined.add(key)
                 passed.append((eid, key, "not a NAC / Voice device, or skipped"))
+                continue
+            if label == nv.HEAD_END:
+                self.head_end[eid] = key
+                head_end += 1
                 continue
             if kind not in nv.TYPE_KINDS[label]:
                 passed.append((eid, key, label))
@@ -896,6 +908,8 @@ class Session(object):
             notes.append("%d device(s) on the run don't take a %s address and are passed over." % (len(passed), name))
         if done:
             notes.append("%d device(s) already addressed this run are left as they are." % done)
+        if head_end:
+            notes.append("%d Head End device(s) on the run are ignored." % head_end)
         go_on = forms.alert("Address %d device(s) downstream of element %d on '%s' conduit?\n\n%s\n\n%s"
                             % (len(chosen), anchor_id, type_name, "\n".join(lines), "\n".join(notes)),
                             title=TITLE, yes=True, no=True)
@@ -1021,6 +1035,10 @@ class Session(object):
         for eid, key, written in self.log:
             output.print_md("    - %d : %s - %s"
                             % (eid, key, ", ".join(self.address(k, written[k]) for k in nv.KINDS if k in written)))
+        if self.head_end:
+            output.print_md("- Head End devices ignored (never addressed):")
+            for eid in sorted(self.head_end):
+                output.print_md("    - %d : %s" % (eid, self.head_end[eid]))
         if self.not_this_run:
             output.print_md("- Picked but skipped (their kind was not being addressed this run):")
             for eid, key, label in self.not_this_run:
@@ -1227,7 +1245,7 @@ class Session(object):
             self.set_eol()
         except Exception as ex:
             self.problems.append("EOL parameters were not set: %s" % ex)
-        if self.log or self.problems or self.not_this_run:
+        if self.log or self.problems or self.not_this_run or self.head_end:
             self.report()
 
 

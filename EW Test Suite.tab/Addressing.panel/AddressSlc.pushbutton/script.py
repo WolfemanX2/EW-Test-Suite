@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Address SLC script - version v7
-__title__ = "Address\nSLC v7"
+# Address SLC script - version v8
+__title__ = "Address\nSLC v8"
 __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (or a tag hosted to one), in order "
            "of selection. Addresses are N#L#M000 for modules and N#L#D000 for detectors; modules and detectors "
            "are counted separately. Address parameters on the device beyond the number filled are cleared.\n\n"
@@ -8,7 +8,8 @@ __doc__ = ("Fills the SLC Address parameters of each picked Fire Alarm Device (o
            "continue from a selected device (resumes after the addresses written on it), or start a new one.\n\n"
            "Each Family : Type is addressed by its rule in Address SLC - Config: a fixed number of addresses, "
            "named Address Options to choose from, or a prompt for the count. A type without a rule is asked "
-           "for its kind and count.\n\n"
+           "for its kind and count. A type set to Head End is never addressed: it is skipped when picked and "
+           "passed over when following conduit.\n\n"
            "After the first device (or after 'Continue From Selected'), choose Manual (pick each device) or "
            "Automatic: select the conduit leaving the device in the direction to check. Every device connected "
            "downstream by that conduit type is found, listed for confirmation and addressed in order of "
@@ -252,6 +253,7 @@ class Session(object):
         self.runs = []              # summary lines of the conduit runs followed
         self.manual = False         # True once the user chooses Manual: no more Manual / Automatic prompts
         self.finished = False       # the user chose Finish after an automatic run
+        self.head_end = {}          # element id -> Family : Type of Head End devices picked or passed over
 
     def address(self, kind, number):
         return slc.fmt_address(self.prefix, kind, number)
@@ -483,10 +485,13 @@ class Session(object):
                         % (anchor_id, type_name), title=TITLE)
             return True
 
-        todo, no_params, done = [], [], 0
+        todo, no_params, done, head_end = [], [], 0, 0
         for i in order:
             if i in self.addressed:
                 done += 1
+            elif slc.is_head_end(self.table, slc.family_key(doc, elements[i])):
+                self.head_end[i] = slc.family_key(doc, elements[i])
+                head_end += 1
             elif any(not p.IsReadOnly for _pos, p in self.reader.get(elements[i])):
                 todo.append(elements[i])
             else:
@@ -528,6 +533,8 @@ class Session(object):
                          % len(no_params))
         if done:
             notes.append("%d device(s) already addressed this run are left as they are." % done)
+        if head_end:
+            notes.append("%d Head End device(s) on the run are ignored." % head_end)
         go_on = forms.alert(
             "Address %d device(s) downstream of element %d on '%s' conduit, in this order:\n\n%s\n\n%s"
             "Address them starting at %s | %s?"
@@ -588,6 +595,12 @@ class Session(object):
         eid = slc.eid_int(device.Id)
         self.current = device
 
+        key = slc.family_key(doc, device)
+        if slc.is_head_end(self.table, key):
+            self.head_end[eid] = key
+            forms.toast("Head End device - never addressed. Skipped.")
+            return True
+
         # Guard against picking the same device twice (directly or via its tag).
         earlier = self.addressed.get(eid)
         if earlier:
@@ -604,7 +617,6 @@ class Session(object):
             forms.toast("No writable address parameters on that device.")
             return True
 
-        key = slc.family_key(doc, device)
         rule = self.table.get(key)
         resolved = self.resolve_count_and_kind(key, eid, rule, len(writable))
         if resolved is None:
@@ -766,6 +778,10 @@ class Session(object):
                 output.print_md("- %s" % heading)
                 for item in sorted(items):
                     output.print_md("    - %s" % item)
+        if self.head_end:
+            output.print_md("- Head End devices ignored (never addressed):")
+            for eid in sorted(self.head_end):
+                output.print_md("    - %d : %s" % (eid, self.head_end[eid]))
         output.print_md("- Lookup table: `%s`" % slc.table_path())
         for msg in self.problems:
             output.print_md("- Issue: %s" % msg)
@@ -777,7 +793,7 @@ class Session(object):
             self.pick_devices()
         except Exception as ex:
             self.problems.append("Stopped by an unexpected error: %s" % ex)
-        if self.log or self.problems:
+        if self.log or self.problems or self.head_end:
             self.report()
 
 

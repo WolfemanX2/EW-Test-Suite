@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-# nac_voice_types module - version v7
+# nac_voice_types module - version v8
 # Change log (last change first):
+#   v8 - Address NAC v4 / Address Voice v4 / Auto-Circuit v8 / Address NAC / Voice - Config v4: Head End
+#        device type (never addressed) and type_options().
 #   v7 - Code consolidation step 3 (no tool change): eid_int, is_device, family_key and DEVICE_CATEGORIES come
 #        from ew_common.
 #   v6 - Address NAC v1 / Address Voice v1: Address NAC / Voice split into two tools.
 #   v5 - Address NAC / Voice v7: EOL current and voltage estimate in Comments.
 #   v4 - Address NAC / Voice v5: Voice circuits in Notification Circuit too.
-#   v3 - Address NAC / Voice v4: EOL flags, conduit circuit parameter, circuit number ranges.
 """Shared pieces of the NAC / Voice addressing tools: the parameter names, the address format and the
 lookup table that says which Family : Type is NAC Only, Voice Only, or NAC and Voice.
 
@@ -88,9 +89,11 @@ def conduit_tokens(text):
 NAC_ONLY = "NAC Only"
 VOICE_ONLY = "Voice Only"
 NAC_AND_VOICE = "NAC and Voice"
-TYPE_LABELS = [NAC_ONLY, VOICE_ONLY, NAC_AND_VOICE]
-TYPE_KINDS = {NAC_ONLY: ("N",), VOICE_ONLY: ("V",), NAC_AND_VOICE: ("N", "V")}
+HEAD_END = "Head End"     # the panel, power supplies and other head-end equipment: never addressed
+TYPE_LABELS = [NAC_ONLY, VOICE_ONLY, NAC_AND_VOICE, HEAD_END]
+TYPE_KINDS = {NAC_ONLY: ("N",), VOICE_ONLY: ("V",), NAC_AND_VOICE: ("N", "V"), HEAD_END: ()}
 _ALIASES = {"N": NAC_ONLY, "NAC": NAC_ONLY, "V": VOICE_ONLY, "VOICE": VOICE_ONLY,
+            "H": HEAD_END, "HEAD END": HEAD_END, "HEADEND": HEAD_END,
             "NV": NAC_AND_VOICE, "BOTH": NAC_AND_VOICE, "NAC AND VOICE": NAC_AND_VOICE,
             "NAC ONLY": NAC_ONLY, "VOICE ONLY": VOICE_ONLY}
 
@@ -233,6 +236,14 @@ def kinds_on_element(el):
     return kinds
 
 
+def type_options(available):
+    """Device types to offer for a device not in the table, given the kinds it can take: the ones it has the
+    parameters for, plus Head End. Empty if it takes neither kind."""
+    if not available:
+        return []
+    return [t for t in TYPE_LABELS if all(k in available for k in TYPE_KINDS[t])]
+
+
 def label_for_kinds(kinds):
     """Device type that matches a set of kinds, or None if the set is empty."""
     if not kinds:
@@ -254,7 +265,7 @@ def normalize_label(raw):
 
 
 def load_table():
-    """{"Family : Type": "NAC Only" | "Voice Only" | "NAC and Voice"}. Raises if the file can't be read."""
+    """{"Family : Type": "NAC Only" | "Voice Only" | "NAC and Voice" | "Head End"}. Raises if the file can't be read."""
     table = {}
     path = table_path()
     if not os.path.isfile(path):
