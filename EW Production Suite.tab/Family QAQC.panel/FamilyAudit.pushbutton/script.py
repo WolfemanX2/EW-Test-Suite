@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v6
+# Family Audit script - version v7
+# v7 - fuzzy name matching in the remap step (each assumed match is confirmed by the user, unticked by default);
+#      the CSV export comes after the remap step and shows the remapped parameters
 # v6 - Nested Shared Families list: which audited families have shared families nested in them
 # v5 - parameters Revit won't replace directly (e.g. Symbol Visibility) are rebuilt instead, keeping their values,
 #      formulas, visibility / nested associations and dimension labels; a data type mismatch is reported as such
@@ -8,7 +10,7 @@
 #      reload the updated families into the project
 # v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
 #      parameter files but matching one there by name are swapped for it and the families saved to a folder
-__title__ = "Family\nAudit v6"
+__title__ = "Family\nAudit v7"
 __doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
@@ -23,7 +25,7 @@ from pyrevit import revit, forms, script
 from Autodesk.Revit.DB import FilteredElementCollector, SharedParameterElement, Transaction, SaveAsOptions
 from family_qaqc import (natural, loaded_by_category, read_shared_param_file,     # lib/family_qaqc.py
                          SharedFileSwitch, remap_to_shared, plain_family_params, FamilyLoadOptions,
-                         nested_shared_families)
+                         nested_shared_families, fuzzy_match)
 import config_store                                                              # lib/config_store.py
 
 TITLE = "Family Audit"
@@ -117,8 +119,8 @@ def shared_params(fam):
 
 # ---------- Picking ----------
 class Item(forms.TemplateListItem):
-    def __init__(self, value, label):
-        super(Item, self).__init__(value, checked=True)
+    def __init__(self, value, label, checked=True):
+        super(Item, self).__init__(value, checked=checked)
         self.label = label
 
     @property
@@ -157,12 +159,13 @@ def save_csv(results):
         return
     import codecs
     with codecs.open(path, "w", "utf-8-sig") as f:
-        f.write(u"Category,Family,Number of Types,Shared Parameter,Instance / Type,GUID,Shared Parameter File\r\n")
+        f.write(u"Category,Family,Number of Types,Shared Parameter,Instance / Type,GUID,Shared Parameter File,"
+                u"Remap\r\n")
         for r in results:
             params = r["params"] or {"": ("", "")}
             for g, (name, kind) in params.items():
                 cells = [r["category"], r["family"], r["types"], name or r["note"], kind, g,
-                         r["files"].get(g, "") if g else ""]
+                         r["files"].get(g, "") if g else "", r.get("changes", {}).get(g, "")]
                 f.write(u",".join(csv_cell(c) for c in cells) + u"\r\n")
     forms.alert("Saved:\n" + path, title=TITLE)
 
@@ -173,62 +176,114 @@ PLAIN = "family parameter"
 
 
 def remap_candidates(results, index, by_name):
-    """({kind: [(result, key, name, file path, file guid, kind)]}: for each shared family parameter whose GUID is in
-    none of the files, and each plain family parameter, whose name is in a file. One entry per file with that
-    name. key is the parameter's GUID, or 'plain:<name>'."""
-    out = {SHARED_NOT_FOUND: [], PLAIN: []}
+    """{kind: {"exact": [...], "fuzzy": [...]}} of possible remaps, each (result, key, name, file path, file guid,
+    kind, name in the file, score): shared family parameters whose GUID is in none of the files, and plain family
+    parameters, matched to a file parameter of the same name (one entry per file with it), or else to the closest
+    name (fuzzy, to be confirmed by the user). key is the parameter's GUID, or 'plain:<name>'."""
+    out = dict((k, {"exact": [], "fuzzy": []}) for k in (SHARED_NOT_FOUND, PLAIN))
+    file_names = list(by_name)
     for r in results:
-        for g, (name, kind) in (r["params"] or {}).items():
-            if g in index or kind == NOT_FAMILY_PARAM:
+        in_family = set(n for n, _k in (r["params"] or {}).values()) | set(r["plain"])
+        todo = [(g, name, SHARED_NOT_FOUND) for g, (name, kind) in (r["params"] or {}).items()
+                if g not in index and kind != NOT_FAMILY_PARAM]
+        todo += [("plain:" + name, name, PLAIN) for name in r["plain"]]
+        for key, name, kind in todo:
+            if name in by_name:
+                for path, fg in by_name[name]:
+                    out[kind]["exact"].append((r, key, name, path, fg, kind, name, 1.0))
                 continue
-            for path, fg in by_name.get(name, []):
-                out[SHARED_NOT_FOUND].append((r, g, name, path, fg, SHARED_NOT_FOUND))
-        for name in r["plain"]:
-            for path, fg in by_name.get(name, []):
-                out[PLAIN].append((r, "plain:" + name, name, path, fg, PLAIN))
+            match, score = fuzzy_match(name, file_names)
+            if match is None or match in in_family:     # the family already has a parameter of that name
+                continue
+            for path, fg in by_name[match]:
+                out[kind]["fuzzy"].append((r, key, name, path, fg, kind, match, score))
     return out
 
 
-def pick_remaps(cands):
-    """The remaps the user ticks (only the first file ticked for a parameter is used), or None if cancelled."""
-    items = [Item(i, "%s : %s  [%s]  ->  %s" % (c[0]["family"], c[2], c[5], os.path.basename(c[3])))
-             for i, c in enumerate(cands)]
-    picked = forms.SelectFromList.show(items, title=TITLE + " - Remap to shared parameter file",
-                                       button_name="Remap", multiselect=True)
-    if not picked:
-        return None
-    chosen, seen = [], set()
-    for i in sorted(picked):
-        c = cands[i]
+def pick_remaps(cands, title, button, checked=True):
+    """The remaps the user ticks (only the first file ticked for a parameter is used). [] if none or cancelled."""
+    if not cands:
+        return []
+    items = []
+    for i, c in enumerate(cands):
+        if c[6] == c[2]:
+            label = "%s : %s  [%s]  ->  %s" % (c[0]["family"], c[2], c[5], os.path.basename(c[3]))
+        else:
+            label = "%s : %s  [%s]  ->  %s  (%s, %d%% match)" % (c[0]["family"], c[2], c[5], c[6],
+                                                                os.path.basename(c[3]), int(round(c[7] * 100)))
+        items.append(Item(i, label, checked))
+    picked = forms.SelectFromList.show(items, title=TITLE + " - " + title, button_name=button, multiselect=True)
+    return [cands[i] for i in sorted(picked or [])]
+
+
+def first_per_param(chosen):
+    """One remap per family parameter: the first one chosen."""
+    out, seen = [], set()
+    for c in chosen:
         key = (c[0]["family"], c[1])
         if key not in seen:
             seen.add(key)
-            chosen.append(c)
-    return chosen
+            out.append(c)
+    return out
+
+
+def apply_to_results(done, index):
+    """Updates the audit results with the remaps that worked, so the CSV shows the families as saved."""
+    for c, kind in done:
+        r, key, name, _path, fg, _k, new_name, _score = c
+        if key.startswith("plain:"):
+            if name in r["plain"]:
+                r["plain"].remove(name)
+            change = "Was family parameter '%s'" % name if new_name != name else "Was a family parameter"
+        else:
+            if r["params"] is not None:
+                r["params"].pop(key, None)
+            change = "Remapped from '%s' (GUID %s)" % (name, key) if new_name != name else \
+                "Remapped from GUID %s" % key
+        if r["params"] is None:
+            r["params"] = OrderedDict()
+        r["params"][fg] = (new_name, kind)
+        r["files"][fg] = file_text(fg, new_name, index)
+        r.setdefault("changes", {})[fg] = change
+        if r["note"] == "None":
+            r["note"] = ""
 
 
 def remap(results, index, by_name, out):
     """Follow-up step: offers to swap 'Not found' parameters for the same-named parameter in a shared parameter
     file, then saves the changed families to a folder the user picks."""
     found = remap_candidates(results, index, by_name)
-    n_shared, n_plain = len(set((c[0]["family"], c[1]) for c in found[SHARED_NOT_FOUND])), \
-        len(set((c[0]["family"], c[1]) for c in found[PLAIN]))
+
+    def count(kind):
+        return len(set((c[0]["family"], c[1]) for m in ("exact", "fuzzy") for c in found[kind][m]))
+    n_shared, n_plain = count(SHARED_NOT_FOUND), count(PLAIN)
     if not n_shared and not n_plain:
         return
     options = []
     if n_shared:
         options.append(Item(SHARED_NOT_FOUND, "Remap shared parameters not found in the files to the shared parameter "
-                                              "of the same name (%d)" % n_shared))
+                                              "of the same or a similar name (%d)" % n_shared))
     if n_plain:
-        options.append(Item(PLAIN, "Map family parameters to the shared parameter of the same name (%d)" % n_plain))
+        options.append(Item(PLAIN, "Map family parameters to the shared parameter of the same or a similar name (%d)"
+                                   % n_plain))
     options.append(Item("reload", "Reload the updated families into this project"))
     picked = forms.SelectFromList.show(options, title=TITLE + " - Remap to shared parameter file",
                                        button_name="Next", multiselect=True)
     if not picked or not (SHARED_NOT_FOUND in picked or PLAIN in picked):
         return
     reload_fams = "reload" in picked
-    cands = [c for kind in (SHARED_NOT_FOUND, PLAIN) if kind in picked for c in found[kind]]
-    chosen = pick_remaps(cands)
+    kinds = [k for k in (SHARED_NOT_FOUND, PLAIN) if k in picked]
+    chosen = pick_remaps([c for k in kinds for c in found[k]["exact"]], "Same name in the shared parameter file",
+                         "Next")
+    fuzzy = [c for k in kinds for c in found[k]["fuzzy"]]
+    if fuzzy:
+        forms.alert("%d parameter%s %s no exact match in the shared parameter files, but a similar name.\n\n"
+                    "Next, tick each assumed match that is correct. Unticked ones are left as they are. A remapped "
+                    "parameter takes the shared parameter's name, and formulas that use it are updated."
+                    % (len(set((c[0]["family"], c[1]) for c in fuzzy)), "" if len(fuzzy) == 1 else "s",
+                       "has" if len(fuzzy) == 1 else "have"), title=TITLE)
+        chosen += pick_remaps(fuzzy, "Confirm assumed matches", "Remap", checked=False)
+    chosen = first_per_param(chosen)
     if not chosen:
         return
     folder = forms.pick_folder(title="Folder to save the updated families in")
@@ -244,13 +299,15 @@ def remap(results, index, by_name, out):
             title=TITLE, yes=True, no=True):
         return
 
-    report = []
+    report, done = [], []
     files = SharedFileSwitch(app)
     try:
         with forms.ProgressBar(title="Remapping families ({value} of {max_value})") as pb:
             for n, (fam_name, items) in enumerate(by_family.items()):
                 pb.update_progress(n, len(by_family))
-                report += remap_family(items[0][0]["fam"], fam_name, items, files, folder, reload_fams)
+                rows, ok = remap_family(items[0][0]["fam"], fam_name, items, files, folder, reload_fams)
+                report += rows
+                done += ok
             pb.update_progress(len(by_family), len(by_family))
     finally:
         files.close()
@@ -261,22 +318,25 @@ def remap(results, index, by_name, out):
                                          "The families in this project are unchanged: load the saved files to "
                                          "update them."))
     out.print_table(report, columns=["Family", "Parameter", "Shared Parameter File", "Result"])
+    apply_to_results(done, index)
 
 
 def remap_family(fam, fam_name, items, files, folder, reload_fam):
-    """Remaps one family's parameters and saves it to folder. Returns report rows."""
-    rows = []
+    """Remaps one family's parameters and saves it to folder. Returns (report rows, [(remap, Instance / Type)]
+    for the remaps that were saved)."""
+    rows, ok = [], []
     try:
         fdoc = doc.EditFamily(fam)
     except Exception as ex:
-        return [[fam_name, c[2], os.path.basename(c[3]), "Couldn't open: %s" % ex] for c in items]
+        return [[fam_name, c[2], os.path.basename(c[3]), "Couldn't open: %s" % ex] for c in items], []
     try:
         params = dict((str(p.GUID).lower(), p) for p in fdoc.FamilyManager.Parameters if p.IsShared)
         params.update(("plain:" + n, p) for n, p in plain_family_params(fdoc).items())
         done = 0
         t = Transaction(fdoc, "Remap shared parameters")
         t.Start()
-        for _r, g, name, path, fg, _k in sorted(items, key=lambda c: c[3]):    # one file switch per file
+        for c in sorted(items, key=lambda c: c[3]):    # one file switch per file
+            _r, g, name, path, fg, _k, new_name, _score = c
             fname = os.path.basename(path)
             try:
                 d = files.definition(path, fg)
@@ -284,9 +344,12 @@ def remap_family(fam, fam_name, items, files, folder, reload_fam):
                     raise Exception("not found in the file")
                 if g not in params:
                     raise Exception("not in the family any more")
+                kind = "Instance" if params[g].IsInstance else "Type"
                 how = remap_to_shared(fdoc, params[g], d)
                 done += 1
-                rows.append([fam_name, name, fname, "Remapped" + ("" if how == "replaced" else " (%s)" % how)])
+                ok.append((c, kind))
+                rows.append([fam_name, name, fname, "Remapped" + (" as '%s'" % new_name if new_name != name else "")
+                             + ("" if how == "replaced" else " (%s)" % how)])
             except Exception as ex:
                 rows.append([fam_name, name, fname, "Not remapped: %s" % ex])
         if done:
@@ -307,9 +370,10 @@ def remap_family(fam, fam_name, items, files, folder, reload_fam):
             rows.append([fam_name, "", "", "Nothing changed, not saved"])
     except Exception as ex:
         rows.append([fam_name, "", "", "Failed: %s" % ex])
+        ok = []                                     # not saved, so nothing changed
     finally:
         fdoc.Close(False)
-    return rows
+    return rows, ok
 
 
 def main():
@@ -395,11 +459,12 @@ def main():
                 ctable.append([n, g, file_text(g, n, index), ", ".join(sorted(set(fams), key=natural))])
         out.print_table(ctable, columns=["Shared Parameter", "GUID", "Shared Parameter File", "Families"])
 
-    if results and forms.alert("Save the results as a CSV file?", title=TITLE, yes=True, no=True):
-        save_csv(results)
-
     if not cancelled:
         remap(results, index, by_name, out)
+
+    # after the remap step, so the CSV shows the families as they were saved
+    if results and forms.alert("Save the results as a CSV file?", title=TITLE, yes=True, no=True):
+        save_csv(results)
 
 
 if __name__ == "__main__":

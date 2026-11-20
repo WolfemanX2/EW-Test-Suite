@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# family_qaqc module - version v5
+# family_qaqc module - version v6
 # Change log (last change first):
+#   v6 - Family Audit v7: fuzzy_match (closest parameter name, ignoring case, spaces and punctuation);
+#        remap_to_shared also works when the shared parameter has a different name (formulas are updated).
 #   v5 - Family Audit v6: nested_shared_families (shared families nested in a family, with instance counts).
 #   v4 - Family Audit v5: remap_to_shared checks the data types match, runs in a SubTransaction and, when Revit's
 #        ReplaceParameter fails (e.g. Symbol Visibility: "Parameter replacement failed"), rebuilds the parameter:
@@ -10,8 +12,6 @@
 #        from family_shared_params; plain_family_params.
 #   v2 - Family Audit v2: SharedFileSwitch (open any shared parameter file through Revit and put the user's setting
 #        back) and remap_to_shared (swap a family parameter for the matching shared parameter).
-#   v1 - Family Audit v1 / Family Placer v4: loaded families by category (moved here from Family Placer) and
-#        reading shared parameter files by GUID.
 """Shared code for the Family QAQC tools (Family Placer, Family Audit). Check here before writing a new one.
 
 natural                  sort key that puts 'Type 2' before 'Type 10'
@@ -20,6 +20,7 @@ read_shared_param_file   {guid: (name, group)} from a shared parameter file, rea
                          left alone)
 SharedFileSwitch         get an ExternalDefinition from any shared parameter file; restores Revit's setting on close
 plain_family_params      {name: FamilyParameter} of a family's own parameters that aren't shared or built in
+fuzzy_match              closest name in a list, with a 0-1 score (case, spaces and punctuation ignored)
 nested_shared_families   [(name, category, instances)] of the shared families nested in an open family
 FamilyLoadOptions        reload a family into the project, keeping the parameter values already there
 remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values,
@@ -27,6 +28,7 @@ remap_to_shared          swap a family parameter (shared or not) for a shared pa
 """
 import re
 import codecs
+import difflib
 from Autodesk.Revit.DB import (FilteredElementCollector, FamilySymbol, CategoryType, BuiltInParameter,
                                IFamilyLoadOptions, FamilySource, SubTransaction, StorageType, Dimension,
                                LogicalOrFilter, ElementIsElementTypeFilter, Family, FamilyInstance)
@@ -125,6 +127,46 @@ def _group(param):
         return param.Definition.ParameterGroup      # older
 
 
+def _norm(name):
+    """Lower case letters and digits only: 'Symbol_Visibility' and 'symbol visibility' compare equal."""
+    return re.sub(r"[^0-9a-z]", "", (name or "").lower())
+
+
+def fuzzy_match(name, names, cutoff=0.7):
+    """(closest of names, score 0-1) for name, ignoring case, spaces and punctuation, or (None, 0) if none scores
+    at least cutoff. One name starting with or containing the other (an abbreviation, an added word) scores at
+    least 0.8. An exact match isn't a fuzzy one, so names equal to name are skipped."""
+    n = _norm(name)
+    best, score = None, 0.0
+    for other in names:
+        if other == name:
+            continue
+        o = _norm(other)
+        if not o or not n:
+            continue
+        r = 1.0 if o == n else difflib.SequenceMatcher(None, n, o).ratio()
+        short, long_ = (n, o) if len(n) <= len(o) else (o, n)
+        if o != n and len(short) >= 4 and short in long_:
+            r = max(r, 0.8 + r * 0.01)      # ties go to the closer spelling
+        if r > score:
+            best, score = other, r
+    return (best, score) if score >= cutoff else (None, 0.0)
+
+
+def _rename_in_formula(formula, old, new, others=()):
+    """formula with the parameter name old replaced by new. Names may have spaces, so longer parameter names that
+    contain old (others, e.g. 'Symbol Vis 2' for 'Symbol Vis') are set aside first and left alone."""
+    if old == new or not formula:
+        return formula
+    keep = sorted((o for o in others if o != old and old in o), key=len, reverse=True)
+    for i, o in enumerate(keep):
+        formula = formula.replace(o, "\x00%d\x00" % i)
+    formula = re.sub(r"(?<![\w])" + re.escape(old) + r"(?![\w])", lambda m: new, formula)
+    for i, o in enumerate(keep):
+        formula = formula.replace("\x00%d\x00" % i, o)
+    return formula
+
+
 def _spec(d):
     """Data type of a definition, comparable across Revit versions (None if it can't be read)."""
     for get in (lambda: d.GetDataType(), lambda: d.ParameterType):     # Revit 2022+ / older
@@ -170,6 +212,7 @@ def _rebuild(fdoc, param, definition):
     that use it, element parameters associated to it and dimensions labeled with it. Returns a summary."""
     fm = fdoc.FamilyManager
     name = param.Definition.Name
+    new_name = definition.Name
     group = _group(param)
     instance = param.IsInstance
     own_formula = param.Formula if param.IsDeterminedByFormula else None
@@ -215,8 +258,9 @@ def _rebuild(fdoc, param, definition):
         fm.CurrentType = current
     if own_formula:
         fm.SetFormula(new, own_formula)
+    others = [q.Definition.Name for q in fm.Parameters]
     for q, f in formulas:
-        fm.SetFormula(q, f)
+        fm.SetFormula(q, _rename_in_formula(f, name, new_name, others))
     relinked = 0
     for el, pid in links:
         for ep in el.Parameters:
@@ -238,8 +282,8 @@ def _rebuild(fdoc, param, definition):
 
 def remap_to_shared(fdoc, param, definition):
     """Swaps the family parameter param (shared or not) for the shared parameter definition, inside an open
-    transaction of the family document fdoc. Keeps its name, Instance / Type, group, values, formulas, element
-    associations and dimension labels. Returns how it was done ("replaced" or "rebuilt, kept ..."); raises with
+    transaction of the family document fdoc. Keeps its Instance / Type, group, values, formulas, element
+    associations and dimension labels, and takes the shared parameter's name (formulas that use it follow). Returns how it was done ("replaced" or "rebuilt, kept ..."); raises with
     the reason if it couldn't be done (and leaves the family as it was).
     Revit's ReplaceParameter is tried first (a shared parameter goes through a temporary plain one, as one shared
     parameter can't be swapped straight for another of the same name); when that fails the parameter is rebuilt."""
