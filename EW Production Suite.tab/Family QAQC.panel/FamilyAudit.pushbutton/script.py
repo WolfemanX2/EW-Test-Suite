@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
-# Family Audit script - version v2
+# Family Audit script - version v3
+# v3 - remap step options: also map plain family parameters to the shared parameter of the same name, and
+#      reload the updated families into the project
 # v2 - one category at a time (picked like Family Placer); remap step: parameters not found in the shared
 #      parameter files but matching one there by name are swapped for it and the families saved to a folder
-__title__ = "Family\nAudit v2"
+__title__ = "Family\nAudit v3"
 __doc__ = ("Lists the loaded families of a chosen category with their number of types and the shared "
            "parameters inside each family, and which shared parameter file each parameter is in (matched by "
            "GUID against the current shared parameter file and any other files you add). Also lists shared "
            "parameters that have the same name but different GUIDs. Results can be saved as a CSV file. Shared "
            "parameters not found in any file, but with a parameter of the same name in one, can then be remapped "
-           "to that file's parameter, and the changed families saved to a folder you pick.")
+           "to that file's parameter (optionally plain family parameters with a matching name too), the changed "
+           "families saved to a folder you pick and, optionally, reloaded into the project.")
 
 import os
 from collections import OrderedDict
 from pyrevit import revit, forms, script
 from Autodesk.Revit.DB import FilteredElementCollector, SharedParameterElement, Transaction, SaveAsOptions
 from family_qaqc import (natural, loaded_by_category, read_shared_param_file,     # lib/family_qaqc.py
-                         SharedFileSwitch, remap_to_shared)
+                         SharedFileSwitch, remap_to_shared, plain_family_params, FamilyLoadOptions)
 import config_store                                                              # lib/config_store.py
 
 TITLE = "Family Audit"
@@ -88,10 +91,11 @@ def file_text(guid, name, index):
 
 # ---------- Reading the families ----------
 def shared_params(fam):
-    """OrderedDict {guid: (name, Instance / Type / NOT_FAMILY_PARAM)} of the shared parameters in a family.
-    Raises if the family can't be opened."""
+    """(OrderedDict {guid: (name, Instance / Type / NOT_FAMILY_PARAM)} of the shared parameters in a family,
+    [names of its plain (not shared, not built-in) family parameters]). Raises if the family can't be opened."""
     fdoc = doc.EditFamily(fam)
     try:
+        plain = sorted(plain_family_params(fdoc), key=natural)
         found = OrderedDict()
         for p in sorted(fdoc.FamilyManager.Parameters, key=lambda p: natural(p.Definition.Name)):
             if p.IsShared:
@@ -100,7 +104,7 @@ def shared_params(fam):
             g = str(spe.GuidValue).lower()
             if g not in found:
                 found[g] = (spe.Name, NOT_FAMILY_PARAM)
-        return found
+        return found, plain
     finally:
         fdoc.Close(False)
 
@@ -158,22 +162,30 @@ def save_csv(results):
 
 
 # ---------- Remapping to the shared parameter file ----------
+SHARED_NOT_FOUND = "shared, not found"
+PLAIN = "family parameter"
+
+
 def remap_candidates(results, index, by_name):
-    """[(result, guid, name, file path, file guid)] for each family parameter whose GUID is in none of the files
-    but whose name is: one entry per file that has that name."""
-    out = []
+    """({kind: [(result, key, name, file path, file guid, kind)]}: for each shared family parameter whose GUID is in
+    none of the files, and each plain family parameter, whose name is in a file. One entry per file with that
+    name. key is the parameter's GUID, or 'plain:<name>'."""
+    out = {SHARED_NOT_FOUND: [], PLAIN: []}
     for r in results:
         for g, (name, kind) in (r["params"] or {}).items():
             if g in index or kind == NOT_FAMILY_PARAM:
                 continue
             for path, fg in by_name.get(name, []):
-                out.append((r, g, name, path, fg))
+                out[SHARED_NOT_FOUND].append((r, g, name, path, fg, SHARED_NOT_FOUND))
+        for name in r["plain"]:
+            for path, fg in by_name.get(name, []):
+                out[PLAIN].append((r, "plain:" + name, name, path, fg, PLAIN))
     return out
 
 
 def pick_remaps(cands):
     """The remaps the user ticks (only the first file ticked for a parameter is used), or None if cancelled."""
-    items = [Item(i, "%s : %s  ->  %s" % (c[0]["family"], c[2], os.path.basename(c[3])))
+    items = [Item(i, "%s : %s  [%s]  ->  %s" % (c[0]["family"], c[2], c[5], os.path.basename(c[3])))
              for i, c in enumerate(cands)]
     picked = forms.SelectFromList.show(items, title=TITLE + " - Remap to shared parameter file",
                                        button_name="Remap", multiselect=True)
@@ -192,14 +204,24 @@ def pick_remaps(cands):
 def remap(results, index, by_name, out):
     """Follow-up step: offers to swap 'Not found' parameters for the same-named parameter in a shared parameter
     file, then saves the changed families to a folder the user picks."""
-    cands = remap_candidates(results, index, by_name)
-    if not cands:
+    found = remap_candidates(results, index, by_name)
+    n_shared, n_plain = len(set((c[0]["family"], c[1]) for c in found[SHARED_NOT_FOUND])), \
+        len(set((c[0]["family"], c[1]) for c in found[PLAIN]))
+    if not n_shared and not n_plain:
         return
-    if not forms.alert("%d shared parameter%s not found in the files %s a parameter of the same name in one.\n\n"
-                       "Remap them to the shared parameter file?" % (
-                           len(cands), "" if len(cands) == 1 else "s", "has" if len(cands) == 1 else "have"),
-                       title=TITLE, yes=True, no=True):
+    options = []
+    if n_shared:
+        options.append(Item(SHARED_NOT_FOUND, "Remap shared parameters not found in the files to the shared parameter "
+                                              "of the same name (%d)" % n_shared))
+    if n_plain:
+        options.append(Item(PLAIN, "Map family parameters to the shared parameter of the same name (%d)" % n_plain))
+    options.append(Item("reload", "Reload the updated families into this project"))
+    picked = forms.SelectFromList.show(options, title=TITLE + " - Remap to shared parameter file",
+                                       button_name="Next", multiselect=True)
+    if not picked or not (SHARED_NOT_FOUND in picked or PLAIN in picked):
         return
+    reload_fams = "reload" in picked
+    cands = [c for kind in (SHARED_NOT_FOUND, PLAIN) if kind in picked for c in found[kind]]
     chosen = pick_remaps(cands)
     if not chosen:
         return
@@ -222,18 +244,20 @@ def remap(results, index, by_name, out):
         with forms.ProgressBar(title="Remapping families ({value} of {max_value})") as pb:
             for n, (fam_name, items) in enumerate(by_family.items()):
                 pb.update_progress(n, len(by_family))
-                report += remap_family(items[0][0]["fam"], fam_name, items, files, folder)
+                report += remap_family(items[0][0]["fam"], fam_name, items, files, folder, reload_fams)
             pb.update_progress(len(by_family), len(by_family))
     finally:
         files.close()
 
     out.print_md("### Remapped to the shared parameter file")
-    out.print_md("Saved to `%s`. The families in this project are unchanged: load the saved files to update them."
-                 % folder)
+    out.print_md("Saved to `%s`. %s" % (folder, "Reloaded into this project, keeping its parameter values."
+                                         if reload_fams else
+                                         "The families in this project are unchanged: load the saved files to "
+                                         "update them."))
     out.print_table(report, columns=["Family", "Parameter", "Shared Parameter File", "Result"])
 
 
-def remap_family(fam, fam_name, items, files, folder):
+def remap_family(fam, fam_name, items, files, folder, reload_fam):
     """Remaps one family's parameters and saves it to folder. Returns report rows."""
     rows = []
     try:
@@ -242,10 +266,11 @@ def remap_family(fam, fam_name, items, files, folder):
         return [[fam_name, c[2], os.path.basename(c[3]), "Couldn't open: %s" % ex] for c in items]
     try:
         params = dict((str(p.GUID).lower(), p) for p in fdoc.FamilyManager.Parameters if p.IsShared)
+        params.update(("plain:" + n, p) for n, p in plain_family_params(fdoc).items())
         done = 0
         t = Transaction(fdoc, "Remap shared parameters")
         t.Start()
-        for _r, g, name, path, fg in sorted(items, key=lambda c: c[3]):    # one file switch per file
+        for _r, g, name, path, fg, _k in sorted(items, key=lambda c: c[3]):    # one file switch per file
             fname = os.path.basename(path)
             try:
                 d = files.definition(path, fg)
@@ -265,6 +290,12 @@ def remap_family(fam, fam_name, items, files, folder):
             path = os.path.join(folder, fam_name + ".rfa")
             fdoc.SaveAs(path, opts)
             rows.append([fam_name, "", "", "Saved %s" % os.path.basename(path)])
+            if reload_fam:
+                try:
+                    fdoc.LoadFamily(doc, FamilyLoadOptions())
+                    rows.append([fam_name, "", "", "Reloaded into the project"])
+                except Exception as ex:
+                    rows.append([fam_name, "", "", "Saved, but not reloaded: %s" % ex])
         else:
             t.RollBack()
             rows.append([fam_name, "", "", "Nothing changed, not saved"])
@@ -297,12 +328,12 @@ def main():
                 break
             fam = symbols[0].Family
             r = {"category": cat, "family": fam_name, "types": len(symbols), "params": None, "note": "",
-                 "files": {}, "fam": fam}
+                 "files": {}, "fam": fam, "plain": []}
             if not fam.IsEditable:
                 r["note"] = "Can't be opened for editing"
             else:
                 try:
-                    r["params"] = shared_params(fam)
+                    r["params"], r["plain"] = shared_params(fam)
                     r["files"] = dict((g, file_text(g, n, index)) for g, (n, _k) in r["params"].items())
                     if not r["params"]:
                         r["note"] = "None"

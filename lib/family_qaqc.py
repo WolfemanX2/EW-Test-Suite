@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# family_qaqc module - version v2
+# family_qaqc module - version v3
 # Change log (last change first):
+#   v3 - Family Audit v3: FamilyLoadOptions (reload a family, keeping the project's parameter values), moved here
+#        from family_shared_params; plain_family_params.
 #   v2 - Family Audit v2: SharedFileSwitch (open any shared parameter file through Revit and put the user's setting
 #        back) and remap_to_shared (swap a family parameter for the matching shared parameter).
 #   v1 - Family Audit v1 / Family Placer v4: loaded families by category (moved here from Family Placer) and
@@ -12,12 +14,15 @@ loaded_by_category       {category: {family: [FamilySymbol]}} for every loaded, 
 read_shared_param_file   {guid: (name, group)} from a shared parameter file, read as text (Revit's setting is
                          left alone)
 SharedFileSwitch         get an ExternalDefinition from any shared parameter file; restores Revit's setting on close
+plain_family_params      {name: FamilyParameter} of a family's own parameters that aren't shared or built in
+FamilyLoadOptions        reload a family into the project, keeping the parameter values already there
 remap_to_shared          swap a family parameter (shared or not) for a shared parameter, keeping its name, values
                          and formulas
 """
 import re
 import codecs
-from Autodesk.Revit.DB import FilteredElementCollector, FamilySymbol, CategoryType
+from Autodesk.Revit.DB import (FilteredElementCollector, FamilySymbol, CategoryType, BuiltInParameter,
+                               IFamilyLoadOptions, FamilySource)
 from ew_common import type_name
 
 
@@ -124,3 +129,29 @@ def remap_to_shared(fdoc, param, definition):
     if param.IsShared:
         param = fm.ReplaceParameter(param, param.Definition.Name + "__remap_tmp", group, instance)
     return fm.ReplaceParameter(param, definition, group, instance)
+
+
+def plain_family_params(fdoc):
+    """{name: FamilyParameter} of the family's own parameters that are neither shared nor built in."""
+    out = {}
+    for p in fdoc.FamilyManager.Parameters:
+        try:
+            if p.IsShared or p.Definition.BuiltInParameter != BuiltInParameter.INVALID:
+                continue
+            out[p.Definition.Name] = p
+        except Exception:
+            continue
+    return out
+
+
+class FamilyLoadOptions(IFamilyLoadOptions):
+    """Overwrite the family; keep parameter values already in the project."""
+
+    def OnFamilyFound(self, familyInUse, overwriteParameterValues):
+        overwriteParameterValues.Value = False
+        return True
+
+    def OnSharedFamilyFound(self, sharedFamily, familyInUse, source, overwriteParameterValues):
+        source.Value = FamilySource.Family
+        overwriteParameterValues.Value = False
+        return True

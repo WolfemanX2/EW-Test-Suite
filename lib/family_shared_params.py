@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Shared code for the Device Shared Params and Tag Shared Params tools - version v1.
+# Change log (last change first):
+#   v2 - Family Audit v3: FamilyLoadOptions moved to lib/family_qaqc.py (imported from there).
+"""Shared code for the Device Shared Params and Tag Shared Params tools - version v2.
 
 Adds a batch of shared parameters (from the shared parameter file) to:
   - the family open in the Family Editor, or
@@ -244,17 +246,7 @@ def apply_to_family_doc(fdoc, defs, instance_map, group_type_id, mode):
     return results
 
 
-class FamilyLoadOptions(DB.IFamilyLoadOptions):
-    """Overwrite the family; keep parameter values already in the project."""
-
-    def OnFamilyFound(self, familyInUse, overwriteParameterValues):
-        overwriteParameterValues.Value = False
-        return True
-
-    def OnSharedFamilyFound(self, sharedFamily, familyInUse, source, overwriteParameterValues):
-        source.Value = DB.FamilySource.Family
-        overwriteParameterValues.Value = False
-        return True
+from family_qaqc import FamilyLoadOptions     # lib/family_qaqc.py
 
 
 def pick_project_families(doc, is_match, title):
