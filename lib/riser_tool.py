@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v4
+# riser_tool module - version v5
 # Change log (last change first):
+#   v5 - SLC Riser v38 / NAC Riser v3: a head end with no conduit connected is traced from the closest element with
+#        conduit connected within HEAD_SEARCH_RADIUS_FT, a GUTTER-BOX family 1-2 ft above it first
+#        (conduit_entry); a panel without conduit connectors can now be selected in the model.
 #   v4 - SLC Riser v37: the head end list can count criteria instead of requiring all of them (the kind's
 #        head_list_keywords / head_list_min_matches; SLC: 2 of Head End, Panel #, FACU / FACP / FAP / FAC in the name).
 #   v3 - SLC Riser v36 / NAC Riser v2: the head end is chosen from a list (types set to Head End in Family Defaults
@@ -32,7 +35,8 @@ from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, ElementTransformUtils, GroupType, SketchPlane, Plane,
-    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference
+    ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference,
+    Outline, BoundingBoxIntersectsFilter
 )
 from System.Collections.Generic import List
 try:
@@ -86,6 +90,9 @@ NOT_CONNECTED_TEXT = "NOT CONNECTED"    # shown above a device the conduit doesn
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
+HEAD_SEARCH_RADIUS_FT = 5.0    # a head end with no conduit: look this far around it for an element with conduit
+GUTTER_NAME = "GUTTERBOX"      # family names like GUTTER-BOX / Gutter Box come first (letters and digits compared)
+GUTTER_ABOVE_FT = (0.0, 3.0)   # ... and, among those, one this far above the top of the panel (typically 1-2 ft)
 HEAD_FROM_LIST = "Select from List"
 HEAD_IN_MODEL = "Select in Model"
 HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
@@ -107,6 +114,84 @@ resolve = ec.resolve_pick                   # from ew_common: elem, or the eleme
 
 def is_conduit_source(el):
     return isinstance(el, FamilyInstance) and len(sr.conduit_connectors(el)) > 0
+
+
+def is_head_candidate(el):
+    """What can be picked as the head end: anything conduit connects to, or a panel in a head end category (its
+    conduit may land on a gutter box above it instead)."""
+    if not isinstance(el, FamilyInstance):
+        return False
+    if is_conduit_source(el):
+        return True
+    try:
+        cid = sr.eid_int(el.Category.Id)
+        return any(cid == int(c) for c in HEAD_END_CATEGORIES)
+    except Exception:
+        return False
+
+
+def has_conduit_connected(el):
+    """True when at least one of the element's conduit connectors is connected."""
+    for c in sr.conduit_connectors(el):
+        try:
+            if c.IsConnected:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _gutter_like(el):
+    try:
+        name = ec.family_key(doc, el).split(" : ")[0]
+    except Exception:
+        return False
+    return GUTTER_NAME in re.sub(r"[^A-Z0-9]", "", name.upper())
+
+
+def conduit_entry(panel):
+    """The element to trace from: the panel itself when conduit is connected to it; otherwise the best element
+    with conduit connected within HEAD_SEARCH_RADIUS_FT of it - a GUTTER-BOX family first, preferably 1-2 ft above
+    the panel, then the closest. The panel itself when there is none."""
+    if has_conduit_connected(panel):
+        return panel
+    bb = panel.get_BoundingBox(None)
+    if bb is None:
+        return panel
+    r = HEAD_SEARCH_RADIUS_FT
+    box = Outline(XYZ(bb.Min.X - r, bb.Min.Y - r, bb.Min.Z - r), XYZ(bb.Max.X + r, bb.Max.Y + r, bb.Max.Z + r))
+    centre = (bb.Min + bb.Max) * 0.5
+    reader = KIND.new_reader()
+    ranked = []
+    for el in (FilteredElementCollector(doc).OfClass(FamilyInstance)
+               .WherePasses(BoundingBoxIntersectsFilter(box)).ToElements()):
+        if el.Id == panel.Id or not has_conduit_connected(el):
+            continue
+        try:
+            if sr.is_device(el) and KIND.addresses(el, reader):
+                continue        # a device on the circuit is not the way in to the panel
+        except Exception:
+            pass
+        ebb = el.get_BoundingBox(None)
+        if ebb is None:
+            continue
+        gap = ebb.Min.Z - bb.Max.Z                  # how far above the top of the panel it starts
+        above = GUTTER_ABOVE_FT[0] - 0.5 <= gap <= GUTTER_ABOVE_FT[1]
+        distance = ((ebb.Min + ebb.Max) * 0.5).DistanceTo(centre)
+        ranked.append(((0 if _gutter_like(el) else 1, 0 if above else 1, distance), el, gap))
+    if not ranked:
+        forms.alert("No conduit is connected to the selected panel, and no element within %g' of it has conduit "
+                    "connected either." % HEAD_SEARCH_RADIUS_FT,
+                    sub_msg="Connect the conduit to the panel or its gutter box and run the tool again.",
+                    title=TITLE)
+        return panel
+    ranked.sort(key=lambda t: t[0])
+    _, best, gap = ranked[0]
+    where = ("%s above the panel" % feet_text(gap)) if gap >= 0 else "next to the panel"
+    forms.toast("No conduit on the panel - tracing from %s (%s)." % (ec.family_key(doc, best), where), title=TITLE)
+    output.print_md("%s: no conduit is connected to the panel, so the conduit is traced from %s %s (%s)."
+                    % (TITLE, output.linkify(best.Id), ec.family_key(doc, best), where))
+    return best
 
 
 def is_addressed_device(el):
@@ -202,7 +287,7 @@ def choose_head_end_from_list():
 def starting_element():
     ids = list(uidoc.Selection.GetElementIds())
     if len(ids) == 1:
-        el = resolve(doc.GetElement(ids[0]), is_conduit_source)
+        el = resolve(doc.GetElement(ids[0]), is_head_candidate)
         if el is not None:
             return el
     how = forms.CommandSwitchWindow.show([HEAD_FROM_LIST, HEAD_IN_MODEL],
@@ -212,16 +297,14 @@ def starting_element():
     if how == HEAD_FROM_LIST:
         el = choose_head_end_from_list()
         if el != "model":
-            if el is not None and not is_conduit_source(el):
-                forms.toast("The panel has no conduit connectors - nothing will be traced from it.", title=TITLE)
             return el
     forms.alert(KIND.head_prompt, sub_msg=KIND.head_example, title=TITLE)
     try:
-        ref = uidoc.Selection.PickObject(ObjectType.Element, ElementOrTagFilter(is_conduit_source),
+        ref = uidoc.Selection.PickObject(ObjectType.Element, ElementOrTagFilter(is_head_candidate),
                                          "%s (or its tag) - %s" % (KIND.head_prompt, KIND.head_example))
     except OperationCanceledException:
         return None
-    return resolve(doc.GetElement(ref.ElementId), is_conduit_source)
+    return resolve(doc.GetElement(ref.ElementId), is_head_candidate)
 
 
 def first_devices(root):
@@ -1426,10 +1509,11 @@ def main():
     root = starting_element()
     if root is None:
         return
+    entry = conduit_entry(root)     # the panel, or its gutter box when the conduit lands there
     firsts = first_devices(root)
     if firsts is None:
         return
-    traced = trace_from(root, firsts)
+    traced = trace_from(entry, firsts)
     if traced is None:
         return
     rows, returns, elements, addresses, unaddressed, unconnected = traced

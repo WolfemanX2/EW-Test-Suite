@@ -56,7 +56,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
-- The head end panel is chosen from a list (panels meeting 2 of: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the family name) or selected in the model.
+- The head end panel is chosen from a list (panels meeting 2 of: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the family name) or selected in the model. If no conduit is connected to the panel, the conduit is traced from the nearest element within 5' that has conduit connected, a GUTTER-BOX family 1-2' above the panel first.
 - **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
@@ -222,12 +222,12 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v37 |
-| NAC Riser | v2 |
+| SLC Riser | v38 |
+| NAC Riser | v3 |
 | Riser - Config (was SLC Riser - Config) | v8 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v16 |
-| lib/riser_tool.py | v4 |
+| lib/riser_tool.py | v5 |
 | lib/nac_riser.py | v1 |
 | lib/riser_config_editor.py | v2 |
 | lib/riser_layout.py | v21 |

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v37
-__title__ = "SLC\nRiser v37"
+# SLC Riser script - version v38
+__title__ = "SLC\nRiser v38"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
+           "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "
+           "connected - a GUTTER-BOX family 1-2' above the panel first.\n\n"
            "Steps: choose the head end panel (FACU, NCP, APS ...) from a list - panels that meet 2 of: type set to "
            "Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the family name - or "
            "select it in the model, then the first device in the circuit "
