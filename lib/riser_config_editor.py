@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v3
+# riser_config_editor module - version v4
 # Change log (last change first):
+#   v4 - Riser - Config v10: fixed 'Cannot import name Visibility' when the window opened (the WPF assembly is now
+#        loaded here instead of relying on pyRevit having loaded it first); messages use ew_common.alert.
 #   v3 - Riser - Config v9: the Rules column and its window are gone (a type is always drawn with its own symbols);
 #        the SLC tab shows each type's Address Group (Family Defaults Config) and an Address Callouts table - a
 #        callout symbol per Address Group subgroup, used on the riser instead of the 45 degree address text.
@@ -27,16 +29,19 @@ To add a riser (e.g. Voice), add a (header, prefix, store) line to TABS.
 show_editor() opens the window."""
 import clr
 clr.AddReference("System.Data")
+clr.AddReference("PresentationCore")        # System.Windows.Visibility (loaded here, not left to pyRevit)
+clr.AddReference("PresentationFramework")
 
 from System import String, DBNull
 from System.Data import DataTable, DataRowState
-from System.Windows import Visibility
 from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 from pyrevit import revit, forms
+from System.Windows import Visibility
 
 import slc_riser as sr     # SLC Riser's files, and the table entries / symbols / callouts shared by the risers
 import nac_riser           # NAC Riser's files
 import circuit_config as cc    # Family Defaults Config: each type's Address Group and the groups' subgroups
+import ew_common as ec        # shared helpers: alert without the warning sound (lib/ew_common.py)
 
 doc = revit.doc
 TITLE = "Riser - Config"
@@ -50,7 +55,7 @@ KEEP_EDITING = "Keep Editing"
 
 def note(msg):
     """A message box without the warning icon and sound."""
-    forms.alert(msg, title=TITLE, warn_icon=False)
+    ec.alert(msg, title=TITLE)
 
 
 def cell_text(v):

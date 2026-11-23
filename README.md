@@ -201,7 +201,7 @@ share are in `lib/addressing_ui.py`.
 | Auto Circuit - Voice | v1 |
 | lib/auto_circuit.py | v1 |
 | lib/circuit_rules.py | v1 |
-| lib/ew_common.py | v4 |
+| lib/ew_common.py | v5 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
 | Family Defaults Config | v11 |
@@ -226,15 +226,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v43 |
-| NAC Riser | v8 |
-| Riser - Config (was SLC Riser - Config) | v9 |
+| SLC Riser | v44 |
+| NAC Riser | v9 |
+| Riser - Config (was SLC Riser - Config) | v10 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v18 |
-| lib/riser_tool.py | v10 |
-| lib/nac_riser.py | v3 |
-| lib/riser_config_editor.py | v3 |
-| lib/riser_layout.py | v22 |
+| lib/riser_tool.py | v11 |
+| lib/nac_riser.py | v4 |
+| lib/riser_config_editor.py | v4 |
+| lib/riser_layout.py | v23 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |

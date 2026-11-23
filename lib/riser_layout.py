@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v22
+# riser_layout module - version v23
 # Change log (last change first):
+#   v23 - SLC Riser v44 / NAC Riser v9 (code check, no change to the drawings): assign_symbols' unused repeat
+#         option removed.
 #   v22 - SLC Riser v43 / NAC Riser v8: address callouts - a device's info may carry "callout" (the extents of its
 #         Address Group callout symbol), drawn where its 45 degree text would go (out["callouts"]) and given the
 #         same room; the symbol rules (rule_matches, pick_rule) are removed.
@@ -10,7 +12,6 @@
 #         tee_order, which conduit_trace also uses, so the addressing tools treat a tee the same way.
 #   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
 #         main run carries on (flat_rows).
-#   v18 - SLC Riser v31: one line per loop, lowest address next at a split (flat_rows).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -20,19 +21,12 @@ tee_order is the tee rule for both SLC Riser and the conduit tracing of the addr
 so a tee is treated the same way everywhere."""
 
 
-def assign_symbols(addresses, count, repeat=False):
-    """Which addresses go under each symbol drawn for one device: [(symbol index, [addresses])].
-
-    repeat: the symbols are a pattern repeated along the device's addresses, one address each
-            (addresses 1-18 with 3 symbols: S1 S2 S3 S1 S2 S3 ... 18 symbols).
-    otherwise: each symbol is drawn once, in order, with one address each; the last symbol takes the rest
-            (1 symbol: it gets every address, as a first-last range)."""
+def assign_symbols(addresses, count):
+    """Which addresses go under each symbol drawn for one device: [(symbol index, [addresses])]. Each symbol is
+    drawn once, in order, with one address each; the last symbol takes the rest (1 symbol: it gets every address,
+    as a first-last range)."""
     count = max(1, int(count))
     addresses = list(addresses)
-    if repeat:
-        if not addresses:
-            return [(0, [])]
-        return [(i % count, [a]) for i, a in enumerate(addresses)]
     out = []
     for i in range(count):
         if i < count - 1:

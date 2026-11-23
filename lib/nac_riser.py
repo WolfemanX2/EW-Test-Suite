@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v3
+# nac_riser module - version v4
 # Change log (last change first):
+#   v4 - NAC Riser v9 (code check): the unused type_key / available_symbols / new_entry aliases removed.
 #   v3 - NAC Riser v8 / Riser - Config v9: the symbol rules are gone (new_rule / RULE_OPS removed); NAC devices have
 #        no Address Group callouts (ADDRESS_CALLOUTS = False hides that table on the NAC tab).
 #   v2 - NAC Riser v4: the head end list needs NAC / NCP / NACP in the family name, plus Head End in Family Defaults
@@ -38,9 +39,6 @@ DEFAULT_SETTINGS_FILE = cs.default_file("nac_riser_settings.default.json")
 SCALES = sr.SCALES
 DEFAULT_SETTINGS = sr.DEFAULT_SETTINGS
 SETTING_LIMITS = sr.SETTING_LIMITS
-type_key = sr.type_key
-available_symbols = sr.available_symbols
-new_entry = sr.new_entry
 ADDRESS_CALLOUTS = False    # Riser - Config: no Address Callouts table on the NAC tab
 
 

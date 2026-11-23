@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Riser - Config script - version v9 (was SLC Riser - Config v7)
-__title__ = "Riser - Config v9"
+# Riser - Config script - version v10 (was SLC Riser - Config v7)
+__title__ = "Riser - Config v10"
 __doc__ = ("Settings for the riser tools, one tab per riser, laid out like Family Defaults Config: SLC Riser and "
            "NAC Riser. Each tab has its riser's own drawing settings (drafting view scale, spacing between devices, "
            "devices per line before wrapping, wrap rounding, address text offset) and its own table of the symbol "

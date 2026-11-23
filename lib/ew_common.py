@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v4
+# ew_common module - version v5
 # Change log (last change first):
+#   v5 - SLC Riser v44 / NAC Riser v9 / Riser - Config v10: alert - pyRevit's message box without the warning icon
+#        and its sound, for the tools' messages and yes / no questions.
 #   v4 - SLC Riser v43: copy_matching_params - fill an element's own parameters from the same-named parameters of
 #        another element (and its type); used for the riser's address callouts.
 #   v3 - Auto-Circuit v11 / Address SLC v12 / Address NAC v5 / Address Voice v5: commit (run a change in a
@@ -30,7 +32,10 @@ make_highlight / highlight                           colour picked elements in t
 
 Changing the model:
 commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't
-copy_matching_params fill an element's own parameters from the same-named ones of another element and its type"""
+copy_matching_params fill an element's own parameters from the same-named ones of another element and its type
+
+Messages:
+alert                pyRevit's message box (forms.alert, same arguments) without the warning icon and sound"""
 from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, IndependentTag, Transaction, TransactionStatus,
                                OverrideGraphicSettings, Color, FillPatternElement, FilteredElementCollector,
                                StorageType, InternalDefinition)
@@ -316,3 +321,12 @@ def copy_matching_params(src, dst):
         except Exception:
             continue
     return count
+
+
+# ---------- Messages ----------
+def alert(msg, title=None, **kwargs):
+    """pyRevit's forms.alert (same arguments: sub_msg, yes / no, options ...) without the warning icon, so it doesn't
+    play the warning sound. Returns what forms.alert returns."""
+    from pyrevit import forms
+    kwargs.setdefault("warn_icon", False)
+    return forms.alert(msg, title=title, **kwargs)

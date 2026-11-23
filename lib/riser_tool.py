@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v10
+# riser_tool module - version v11
 # Change log (last change first):
+#   v11 - SLC Riser v44 / NAC Riser v9 (code check): messages and yes / no questions use ew_common.alert (no warning
+#         icon or sound) instead of forms.alert.
 #   v10 - SLC Riser v43 / NAC Riser v8: a device is always drawn with its type's symbols (the symbol rules by number
 #         of addresses are gone). Address callouts: a device whose Address Group subgroup (Family Defaults Config,
 #         picked by its number of addresses) has a callout set in Riser - Config gets that callout instead of the
@@ -11,8 +13,6 @@
 #        from the bottom of the panel; loop N's height is Loop Spacing 1 + ... + N (stacked_height).
 #   v7 - SLC Riser v40 / NAC Riser v5: the first-device prompt and the start-point prompt are pyRevit option bars
 #        instead of alert boxes; the extra head end alert before selecting in the model is gone.
-#   v6 - SLC Riser v39: the head end list can require the name keywords (the kind's head_list_keywords_required):
-#        Panel # makes a type Head End in Family Defaults Config, so '2 of 3' let panels without the keywords in.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -183,7 +183,7 @@ def conduit_entry(panel):
         distance = ((ebb.Min + ebb.Max) * 0.5).DistanceTo(centre)
         ranked.append(((0 if _gutter_like(el) else 1, 0 if above else 1, distance), el, gap))
     if not ranked:
-        forms.alert("No conduit is connected to the selected panel, and no element within %g' of it has conduit "
+        ec.alert("No conduit is connected to the selected panel, and no element within %g' of it has conduit "
                     "connected either." % HEAD_SEARCH_RADIUS_FT,
                     sub_msg="Connect the conduit to the panel or its gutter box and run the tool again.",
                     title=TITLE)
@@ -264,11 +264,11 @@ def choose_head_end_from_list():
     try:
         panels = head_end_panels()
     except Exception as ex:
-        go_on = forms.alert("Could not read Family Defaults Config:\n%s\n\nSelect the panel in the model instead?"
+        go_on = ec.alert("Could not read Family Defaults Config:\n%s\n\nSelect the panel in the model instead?"
                             % ex, title=TITLE, yes=True, no=True)
         return "model" if go_on else None
     if not panels:
-        go_on = forms.alert("No panels in this model meet the head end list's criteria (Head End in Family "
+        go_on = ec.alert("No panels in this model meet the head end list's criteria (Head End in Family "
                             "Defaults Config, a Panel # parameter%s)." %
                             (", " + " / ".join(getattr(KIND, "head_list_keywords", None) or []) + " in the family name"
                              if getattr(KIND, "head_list_keywords", None) else ""),
@@ -1418,7 +1418,7 @@ def pick_origin(view, name, reason):
     except OperationCanceledException:
         return None
     except Exception as ex:
-        forms.alert("Could not pick a point in '%s':\n%s" % (view.Name, ex), title=TITLE)
+        ec.alert("Could not pick a point in '%s':\n%s" % (view.Name, ex), title=TITLE)
         return None
     return (p.X, p.Y)
 
@@ -1670,7 +1670,7 @@ def review_layout(rows, device_count=None):
         try:
             KIND.save_settings(settings)
         except Exception as ex:
-            forms.alert("These settings are used for this riser but could not be saved:\n%s\n\nPath: %s"
+            ec.alert("These settings are used for this riser but could not be saved:\n%s\n\nPath: %s"
                         % (ex, KIND.settings_path()), title=TITLE)
     return True
 
@@ -1682,7 +1682,7 @@ def apply_settings():
     try:
         settings = KIND.load_settings()
     except Exception as ex:
-        go_on = forms.alert("Could not read the riser settings, so the defaults will be used:\n%s\n\nPath: %s"
+        go_on = ec.alert("Could not read the riser settings, so the defaults will be used:\n%s\n\nPath: %s"
                             "\n\nContinue?" % (ex, KIND.settings_path()), title=TITLE, yes=True, no=True)
         if not go_on:
             return False
@@ -1726,13 +1726,13 @@ def main():
                "chosen type(s)." % KIND.address_phrase)
         if unaddressed:
             msg += ("\n\n%d Fire Alarm Device(s) on that conduit %s." % (len(unaddressed), KIND.no_address_hint))
-        forms.alert(msg, title=TITLE)
+        ec.alert(msg, title=TITLE)
         return
 
     try:
         table = KIND.load_table()
     except Exception as ex:
-        forms.alert("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, KIND.table_path()), title=TITLE)
+        ec.alert("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, KIND.table_path()), title=TITLE)
         return
     available = sr.available_symbols(doc)
 
@@ -1755,12 +1755,12 @@ def main():
     # Address callouts (SLC): by the device's Address Group subgroup; the others keep the 45 degree text.
     device_callout, no_subgroup = device_callouts(drawn, keys, addresses, available, not_loaded)
     if not_loaded:
-        forms.alert("These riser symbols are set in %s but are not loaded in this project, so they "
+        ec.alert("These riser symbols are set in %s but are not loaded in this project, so they "
                     "are left out:\n\n%s" % (KIND.config_name, "\n".join(sorted(not_loaded))), title=TITLE)
     if missing:
         names = sorted(available.keys())
         if not names:
-            go_on = forms.alert("No Generic Annotation or Detail Item types are loaded in this project, so "
+            go_on = ec.alert("No Generic Annotation or Detail Item types are loaded in this project, so "
                                 "there are no symbols to choose from.\n\nDraw every device as a box labeled "
                                 "with its type name?", title=TITLE, yes=True, no=True)
             if not go_on:
@@ -1781,7 +1781,7 @@ def main():
                     table[key] = sr.new_entry([picked])
                     picked_any = True
                     continue
-                go_on = forms.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
+                go_on = ec.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
                                     "(Choose No to stop without creating the riser.)" % key,
                                     title=TITLE, yes=True, no=True)
                 if not go_on:
@@ -1792,7 +1792,7 @@ def main():
                 try:
                     KIND.save_table(table)
                 except Exception as ex:
-                    forms.alert("The symbols you chose are used for this riser but could not be saved:\n%s"
+                    ec.alert("The symbols you chose are used for this riser but could not be saved:\n%s"
                                 "\n\nPath: %s" % (ex, KIND.table_path()), title=TITLE)
             if not go_on:
                 return
@@ -1813,7 +1813,7 @@ def main():
     if target is False:
         return
     if target is None and panel_sym is None:
-        go_on = forms.alert("The %s detail item is not loaded in this project, so no panel will be drawn and "
+        go_on = ec.alert("The %s detail item is not loaded in this project, so no panel will be drawn and "
                             "you will pick where each %s's one-line starts.\n\nContinue?" % (PANEL_FAMILY, KIND.run_word.lower()),
                             title=TITLE, yes=True, no=True)
         if not go_on:
@@ -1845,7 +1845,7 @@ def main():
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
-        forms.alert("The riser could not be created:\n%s" % ex, title=TITLE)
+        ec.alert("The riser could not be created:\n%s" % ex, title=TITLE)
         return
 
     def undo_view():
@@ -2021,7 +2021,7 @@ def main():
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
         undo_view()
-        forms.alert("The riser could not be created:\n%s" % ex, title=TITLE)
+        ec.alert("The riser could not be created:\n%s" % ex, title=TITLE)
         return
 
     try:
@@ -2066,5 +2066,5 @@ def main():
         output.print_md("### %s - devices on the conduit without %s" % (TITLE, KIND.address_phrase))
         for el in unaddressed:
             output.print_md("- %s %s" % (output.linkify(el.Id), sr.family_key(doc, el)))
-    forms.alert(msg, title=TITLE)
+    ec.alert(msg, title=TITLE)
 
