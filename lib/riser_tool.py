@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v5
+# riser_tool module - version v6
 # Change log (last change first):
+#   v6 - SLC Riser v39: the head end list can require the name keywords (the kind's head_list_keywords_required):
+#        Panel # makes a type Head End in Family Defaults Config, so '2 of 3' let panels without the keywords in.
 #   v5 - SLC Riser v38 / NAC Riser v3: a head end with no conduit connected is traced from the closest element with
 #        conduit connected within HEAD_SEARCH_RADIUS_FT, a GUTTER-BOX family 1-2 ft above it first
 #        (conduit_entry); a panel without conduit connectors can now be selected in the model.
@@ -12,9 +14,6 @@
 #        used: the T-tap run grouping (split_runs) and counts, y_range, PANEL_EXIT_FROM_TOP_FT / PANEL_EXIT_LOW_FT,
 #        choose_target_view's unused argument; number_text comes from slc_riser. Kind adds address_phrase; the
 #        5/64" text type made when none exists is named after the riser ('SLC Riser 5/64"').
-#   v1 - NAC Riser v1: the riser engine, taken from SLC Riser v34 and given a circuit kind (KIND) for everything
-#        that depends on the circuit: which parameter holds the address, how addresses sort and group into
-#        circuits, the row labels, the view name, the symbol table and the drawing settings.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -224,12 +223,14 @@ def has_parameter(el, name):
 def head_end_panels():
     """Panels in the model for the head end list. The criteria: the type is set to Head End in Family Defaults
     Config, it has a Panel # parameter and - when the kind gives head_list_keywords - its family name contains one
-    of them (case ignored). A panel is listed when it meets head_list_min_matches of them (default: all).
+    of them (case ignored). A panel is listed when it meets head_list_min_matches of them (default: all); with
+    head_list_keywords_required, the name must always contain one of the keywords.
     Raises if Family Defaults Config can't be read."""
     cfg = cc.load()
     keywords = [k.upper() for k in (getattr(KIND, "head_list_keywords", None) or [])]
     total = 3 if keywords else 2
     needed = getattr(KIND, "head_list_min_matches", None) or total
+    name_required = bool(keywords) and bool(getattr(KIND, "head_list_keywords_required", False))
     found = []
     for cat in HEAD_END_CATEGORIES:
         for el in (FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType()
@@ -247,6 +248,8 @@ def head_end_panels():
                 family = key.split(" : ")[0].upper()
                 if any(k in family for k in keywords):
                     met += 1
+                elif name_required:
+                    continue
             if met >= needed:
                 found.append(el)
     return found

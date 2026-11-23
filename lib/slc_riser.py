@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v16
+# slc_riser module - version v17
 # Change log (last change first):
+#   v17 - SLC Riser v39: the head end list needs FACU / FACP / FAP / FAC in the family name, plus Head End or a
+#         Panel # parameter (head_list_keywords_required).
 #   v16 - SLC Riser v37: LoopKind.head_list_keywords / head_list_min_matches - the head end list shows panels
 #         meeting 2 of 3: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the
 #         family name.
@@ -10,9 +12,6 @@
 #         save_settings can be given another riser's file (NAC Riser's), so the risers share one copy of them.
 #   v13 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; a new
 #         user starts from config/riser_symbols.default.json / riser_settings.default.json when added.
-#   v12 - Code consolidation step 6 (SLC Riser v34): SLC addresses are read and parsed with
-#         slc_addressing's reader and format, the same as the addressing tools (text parameters, any
-#         SLC Address number); devices_on_loops reads with one reader.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -289,9 +288,10 @@ class LoopKind(object):
     address_phrase = "an SLC address"
     head_prompt = "Select Head End Panel"
     head_example = "EX: FACU, NCP, APS, etc."
-    # Select from List: a panel is listed when it meets this many of: Head End in Family Defaults Config, a Panel #
-    # parameter, one of these words in its family name (case ignored).
+    # Select from List: a panel is listed when its family name contains one of these words (case ignored) and it is
+    # also Head End in Family Defaults Config or has a Panel # parameter (2 of the 3, the name always one of them).
     head_list_keywords = ["FACU", "FACP", "FAP", "FAC"]
+    head_list_keywords_required = True
     head_list_min_matches = 2
     no_address_hint = "have no value in SLC Address (or SLC Address 2 ... %d)" % SLC_ADDRESS_COUNT
 
