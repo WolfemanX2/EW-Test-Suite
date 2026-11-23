@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v6
-__title__ = "NAC\nRiser v6"
+# NAC Riser script - version v7
+__title__ = "NAC\nRiser v7"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"
+           "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
+           "panel's Loop Spacing is raised to make room and the circuits above move up with it.\n\n"
            "If no conduit is connected to the power supply, it is traced from the nearest element within 5' that has conduit "
            "connected - a GUTTER-BOX family 1-2' above the power supply first.\n\n"
            "Steps: choose the NAC power supply (FACU, NAC panel, booster ...) from a list - panels with NAC / NCP / NACP "

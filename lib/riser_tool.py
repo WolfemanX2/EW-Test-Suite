@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v8
+# riser_tool module - version v9
 # Change log (last change first):
+#   v9 - SLC Riser v42 / NAC Riser v7: a new circuit that would overlap the circuits below or above it (text and
+#        callouts included) gets its Loop Spacing raised, and the circuits above move up with it (fit_circuit).
 #   v8 - SLC Riser v41 / NAC Riser v6: Loop Spacing N is measured from the line below it (Loop N-1), not
 #        from the bottom of the panel; loop N's height is Loop Spacing 1 + ... + N (stacked_height).
 #   v7 - SLC Riser v40 / NAC Riser v5: the first-device prompt and the start-point prompt are pyRevit option bars
@@ -10,8 +12,6 @@
 #   v5 - SLC Riser v38 / NAC Riser v3: a head end with no conduit connected is traced from the closest element with
 #        conduit connected within HEAD_SEARCH_RADIUS_FT, a GUTTER-BOX family 1-2 ft above it first
 #        (conduit_entry); a panel without conduit connectors can now be selected in the model.
-#   v4 - SLC Riser v37: the head end list can count criteria instead of requiring all of them (the kind's
-#        head_list_keywords / head_list_min_matches; SLC: 2 of Head End, Panel #, FACU / FACP / FAP / FAC in the name).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -33,7 +33,7 @@ from Autodesk.Revit.DB import (
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, ElementTransformUtils, GroupType, SketchPlane, Plane,
     ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference,
-    Outline, BoundingBoxIntersectsFilter
+    Outline, BoundingBoxIntersectsFilter, Group
 )
 from System.Collections.Generic import List
 try:
@@ -78,6 +78,7 @@ ABOVE_TEXT_TYPE_NAME = 'Riser 5/64"'    # made from the default text type if no 
                                         # to '<title> 5/64"'
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
+LOOP_CLEARANCE = 0.125  # least space between two circuits on the panel detail; more Loop Spacing is added to keep it
 PAD = 0.125             # space above and below each line of devices
 TEXT_GAP = 0.06         # between a symbol and the addresses under it
 BOX_SIZE = 0.375        # box drawn for a type that has no symbol
@@ -1056,6 +1057,117 @@ def loop_spacing_values(panel):
     return found
 
 
+def set_loop_spacing(panel, loop, value):
+    """Set Loop Spacing <loop> on the panel (the instance parameter, else its type's). Returns "instance", "type",
+    or None when there is no such parameter that can be changed."""
+    holders = [("instance", panel)]
+    try:
+        holders.append(("type", panel.Symbol))
+    except Exception:
+        pass
+    for where, holder in holders:
+        try:
+            params = list(holder.Parameters)
+        except Exception:
+            continue
+        for prm in params:
+            try:
+                m = LOOP_SPACING.match(prm.Definition.Name)
+                if m and int(m.group(1)) == loop and not prm.IsReadOnly:
+                    if prm.Set(value):
+                        return where
+            except Exception:
+                pass
+    return None
+
+
+def circuit_groups(view, panel, cands, exclude_id=None):
+    """{loop number: [(group, bottom, top)]} for the circuit groups already in the view: a group belongs to loop N
+    when one of its lines starts at loop N's place on the panel (the right end of its reference line)."""
+    _, _, placed = panel_exit_points(view, panel, cands)
+    starts = {}
+    for c, y in placed:
+        if c["loop"] is not None and c["loop"] not in starts and c.get("vx") is not None:
+            starts[c["loop"]] = (c["vx"], y)
+    found = {}
+    if not starts:
+        return found
+    for g in FilteredElementCollector(doc, view.Id).OfClass(Group).ToElements():
+        if exclude_id is not None and g.Id == exclude_id:
+            continue
+        loop = None
+        for mid in g.GetMemberIds():
+            el = doc.GetElement(mid)
+            if not isinstance(el, CurveElement):
+                continue
+            try:
+                p0, p1 = el.GeometryCurve.GetEndPoint(0), el.GeometryCurve.GetEndPoint(1)
+            except Exception:
+                continue
+            if abs(p0.Y - p1.Y) > 1e-6:
+                continue
+            for k, (x, y) in starts.items():
+                if abs(p0.Y - y) < 0.01 and abs(min(p0.X, p1.X) - x) < 0.01:
+                    loop = k
+                    break
+            if loop is not None:
+                break
+        if loop is None:
+            continue
+        bb = g.get_BoundingBox(view)
+        if bb is not None:
+            found.setdefault(loop, []).append((g, bb.Min.Y, bb.Max.Y))
+    return found
+
+
+def fit_circuit(view, panel, cands, loop, group):
+    """Make room for the circuit just drawn (group, on loop `loop`): if it would overlap a circuit below it, its
+    Loop Spacing is raised; if it would overlap one above, the Loop Spacing of the line above it is raised. The
+    circuits above the raised line - and this one, when its own spacing changed - move up with it. Returns
+    [(loop, old, new, "instance" / "type")] for the Loop Spacing values changed."""
+    changes = []
+    doc.Regenerate()
+    bb = group.get_BoundingBox(view)
+    if bb is None:
+        return changes
+    bottom, top = bb.Min.Y, bb.Max.Y
+    others = circuit_groups(view, panel, cands, group.Id)
+    clear = paper(LOOP_CLEARANCE)
+
+    def raise_spacing(n, delta):
+        spacing = loop_spacing_values(panel)
+        if n not in spacing:
+            return False
+        where = set_loop_spacing(panel, n, spacing[n] + delta)
+        if where is None:
+            return False
+        changes.append((n, spacing[n], spacing[n] + delta, where))
+        moves = [g for k, items in others.items() if k >= n for g, _, _ in items]
+        if loop >= n:
+            moves.append(group)
+        for g in moves:
+            ElementTransformUtils.MoveElement(doc, g.Id, XYZ(0, delta, 0))
+        for k in list(others):
+            if k >= n:
+                others[k] = [(g, b + delta, t + delta) for g, b, t in others[k]]
+        return True
+
+    below = [t for k, items in others.items() if k < loop for _, _, t in items]
+    if below:
+        need = max(below) + clear - bottom
+        if need > 1e-6 and raise_spacing(loop, need):
+            bottom += need
+            top += need
+    above = [b for k, items in others.items() if k > loop for _, b, _ in items]
+    if above:
+        need = top + clear - min(above)
+        if need > 1e-6:
+            raise_spacing(loop + 1, need)
+    if changes:
+        doc.Regenerate()
+    return changes
+
+
 def panel_exit_points(view, panel, cands):
     """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, []).
     A loop's height comes from the placed panel's Loop Spacing values: each is measured from the line below it,
@@ -1735,7 +1847,7 @@ def main():
 
     # 3. Draw each circuit and group it.
     failed = 0
-    groups, not_locked = [], []
+    groups, not_locked, spacing_changes = [], [], []
     t = Transaction(doc, ("Create %s" if target is None else "Add circuit to %s") % TITLE)
     t.Start()
     try:
@@ -1777,6 +1889,13 @@ def main():
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
 
         for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
+            if lock is not None and spacing_changes:
+                # An earlier circuit raised a Loop Spacing: read this one's place on the panel again.
+                for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
+                    if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
+                        lock = (c, y)
+                        origin = (c.get("vx", origin[0]), y)
+                        break
             plan = rl.layout([row], root_id, info, returns, cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
@@ -1802,6 +1921,15 @@ def main():
                             abs(min(p[0], q[0]) - origin[0]) < 1e-6:
                         first = curve
                         break
+                # Room for it between the circuits below and above (its text and callouts included).
+                if group is not None and lock[0]["loop"] is not None:
+                    changed = fit_circuit(view, panel_inst, panel_refs, lock[0]["loop"], group)
+                    if changed:
+                        spacing_changes.extend(changed)
+                        for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
+                            if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
+                                lock = (c, y)
+                                break
                 gname = run_name(panel_name, row, i)
                 if first is None:
                     not_locked.append("%s: its first line could not be found" % gname)
@@ -1845,6 +1973,12 @@ def main():
         msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if spacing_changes:
+        msg += "\n\nMore room was made between circuits:\n" + "\n".join(
+            "Loop Spacing %d: %s -> %s%s" % (n, feet_text(old), feet_text(new),
+                                            " (type parameter - other panels of this type change too)"
+                                            if where == "type" else "")
+            for n, old, new, where in spacing_changes)
     if not_locked:
         msg += "\n\nNot locked to the reference line:\n" + "\n".join(not_locked)
     if panel_skipped:

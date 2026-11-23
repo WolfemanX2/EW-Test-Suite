@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v41
-__title__ = "SLC\nRiser v41"
+# SLC Riser script - version v42
+__title__ = "SLC\nRiser v42"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
+           "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
+           "panel's Loop Spacing is raised to make room and the circuits above move up with it.\n\n"
            "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "
            "connected - a GUTTER-BOX family 1-2' above the panel first.\n\n"
            "Steps: choose the head end panel (FACU, NCP, APS ...) from a list - panels with FACU / FACP / FAP / FAC "
