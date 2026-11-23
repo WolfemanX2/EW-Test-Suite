@@ -201,7 +201,7 @@ share are in `lib/addressing_ui.py`.
 | Auto Circuit - Voice | v1 |
 | lib/auto_circuit.py | v1 |
 | lib/circuit_rules.py | v1 |
-| lib/ew_common.py | v5 |
+| lib/ew_common.py | v6 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
 | Family Defaults Config | v11 |
@@ -226,7 +226,7 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v44 |
+| SLC Riser | v45 |
 | NAC Riser | v9 |
 | Riser - Config (was SLC Riser - Config) | v10 |
 | NAC Coverage Checker | v3 |

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v5
+# ew_common module - version v6
 # Change log (last change first):
+#   v6 - SLC Riser v45: copy_matching_params matches names with case ignored and takes the type's value when the
+#        element's own is blank - the same rules as the riser's Panel # text, so a callout's Panel # always matches it.
 #   v5 - SLC Riser v44 / NAC Riser v9 / Riser - Config v10: alert - pyRevit's message box without the warning icon
 #        and its sound, for the tools' messages and yes / no questions.
 #   v4 - SLC Riser v43: copy_matching_params - fill an element's own parameters from the same-named parameters of
@@ -11,9 +13,6 @@
 #   v2 - Code consolidation step 4 (Auto Conduit v6, Auto-Circuit v7, Address SLC v7, SLC Riser v33, Link Clash
 #        v13): picking a device or a tag hosted to it (tagged_hosts, resolve_pick, PickFilter, resolve_device,
 #        DeviceOrTagFilter, ConduitFilter, shift_down) and pick highlighting (make_highlight, highlight).
-#   v1 - Code consolidation step 3 (Link Clash v12, NAC Coverage Checker v3, Line Nuke v4, Consolidate Text
-#        Styles v5, Address NAC / Voice - Config v3): small helpers every tool shares, moved here from
-#        conduit_routing, conduit_trace, nac_voice_types, slc_addressing, slc_riser and five tool scripts.
 """Small helpers shared by the EW Test Suite tools. Check here before writing a new one.
 
 eid_int / eid        the number of an ElementId in any Revit version (.Value on 2024+, .IntegerValue before)
@@ -262,8 +261,18 @@ def commit(t, work):
 
 
 # ---------- Copying parameter values ----------
+def _has_value(p):
+    """True when the parameter holds something worth copying (text that isn't blank, or any number)."""
+    if not p.HasValue:
+        return False
+    if p.StorageType == StorageType.String:
+        return bool((p.AsString() or "").strip())
+    return True
+
+
 def _source_params(src):
-    """{parameter name: Parameter} of src and its type; src's own parameter wins over its type's."""
+    """{lower-case parameter name: Parameter} of src and its type. src's own parameter wins over its type's, unless
+    src's is blank (then the type's value is used)."""
     found = {}
     elements = [src]
     try:
@@ -275,7 +284,8 @@ def _source_params(src):
     for el in elements:
         for p in el.Parameters:
             try:
-                found[p.Definition.Name] = p
+                if _has_value(p):
+                    found[p.Definition.Name.strip().lower()] = p
             except Exception:
                 pass
     return found
@@ -301,8 +311,9 @@ def _copy_value(src, dst):
 
 def copy_matching_params(src, dst):
     """Fill each of dst's own parameters (not Revit's built-in ones, not read-only) from src's parameter with the
-    same name - src's own, else its type's - e.g. a riser callout's SLC Address ... SLC Address 24 and Panel #
-    from the device. Parameters src has no value for are left as they are. Returns how many were set."""
+    same name (case ignored) - src's own, or its type's when src's is blank - e.g. a riser callout's SLC Address ...
+    SLC Address 24 and Panel # from the device. Parameters src has no value for are left as they are. Returns how
+    many were set."""
     values = _source_params(src)
     count = 0
     for p in dst.Parameters:
@@ -313,8 +324,8 @@ def copy_matching_params(src, dst):
             if isinstance(definition, InternalDefinition) and \
                     definition.BuiltInParameter != BuiltInParameter.INVALID:
                 continue
-            source = values.get(definition.Name)
-            if source is None or not source.HasValue:
+            source = values.get(definition.Name.strip().lower())
+            if source is None:
                 continue
             if _copy_value(source, p):
                 count += 1

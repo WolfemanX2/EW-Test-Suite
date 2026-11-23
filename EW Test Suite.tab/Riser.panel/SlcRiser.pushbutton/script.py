@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v44
-__title__ = "SLC\nRiser v44"
+# SLC Riser script - version v45
+__title__ = "SLC\nRiser v45"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -42,7 +42,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "Addresses are 45 degree text under the device, unless the type's Address Group (Family Defaults "
            "Config) has a callout set for the device's subgroup (by its number of addresses) on the SLC Riser tab "
            "of Riser - Config: then that callout symbol is placed instead, its parameters filled from the device's "
-           "parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...). "
+           "parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...; names compared with case ignored, the type's value used when the device's own is blank). A device's Panel # still shows above its symbol too. "
            "Each Family : Type is drawn with the symbol(s) set for it on the SLC Riser tab of Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"
