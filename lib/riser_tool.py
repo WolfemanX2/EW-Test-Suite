@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v3
+# riser_tool module - version v4
 # Change log (last change first):
+#   v4 - SLC Riser v37: the head end list can count criteria instead of requiring all of them (the kind's
+#        head_list_keywords / head_list_min_matches; SLC: 2 of Head End, Panel #, FACU / FACP / FAP / FAC in the name).
 #   v3 - SLC Riser v36 / NAC Riser v2: the head end is chosen from a list (types set to Head End in Family Defaults
 #        Config that have a Panel # parameter) or selected in the model (head_end_panels, choose_head_end_from_list).
 #   v2 - SLC Riser v35 (cleanup): SLC Riser now runs on this engine too (its own copy removed). Removed what nothing
@@ -135,19 +137,32 @@ def has_parameter(el, name):
 
 
 def head_end_panels():
-    """Panels in the model whose type is set to Head End in Family Defaults Config and that have a Panel #
-    parameter. Raises if Family Defaults Config can't be read."""
+    """Panels in the model for the head end list. The criteria: the type is set to Head End in Family Defaults
+    Config, it has a Panel # parameter and - when the kind gives head_list_keywords - its family name contains one
+    of them (case ignored). A panel is listed when it meets head_list_min_matches of them (default: all).
+    Raises if Family Defaults Config can't be read."""
     cfg = cc.load()
+    keywords = [k.upper() for k in (getattr(KIND, "head_list_keywords", None) or [])]
+    total = 3 if keywords else 2
+    needed = getattr(KIND, "head_list_min_matches", None) or total
     found = []
     for cat in HEAD_END_CATEGORIES:
         for el in (FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType()
                    .OfClass(FamilyInstance).ToElements()):
+            key = ec.family_key(doc, el)
+            met = 0
             try:
-                if cc.setting(cfg, ec.family_key(doc, el), "device_type") != cc.HEAD_END:
-                    continue
+                if cc.setting(cfg, key, "device_type") == cc.HEAD_END:
+                    met += 1
             except Exception:
-                continue
+                pass
             if has_parameter(el, PANEL_NUMBER_PARAM):
+                met += 1
+            if keywords:
+                family = key.split(" : ")[0].upper()
+                if any(k in family for k in keywords):
+                    met += 1
+            if met >= needed:
                 found.append(el)
     return found
 
@@ -161,8 +176,11 @@ def choose_head_end_from_list():
                             % ex, title=TITLE, yes=True, no=True)
         return "model" if go_on else None
     if not panels:
-        go_on = forms.alert("No panels in this model have a Panel # parameter and a type set to Head End in "
-                            "Family Defaults Config.", sub_msg="Select the panel in the model instead?",
+        go_on = forms.alert("No panels in this model meet the head end list's criteria (Head End in Family "
+                            "Defaults Config, a Panel # parameter%s)." %
+                            (", " + " / ".join(getattr(KIND, "head_list_keywords", None) or []) + " in the family name"
+                             if getattr(KIND, "head_list_keywords", None) else ""),
+                            sub_msg="Select the panel in the model instead?",
                             title=TITLE, yes=True, no=True)
         return "model" if go_on else None
     by_label = {}

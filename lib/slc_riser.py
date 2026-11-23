@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v15
+# slc_riser module - version v16
 # Change log (last change first):
+#   v16 - SLC Riser v37: LoopKind.head_list_keywords / head_list_min_matches - the head end list shows panels
+#         meeting 2 of 3: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the
+#         family name.
 #   v15 - SLC Riser v35: LoopKind, the SLC loop kind SLC Riser now runs the riser engine (lib/riser_tool.py) with;
 #         number_text (shared by the engine and Riser - Config); the unused LOCAL_DIR removed.
 #   v14 - NAC Riser v1 / Riser - Config v8 (no change to SLC Riser): load_table, save_table, load_settings and
@@ -10,8 +13,6 @@
 #   v12 - Code consolidation step 6 (SLC Riser v34): SLC addresses are read and parsed with
 #         slc_addressing's reader and format, the same as the addressing tools (text parameters, any
 #         SLC Address number); devices_on_loops reads with one reader.
-#   v11 - Code consolidation step 3 (no change to SLC Riser): eid_int, is_device, type_name, type_key,
-#         family_key and DEVICE_CATEGORIES come from ew_common.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -288,6 +289,10 @@ class LoopKind(object):
     address_phrase = "an SLC address"
     head_prompt = "Select Head End Panel"
     head_example = "EX: FACU, NCP, APS, etc."
+    # Select from List: a panel is listed when it meets this many of: Head End in Family Defaults Config, a Panel #
+    # parameter, one of these words in its family name (case ignored).
+    head_list_keywords = ["FACU", "FACP", "FAP", "FAC"]
+    head_list_min_matches = 2
     no_address_hint = "have no value in SLC Address (or SLC Address 2 ... %d)" % SLC_ADDRESS_COUNT
 
     # Files: SLC Riser's own (riser_symbols.json / riser_settings.json).
