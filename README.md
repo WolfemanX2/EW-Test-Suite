@@ -171,7 +171,8 @@ network location (then no default is copied).
 - Family Defaults Config: `%APPDATA%\pyRevit\EWTestSuite\circuit_config.json` per user. To share it, set
   `CONFIG_PATH` in `lib/circuit_config.py` to a network location. Its **Detect Types in Project** button fills Mounting,
   Device Type and Conduit Type from each type's family / type name and parameters (asks blanks only or replace, then
-  shows the changes to tick before they go in the table). The rules (keywords, required parameters, and the conduit
+  shows the changes to tick before they go in the table). A type that matches more than one kind of device (Head End,
+  SLC or NAC - e.g. Panel # and SLC Address) is asked about first, once per family. The rules (keywords, required parameters, and the conduit
   type name for each Device Type) are on its **Detection Rules** tab and saved in the same file; the starting rules
   are in `lib/family_detection.py`.
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
@@ -200,10 +201,10 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
-| Family Defaults Config | v9 |
+| Family Defaults Config | v10 |
 | lib/circuit_config.py | v4 |
-| lib/circuit_config_editor.py | v9 |
-| lib/family_detection.py | v1 |
+| lib/circuit_config_editor.py | v10 |
+| lib/family_detection.py | v2 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |

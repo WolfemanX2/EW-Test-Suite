@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Family Defaults Config script - version v9
-__title__ = "Family Defaults Config v9"
+# Family Defaults Config script - version v10
+__title__ = "Family Defaults Config v10"
 __doc__ = ("One settings window for routing and addressing, used by Auto Circuit - SLC, NAC and Voice.\n\n"
            "Family Defaults: every Fire Alarm Device and Electrical Equipment family in the project, with its "
            "types under it (double-click a family). Set Mounting (Wall / Ceiling), Device Type (NAC Only, Voice "
@@ -20,7 +20,9 @@ __doc__ = ("One settings window for routing and addressing, used by Auto Circuit
            "don't want; nothing is saved until Save. The rules are on the Detection Rules tab: each sets Mounting or "
            "Device Type when one of its keywords is in the name ('speaker+strobe' needs both words) and the family "
            "has one of its parameters; the first match wins. The conduit type is the one whose name contains the "
-           "text set for the Device Type (SLC, NAC, Voice ...).\n\n"
+           "text set for the Device Type (SLC, NAC, Voice ...). A type that looks like more than one kind of device - "
+           "Head End, SLC (Module / Detector) or NAC - e.g. Panel # and SLC Address, is asked about (once per family) "
+           "before the list.\n\n"
            "The first time, it is filled from Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - "
            "Config (their files are only read).")
 

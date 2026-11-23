@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v9
+# circuit_config_editor module - version v10
 # Change log (last change first):
+#   v10 - Family Defaults Config v10: a type matching Device Type rules of more than one group (Head End / SLC / NAC,
+#         e.g. Panel # and SLC Address, with or without an SLC keyword) is asked about - once per family and set of matches, with why each matched -
+#         before the review list (_resolve_device_conflicts).
 #   v9 - Family Defaults Config v9: the Detect Types in Project button moved to the bottom bar, next to Load Default
 #        Config.
 #   v8 - Family Defaults Config v8: Detect Types in Project (Family Defaults tab) fills Mounting, Device Type and
@@ -11,10 +14,6 @@
 #        the selection (the grid would narrow it to that row) and the rows are taken when the edit starts.
 #   v6 - Family Defaults Config v6: editing a cell of a selected row sets that column on every selected row (the
 #        'Set selected rows' bar is removed).
-#   v5 - Family Defaults Config v5: several rows can be selected and set at once (Set selected rows); filters
-#        (Category, Circuit Type, Mounting, Device Type, Conduit Type, Address Group) and Sort by; a Circuit column
-#        (SLC: SLC Address parameters, NAC: a Notification Circuit parameter); unsaved changes tracked by edits
-#        (expanding a family no longer counts as one).
 """The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
@@ -69,6 +68,8 @@ FILTERS = [("f_category", "Category"), ("f_circuit", "Circuit"), ("f_mounting", 
 FAMILY_FILTERS = ("Category", "Circuit")
 FILL_BLANKS = "Fill blank cells only"
 REPLACE = "Replace existing values too"
+SKIP_DEVICE = "Skip - leave its Device Type as it is"
+STOP_DETECT = "Stop Detect Types"
 RULE_COLUMNS = ("Setting", "Value", "Keywords", "Parameters")
 SORTS = [("Family", None), ("Category", "Category"), ("Circuit Type", "Circuit"), ("Mounting", "Mounting"),
          ("Device Type", "DeviceType"), ("Conduit Type", "ConduitType"), ("Address Group", "AddressGroup"),
@@ -1034,7 +1035,7 @@ class ConfigEditor(forms.WPFWindow):
         families = [f for f in self.family_rows if self.family_elements.get(f) is not None]
         if not self._read_all_params(families):
             return
-        changes, unread = [], []
+        found_types, unread = [], []       # [(family, row, key, {field: value}, [(device type, why)])]
         for family in sorted(families, key=lambda f: f.lower()):
             names = self.params.get(family)
             if names is None:
@@ -1044,20 +1045,29 @@ class ConfigEditor(forms.WPFWindow):
                 if cell_text(trow["Category"]) == NOT_LOADED:
                     continue
                 key = cell_text(trow["Key"])
-                found = fd.detect(key.replace(" : ", " "), names, detection["rules"])
-                new = {}
-                for column, field in (("DeviceType", "device_type"), ("Mounting", "mounting")):
-                    value, current = found.get(field), cell_text(trow[column])
-                    if value and value != current and (mode == REPLACE or not current):
-                        new[column] = value
-                device = new.get("DeviceType") or cell_text(trow["DeviceType"])
-                conduit = fd.conduit_for(device, detection["conduits"], self.conduit_labels)
-                current = cell_text(trow["ConduitType"])
-                if conduit and conduit != current and (mode == REPLACE or not current):
-                    new["ConduitType"] = conduit
-                for column in ("DeviceType", "Mounting", "ConduitType"):
-                    if column in new:
-                        changes.append(DetectedChange(trow, key, column, cell_text(trow[column]), new[column]))
+                hits = fd.matches(key.replace(" : ", " "), names, detection["rules"])
+                found = {}
+                for rule, _why in hits:
+                    found.setdefault(fd.SETTING_FIELDS[rule["setting"]], rule["value"])
+                partial = fd.parameter_only_matches(key.replace(" : ", " "), names, detection["rules"])
+                found_types.append((family, trow, key, found, fd.device_choices(hits, partial)))
+        if not self._resolve_device_conflicts(found_types, mode):
+            return
+        changes = []
+        for family, trow, key, found, _choices in found_types:
+            new = {}
+            for column, field in (("DeviceType", "device_type"), ("Mounting", "mounting")):
+                value, current = found.get(field), cell_text(trow[column])
+                if value and value != current and (mode == REPLACE or not current):
+                    new[column] = value
+            device = new.get("DeviceType") or cell_text(trow["DeviceType"])
+            conduit = fd.conduit_for(device, detection["conduits"], self.conduit_labels)
+            current = cell_text(trow["ConduitType"])
+            if conduit and conduit != current and (mode == REPLACE or not current):
+                new["ConduitType"] = conduit
+            for column in ("DeviceType", "Mounting", "ConduitType"):
+                if column in new:
+                    changes.append(DetectedChange(trow, key, column, cell_text(trow[column]), new[column]))
         note = ("\n\n%d famil(ies) couldn't be opened to read their parameters, so only their names were used: %s"
                 % (len(unread), ", ".join(unread[:10]) + (" ..." if len(unread) > 10 else ""))) if unread else ""
         if not changes:
@@ -1075,6 +1085,44 @@ class ConfigEditor(forms.WPFWindow):
                                  % len(picked))
         if note:
             forms.alert(note.strip(), title=TITLE)
+
+    def _resolve_device_conflicts(self, found_types, mode):
+        """A type matching Device Type rules of more than one group (Panel # and SLC Address, say): ask which is right,
+        once per family and set of matches, and keep the answer in its found values (Skip leaves the Device Type as
+        it is). Only asked when the Device Type would be filled in. False if the user stopped."""
+        asks = {}       # (family, (device types)) -> [(row, key, found, choices)]
+        order = []
+        for family, trow, key, found, choices in found_types:
+            if not fd.needs_asking(choices) or (mode != REPLACE and cell_text(trow["DeviceType"])):
+                continue
+            group = (family, tuple(v for v, _w in choices))
+            if group not in asks:
+                asks[group] = []
+                order.append(group)
+            asks[group].append((trow, key, found, choices))
+        for n, group in enumerate(order, start=1):
+            family, values = group
+            members = asks[group]
+            options, by_label = [], {}
+            for value, why in members[0][3]:
+                kind = fd.DEVICE_GROUPS.get(value, value)
+                label = u"%s%s  -  %s" % (value, u"" if kind == value else u" (%s device)" % kind, why or u"matched")
+                options.append(label)
+                by_label[label] = value
+            options += [SKIP_DEVICE, STOP_DETECT]
+            types = [k.split(" : ", 1)[-1] for _r, k, _f, _c in members]
+            answer = forms.CommandSwitchWindow.show(
+                options, message=u"%s matches more than one kind of device (%s%s). Which Device Type is correct?%s"
+                % (family, ", ".join(types[:4]), u" ..." if len(types) > 4 else u"",
+                   u"   (%d of %d)" % (n, len(order)) if len(order) > 1 else u""))
+            if not answer or answer == STOP_DETECT:
+                return False
+            for _row, _key, found, _choices in members:
+                if answer == SKIP_DEVICE:
+                    found.pop("device_type", None)
+                else:
+                    found["device_type"] = by_label[answer]
+        return True
 
     def _apply_changes(self, changes):
         touched = {}
