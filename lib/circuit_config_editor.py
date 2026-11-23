@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v8
+# circuit_config_editor module - version v9
 # Change log (last change first):
+#   v9 - Family Defaults Config v9: the Detect Types in Project button moved to the bottom bar, next to Load Default
+#        Config.
 #   v8 - Family Defaults Config v8: Detect Types in Project (Family Defaults tab) fills Mounting, Device Type and
 #        Conduit Type from each type's family / type name and parameters, after asking blanks only or replace and
 #        showing a review list; the rules are on a new Detection Rules tab (lib/family_detection.py). The parameters
@@ -13,8 +15,6 @@
 #        (Category, Circuit Type, Mounting, Device Type, Conduit Type, Address Group) and Sort by; a Circuit column
 #        (SLC: SLC Address parameters, NAC: a Notification Circuit parameter); unsaved changes tracked by edits
 #        (expanding a family no longer counts as one).
-#   v4 - Auto Circuit - SLC / NAC / Voice v1: the help text says what a blank Device Type does (asked when the
-#        device is addressed).
 """The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
@@ -182,7 +182,7 @@ EDITOR_XAML = """
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows; changing a cell in one of them changes that column on all of them. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter. Detect Types in Project fills Mounting, Device Type and Conduit Type from the rules on the Detection Rules tab."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows; changing a cell in one of them changes that column on all of them. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter. Detect Types in Project (bottom bar) fills Mounting, Device Type and Conduit Type from the rules on the Detection Rules tab."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>
@@ -190,8 +190,6 @@ EDITOR_XAML = """
                         <Button Content="Collapse All" Width="90" Click="collapse_click" DockPanel.Dock="Left"/>
                         <TextBlock Text="Sort by:" VerticalAlignment="Center" Margin="18,0,6,0" DockPanel.Dock="Left"/>
                         <ComboBox x:Name="sort_box" Width="130" SelectionChanged="sort_changed" DockPanel.Dock="Left"/>
-                        <Button Content="Detect Types in Project..." Width="170" Click="detect_click" DockPanel.Dock="Right"
-                                ToolTip="Fill Mounting, Device Type and Conduit Type from each type's family / type name and parameters, using the rules on the Detection Rules tab. You choose blanks only or replace, and review the changes first."/>
                     </DockPanel>
                     <WrapPanel Grid.Row="2" Margin="0,0,0,8">
                         <TextBlock Text="Filter -" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
@@ -344,7 +342,9 @@ EDITOR_XAML = """
         </TabControl>
         <DockPanel Grid.Row="1" Margin="0,10,0,0" LastChildFill="False">
             <Button Content="Open File" Width="90" Margin="0,0,8,0" Click="open_click" DockPanel.Dock="Left"/>
-            <Button Content="Load Default Config..." Width="150" Click="load_default_click" DockPanel.Dock="Left"/>
+            <Button Content="Load Default Config..." Width="150" Margin="0,0,8,0" Click="load_default_click" DockPanel.Dock="Left"/>
+            <Button Content="Detect Types in Project..." Width="170" Click="detect_click" DockPanel.Dock="Left"
+                    ToolTip="Fill Mounting, Device Type and Conduit Type from each type's family / type name and parameters, using the rules on the Detection Rules tab. You choose blanks only or replace, and review the changes first."/>
             <TextBlock x:Name="status_text" VerticalAlignment="Center" Margin="12,0,0,0" DockPanel.Dock="Left"/>
             <Button Content="Close" Width="80" Click="close_click" DockPanel.Dock="Right"/>
             <Button Content="Save" Width="80" Margin="0,0,8,0" Click="save_click" DockPanel.Dock="Right"/>
