@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Family Defaults Config script - version v7
-__title__ = "Family Defaults Config v7"
+# Family Defaults Config script - version v8
+__title__ = "Family Defaults Config v8"
 __doc__ = ("One settings window for routing and addressing, used by Auto Circuit - SLC, NAC and Voice.\n\n"
            "Family Defaults: every Fire Alarm Device and Electrical Equipment family in the project, with its "
            "types under it (double-click a family). Set Mounting (Wall / Ceiling), Device Type (NAC Only, Voice "
@@ -13,6 +13,14 @@ __doc__ = ("One settings window for routing and addressing, used by Auto Circuit
            "Address and Routing Defaults: the elevation runs of each conduit type are drawn at, and the Address "
            "Groups: each group has subgroups with their own number of addresses (MMS Cabinet: Single Zone 6, Dual "
            "Zone 12 ...); a device of a group with several subgroups chooses one when it is addressed.\n\n"
+           "Detect Types in Project (Family Defaults tab): fills Mounting, Device Type and Conduit Type for every type in "
+           "the project from its family / type name and parameters - e.g. SLC Address + 'Module' in the name = Module "
+           "with the SLC conduit type, Panel # = Head End, 'Ceiling' / 'Wall' in the name = the mounting. It asks "
+           "whether to fill blank cells only or replace existing values, then lists the changes to untick any you "
+           "don't want; nothing is saved until Save. The rules are on the Detection Rules tab: each sets Mounting or "
+           "Device Type when one of its keywords is in the name ('speaker+strobe' needs both words) and the family "
+           "has one of its parameters; the first match wins. The conduit type is the one whose name contains the "
+           "text set for the Device Type (SLC, NAC, Voice ...).\n\n"
            "The first time, it is filled from Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - "
            "Config (their files are only read).")
 

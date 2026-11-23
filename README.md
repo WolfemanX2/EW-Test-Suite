@@ -168,7 +168,11 @@ network location (then no default is copied).
   elevation, highlight color, prompt wording) are at the top of `lib/conduit_routing.py`. Both tools use the same
   routing code from that file, so a change there applies to both.
 - Family Defaults Config: `%APPDATA%\pyRevit\EWTestSuite\circuit_config.json` per user. To share it, set
-  `CONFIG_PATH` in `lib/circuit_config.py` to a network location.
+  `CONFIG_PATH` in `lib/circuit_config.py` to a network location. Its **Detect Types in Project** button fills Mounting,
+  Device Type and Conduit Type from each type's family / type name and parameters (asks blanks only or replace, then
+  shows the changes to tick before they go in the table). The rules (keywords, required parameters, and the conduit
+  type name for each Device Type) are on its **Detection Rules** tab and saved in the same file; the starting rules
+  are in `lib/family_detection.py`.
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/slc_riser.py` to a network location.
 - Riser drawing settings (view scale, spacing, devices per line, text offset): `%APPDATA%\pyRevit\EWTestSuite\riser_settings.json`
@@ -195,9 +199,10 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
-| Family Defaults Config | v7 |
-| lib/circuit_config.py | v3 |
-| lib/circuit_config_editor.py | v7 |
+| Family Defaults Config | v8 |
+| lib/circuit_config.py | v4 |
+| lib/circuit_config_editor.py | v8 |
+| lib/family_detection.py | v1 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |

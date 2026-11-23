@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v7
+# circuit_config_editor module - version v8
 # Change log (last change first):
+#   v8 - Family Defaults Config v8: Detect Types in Project (Family Defaults tab) fills Mounting, Device Type and
+#        Conduit Type from each type's family / type name and parameters, after asking blanks only or replace and
+#        showing a review list; the rules are on a new Detection Rules tab (lib/family_detection.py). The parameters
+#        of families that aren't placed are read once and shared with the Circuit column (family_params).
 #   v7 - Family Defaults Config v7: editing several selected rows works: a click on a cell of a selected row keeps
 #        the selection (the grid would narrow it to that row) and the rows are taken when the edit starts.
 #   v6 - Family Defaults Config v6: editing a cell of a selected row sets that column on every selected row (the
@@ -11,11 +15,6 @@
 #        (expanding a family no longer counts as one).
 #   v4 - Auto Circuit - SLC / NAC / Voice v1: the help text says what a blank Device Type does (asked when the
 #        device is addressed).
-#   v3 - Family Defaults Config v3: renamed from Auto Circuit - Config (window title and messages).
-#   v2 - Auto Circuit - Config v2: Address Groups are a table of Group / Subgroup / Addresses (one row per subgroup);
-#        Round To is typed on Family Defaults (the Address Rounding table is removed).
-#   v1 - Auto Circuit - Config v1: the combined routing and addressing settings window (Family Defaults; Address and
-#        Routing Defaults), replacing the Auto Conduit, Address SLC and Address NAC / Voice config windows.
 """The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
@@ -24,7 +23,9 @@ sets it on all its types; a family whose types differ shows <varies>. A blank va
 selected and edited together (a cell edited in a selected row sets that column on every selected row); the list can be filtered and sorted (families keep their types under them). The Circuit
 column: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter (families that
 aren't placed are opened in the background to check, the first time Circuit Type is filtered or sorted on).
-Address and Routing Defaults tab: conduit elevations per conduit type and the Address Groups with their subgroups."""
+Address and Routing Defaults tab: conduit elevations per conduit type and the Address Groups with their subgroups.
+Detection Rules tab: the rules Detect Types in Project uses (lib/family_detection.py) and the default conduit type for
+each Device Type."""
 import os
 
 import clr
@@ -46,6 +47,7 @@ import slc_addressing as slc  # which parameters are SLC Address parameters
 import mounting_rules         # conduit type labels in the project
 import conduit_routing as cr  # reading a length such as 15'-0"
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import family_detection as fd  # Detect Types in Project rules (lib/family_detection.py)
 
 TITLE = "Family Defaults Config"
 VARIES = "<varies>"
@@ -65,6 +67,9 @@ NOT_CHECKED = "?"
 FILTERS = [("f_category", "Category"), ("f_circuit", "Circuit"), ("f_mounting", "Mounting"),
            ("f_device", "DeviceType"), ("f_conduit", "ConduitType"), ("f_group", "AddressGroup")]
 FAMILY_FILTERS = ("Category", "Circuit")
+FILL_BLANKS = "Fill blank cells only"
+REPLACE = "Replace existing values too"
+RULE_COLUMNS = ("Setting", "Value", "Keywords", "Parameters")
 SORTS = [("Family", None), ("Category", "Category"), ("Circuit Type", "Circuit"), ("Mounting", "Mounting"),
          ("Device Type", "DeviceType"), ("Conduit Type", "ConduitType"), ("Address Group", "AddressGroup"),
          ("Round To", "RoundTo")]
@@ -121,8 +126,8 @@ def _param_names(element):
     return names
 
 
-def placed_circuits(doc):
-    """{family name: circuit text} from a placed instance of each family (its instance and type parameters)."""
+def placed_params(doc):
+    """{family name: [parameter names]} from a placed instance of each family (its instance and type parameters)."""
     found = {}
     for cat, _label in CATEGORIES:
         for el in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType().ToElements():
@@ -132,21 +137,21 @@ def placed_circuits(doc):
             except Exception:
                 continue
             if family not in found:
-                found[family] = circuit_text(_param_names(el) + _param_names(symbol))
+                found[family] = _param_names(el) + _param_names(symbol)
     return found
 
 
-def family_file_circuit(doc, family):
-    """Circuit text of a family that isn't placed, from its family file opened in the background (nothing is
-    changed or reloaded), or NOT_CHECKED if it can't be opened."""
+def family_file_params(doc, family):
+    """[parameter names] of a family that isn't placed, from its family file opened in the background (nothing is
+    changed or reloaded), or None if it can't be opened."""
     fdoc = None
     try:
         if family is None or family.IsInPlace or not family.IsEditable:
-            return NOT_CHECKED
+            return None
         fdoc = doc.EditFamily(family)
-        return circuit_text([fp.Definition.Name for fp in fdoc.FamilyManager.Parameters])
+        return [fp.Definition.Name for fp in fdoc.FamilyManager.Parameters]
     except Exception:
-        return NOT_CHECKED
+        return None
     finally:
         try:
             if fdoc is not None:
@@ -177,7 +182,7 @@ EDITOR_XAML = """
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows; changing a cell in one of them changes that column on all of them. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter."/>
+                               Text="Double-click a family to show or hide its types. A value set on a family is set on all its types; &lt;varies&gt; means its types differ. Blank = not set: the conduit type is asked for, the Device Type is asked when the device is addressed, and Address Group blank asks how many addresses. Address Group and Round To are for Module and Detector types: the groups are on the Address and Routing Defaults tab; Round To is a number you type (5: M004 becomes M005). Ctrl+click or Shift+click to select several rows; changing a cell in one of them changes that column on all of them. Circuit: SLC = the family has SLC Address parameters, NAC = it has a Notification Circuit parameter. Detect Types in Project fills Mounting, Device Type and Conduit Type from the rules on the Detection Rules tab."/>
                     <DockPanel Grid.Row="1" Margin="0,0,0,8" LastChildFill="False">
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,6,0" DockPanel.Dock="Left"/>
                         <TextBox x:Name="search_box" Width="240" TextChanged="search_changed" DockPanel.Dock="Left"/>
@@ -185,6 +190,8 @@ EDITOR_XAML = """
                         <Button Content="Collapse All" Width="90" Click="collapse_click" DockPanel.Dock="Left"/>
                         <TextBlock Text="Sort by:" VerticalAlignment="Center" Margin="18,0,6,0" DockPanel.Dock="Left"/>
                         <ComboBox x:Name="sort_box" Width="130" SelectionChanged="sort_changed" DockPanel.Dock="Left"/>
+                        <Button Content="Detect Types in Project..." Width="170" Click="detect_click" DockPanel.Dock="Right"
+                                ToolTip="Fill Mounting, Device Type and Conduit Type from each type's family / type name and parameters, using the rules on the Detection Rules tab. You choose blanks only or replace, and review the changes first."/>
                     </DockPanel>
                     <WrapPanel Grid.Row="2" Margin="0,0,0,8">
                         <TextBlock Text="Filter -" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
@@ -280,6 +287,60 @@ EDITOR_XAML = """
                     </GroupBox>
                 </Grid>
             </TabItem>
+            <TabItem Header="Detection Rules">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="16"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <GroupBox Grid.Column="0" Header="Detection Rules (Detect Types in Project)">
+                        <Grid Margin="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,6"
+                                       Text="Checked top to bottom: for each setting, the first rule that matches gives the value, so put the more specific rules first (speaker+strobe before speaker). A rule matches a type when one of its Keywords is in the family or type name (case ignored; separate keywords with commas; speaker+strobe needs both words; blank = any name) and the family has one of its Parameters (separate with commas; blank = any family). A rule needs Keywords or Parameters. Type in the blank bottom row to add one."/>
+                            <DataGrid x:Name="rule_grid" Grid.Row="1" AutoGenerateColumns="False"
+                                      CanUserAddRows="True" CanUserDeleteRows="True" CanUserSortColumns="False"
+                                      SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="All">
+                                <DataGrid.Columns>
+                                    <DataGridComboBoxColumn Header="Setting" SelectedItemBinding="{Binding Setting}" Width="100"/>
+                                    <DataGridComboBoxColumn Header="Value" SelectedItemBinding="{Binding Value}" Width="115"/>
+                                    <DataGridTextColumn Header="Keywords in family / type name" Binding="{Binding Keywords}" Width="*"/>
+                                    <DataGridTextColumn Header="Has one of these parameters" Binding="{Binding Parameters}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="Move Up" Width="80" Margin="0,0,6,0" Click="rule_up_click"/>
+                                <Button Content="Move Down" Width="80" Margin="0,0,6,0" Click="rule_down_click"/>
+                                <Button Content="Delete Selected Row" Width="130" Margin="0,0,6,0" Click="rule_delete_click"/>
+                                <Button Content="Reset to Starting Rules" Width="150" Click="rule_reset_click"/>
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+                    <GroupBox Grid.Column="2" Header="Default Conduit Type by Device Type">
+                        <Grid Margin="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,6"
+                                       Text="Detect Types in Project gives a type the project's conduit type whose name contains this text (several separated by commas, earlier ones preferred; one with it in its Type name first). Blank = the conduit type is left as it is."/>
+                            <DataGrid x:Name="conduit_rule_grid" Grid.Row="1" AutoGenerateColumns="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column"
+                                      GridLinesVisibility="All">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Device Type" Binding="{Binding DeviceType}" Width="120" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Conduit type name contains" Binding="{Binding Contains}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
         </TabControl>
         <DockPanel Grid.Row="1" Margin="0,10,0,0" LastChildFill="False">
             <Button Content="Open File" Width="90" Margin="0,0,8,0" Click="open_click" DockPanel.Dock="Left"/>
@@ -291,6 +352,15 @@ EDITOR_XAML = """
     </Grid>
 </Window>
 """
+
+
+class DetectedChange(object):
+    """One value Detect Types in Project would put in the table (a line of the review list)."""
+    LABELS = {"DeviceType": "Device Type", "Mounting": "Mounting", "ConduitType": "Conduit Type"}
+
+    def __init__(self, row, key, column, old, value):
+        self.row, self.key, self.column, self.old, self.value = row, key, column, old, value
+        self.text = u"%s   |   %s: %s  ->  %s" % (key, self.LABELS[column], old or u"(blank)", value)
 
 
 class ConfigEditor(forms.WPFWindow):
@@ -318,6 +388,15 @@ class ConfigEditor(forms.WPFWindow):
         self.dt_groups = DataTable("Groups")
         for name in ("Group", "Subgroup", "Count"):
             self.dt_groups.Columns.Add(name, text)
+        self.dt_rules = DataTable("DetectionRules")
+        for name in RULE_COLUMNS:
+            self.dt_rules.Columns.Add(name, text)
+        self.dt_conduit_rules = DataTable("DetectionConduits")
+        for name in ("DeviceType", "Contains"):
+            self.dt_conduit_rules.Columns.Add(name, text)
+        self.params = {}        # family name -> [parameter names] (None: the family file couldn't be read)
+        self.rule_grid.Columns[0].ItemsSource = list(fd.SETTINGS)
+        self.rule_grid.Columns[1].ItemsSource = list(cc.DEVICE_TYPES) + list(cc.MOUNTINGS)
 
         self._fill(cfg)
         self.dt.ColumnChanging += self._column_changing
@@ -325,6 +404,9 @@ class ConfigEditor(forms.WPFWindow):
         self.dt_groups.RowChanged += self._lists_changed
         self.dt_groups.RowDeleted += self._lists_changed
         self.dt_elev.ColumnChanged += self._elevation_changed
+        for table in (self.dt_rules, self.dt_conduit_rules):
+            table.RowChanged += self._elevation_changed
+            table.RowDeleted += self._elevation_changed
         self._ready = True
         if cfg["notes"]:
             self.Loaded += lambda sender, args: forms.alert(
@@ -338,11 +420,15 @@ class ConfigEditor(forms.WPFWindow):
             self.dt.Clear()
             self.dt_elev.Clear()
             self.dt_groups.Clear()
+            self.dt_rules.Clear()
+            self.dt_conduit_rules.Clear()
             in_project = project_types(self.doc)
             try:
-                placed = placed_circuits(self.doc)
+                for family, names in placed_params(self.doc).items():
+                    self.params.setdefault(family, names)
             except Exception:
-                placed = {}
+                pass
+            placed = dict((f, circuit_text(n)) for f, n in self.params.items() if n is not None)
             families = set(in_project) | set(cfg["families"]) | set(cc.family_of(k) for k in cfg["types"])
             self.family_rows, self.type_rows, self.family_elements = {}, {}, {}
             for family in sorted(families, key=lambda f: f.lower()):
@@ -375,8 +461,9 @@ class ConfigEditor(forms.WPFWindow):
                 row = self.dt_elev.NewRow()
                 row["ConduitType"], row["Elevation"] = label, cfg["elevations"].get(label, u"")
                 self.dt_elev.Rows.Add(row)
+            self._show_detection(cfg.get("detection") or fd.default_detection())
             self.notes = list(cfg["notes"])
-            for table in (self.dt, self.dt_elev, self.dt_groups):
+            for table in (self.dt, self.dt_elev, self.dt_groups, self.dt_rules, self.dt_conduit_rules):
                 table.AcceptChanges()
             self._dirty = False
         finally:
@@ -393,6 +480,8 @@ class ConfigEditor(forms.WPFWindow):
         self.grid.ItemsSource = self.view
         self.elev_grid.ItemsSource = self.dt_elev.DefaultView
         self.group_grid.ItemsSource = self.dt_groups.DefaultView
+        self.rule_grid.ItemsSource = self.dt_rules.DefaultView
+        self.conduit_rule_grid.ItemsSource = self.dt_conduit_rules.DefaultView
         self.status_text.Text = "%d families, %d types" % (len(self.family_rows),
                                                            sum(len(v) for v in self.type_rows.values()))
 
@@ -533,7 +622,8 @@ class ConfigEditor(forms.WPFWindow):
                 if pb.cancelled:
                     cancelled = True
                     break
-                self.circuits[family] = family_file_circuit(self.doc, self.family_elements[family])
+                names = self._params_of(family)
+                self.circuits[family] = NOT_CHECKED if names is None else circuit_text(names)
                 pb.update_progress(i, len(todo))
         self._busy = True
         try:
@@ -574,7 +664,7 @@ class ConfigEditor(forms.WPFWindow):
         self._filter()
 
     def _commit(self):
-        for grid in (self.grid, self.elev_grid, self.group_grid):
+        for grid in (self.grid, self.elev_grid, self.group_grid, self.rule_grid, self.conduit_rule_grid):
             try:
                 grid.CommitEdit()       # the cell being typed in
                 grid.CommitEdit()       # its row
@@ -781,6 +871,7 @@ class ConfigEditor(forms.WPFWindow):
                 errors.append("Conduit Elevations (%s): '%s' can't be read as a length, e.g. 15'-0\"." % (label, text))
                 continue
             cfg["elevations"][label] = text
+        cfg["detection"] = self._detection(errors)
 
         for family in sorted(self.family_rows, key=lambda f: f.lower()):
             frow, trows = self.family_rows[family], self.type_rows[family]
@@ -819,13 +910,189 @@ class ConfigEditor(forms.WPFWindow):
         except Exception as ex:
             forms.alert("Could not save the settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
             return
-        for table in (self.dt, self.dt_elev, self.dt_groups):
+        for table in (self.dt, self.dt_elev, self.dt_groups, self.dt_rules, self.dt_conduit_rules):
             table.AcceptChanges()
         self._dirty = False
         self.status_text.Text = "Saved"
 
     def _unsaved(self):
         return self._dirty
+
+    # ---------- Detection Rules tab ----------
+    def _show_detection(self, detection):
+        """Fill the Detection Rules tab (call with _busy set)."""
+        self.dt_rules.Clear()
+        for rule in detection["rules"]:
+            row = self.dt_rules.NewRow()
+            for column in RULE_COLUMNS:
+                row[column] = rule.get(column.lower(), u"")
+            self.dt_rules.Rows.Add(row)
+        self.dt_conduit_rules.Clear()
+        for device in cc.DEVICE_TYPES:
+            row = self.dt_conduit_rules.NewRow()
+            row["DeviceType"], row["Contains"] = device, detection["conduits"].get(device, u"")
+            self.dt_conduit_rules.Rows.Add(row)
+
+    def _detection(self, errors):
+        """The detection settings typed on the Detection Rules tab, adding a message to errors for each bad rule."""
+        rules = []
+        for n, row in enumerate(self._live(self.dt_rules), start=1):
+            values = dict((c, cell_text(row[c])) for c in RULE_COLUMNS)
+            if not any(values.values()):
+                continue
+            where = "Detection Rules row %d" % n
+            allowed = cc.DETECTION_VALUES.get(values["Setting"])
+            if allowed is None:
+                errors.append("%s: choose the Setting (%s)." % (where, " or ".join(fd.SETTINGS)))
+                continue
+            if values["Value"] not in allowed:
+                errors.append("%s: a %s rule's Value must be one of %s." % (where, values["Setting"], ", ".join(allowed)))
+                continue
+            if not values["Keywords"] and not values["Parameters"]:
+                errors.append("%s: give Keywords or Parameters (a rule with neither would match every type)." % where)
+                continue
+            rules.append(dict((c.lower(), values[c]) for c in RULE_COLUMNS))
+        conduits = dict((cell_text(r["DeviceType"]), cell_text(r["Contains"])) for r in self._live(self.dt_conduit_rules))
+        return {"rules": rules, "conduits": conduits}
+
+    def _move_rule(self, step):
+        self._commit()
+        item = self.rule_grid.SelectedItem
+        row = getattr(item, "Row", None)
+        rows = list(self._live(self.dt_rules))
+        index = next((i for i, r in enumerate(rows) if r is row), -1)
+        target = index + step
+        if index < 0 or not 0 <= target < len(rows):
+            return
+        a, b = rows[index], rows[target]
+        for column in RULE_COLUMNS:
+            a[column], b[column] = b[column], a[column]
+        self.rule_grid.SelectedIndex = target
+
+    def rule_up_click(self, sender, args):
+        self._move_rule(-1)
+
+    def rule_down_click(self, sender, args):
+        self._move_rule(1)
+
+    def rule_delete_click(self, sender, args):
+        self._delete_selected(self.rule_grid)
+
+    def rule_reset_click(self, sender, args):
+        self._commit()
+        if not forms.alert("Replace the detection rules and default conduit types with the starting ones?\n\n"
+                           "(Not saved until you press Save.)", title=TITLE, yes=True, no=True):
+            return
+        self._show_detection(fd.default_detection())
+        self._dirty = True
+        self.status_text.Text = "Starting detection rules shown (unsaved)"
+
+    # ---------- Detect Types in Project ----------
+    def _params_of(self, family):
+        """The family's parameter names: from a placed instance, else read once from its family file (None if it
+        can't be opened)."""
+        if family not in self.params:
+            self.params[family] = family_file_params(self.doc, self.family_elements.get(family))
+        return self.params[family]
+
+    def _read_all_params(self, families):
+        """Reads the parameters of the families that aren't placed (opening each family file once). False if
+        cancelled."""
+        todo = [f for f in families if f not in self.params]
+        if not todo:
+            return True
+        with forms.ProgressBar(title="Reading family parameters ({value} of {max_value})", cancellable=True) as pb:
+            for i, family in enumerate(todo, start=1):
+                if pb.cancelled:
+                    return False
+                self._params_of(family)
+                pb.update_progress(i, len(todo))
+        self._busy = True
+        try:        # the Circuit column gets what was read
+            for family in todo:
+                names = self.params.get(family)
+                if names is not None and self.circuits.get(family) == NOT_CHECKED:
+                    self.circuits[family] = circuit_text(names)
+                    self.family_rows[family]["Circuit"] = self.circuits[family]
+                    for trow in self.type_rows[family]:
+                        trow["Circuit"] = self.circuits[family]
+        finally:
+            self._busy = False
+        return True
+
+    def detect_click(self, sender, args):
+        self._commit()
+        errors = []
+        detection = self._detection(errors)
+        if errors:
+            forms.alert("Fix the Detection Rules first:\n\n" + "\n".join(errors[:20]), title=TITLE)
+            return
+        mode = forms.CommandSwitchWindow.show([FILL_BLANKS, REPLACE],
+                                              message="Detect Types in Project: where should detected values go?")
+        if not mode:
+            return
+        families = [f for f in self.family_rows if self.family_elements.get(f) is not None]
+        if not self._read_all_params(families):
+            return
+        changes, unread = [], []
+        for family in sorted(families, key=lambda f: f.lower()):
+            names = self.params.get(family)
+            if names is None:
+                unread.append(family)
+                names = []          # name keywords still work; parameter rules can't match
+            for trow in self.type_rows[family]:
+                if cell_text(trow["Category"]) == NOT_LOADED:
+                    continue
+                key = cell_text(trow["Key"])
+                found = fd.detect(key.replace(" : ", " "), names, detection["rules"])
+                new = {}
+                for column, field in (("DeviceType", "device_type"), ("Mounting", "mounting")):
+                    value, current = found.get(field), cell_text(trow[column])
+                    if value and value != current and (mode == REPLACE or not current):
+                        new[column] = value
+                device = new.get("DeviceType") or cell_text(trow["DeviceType"])
+                conduit = fd.conduit_for(device, detection["conduits"], self.conduit_labels)
+                current = cell_text(trow["ConduitType"])
+                if conduit and conduit != current and (mode == REPLACE or not current):
+                    new["ConduitType"] = conduit
+                for column in ("DeviceType", "Mounting", "ConduitType"):
+                    if column in new:
+                        changes.append(DetectedChange(trow, key, column, cell_text(trow[column]), new[column]))
+        note = ("\n\n%d famil(ies) couldn't be opened to read their parameters, so only their names were used: %s"
+                % (len(unread), ", ".join(unread[:10]) + (" ..." if len(unread) > 10 else ""))) if unread else ""
+        if not changes:
+            forms.alert("Nothing to change: no rule gave a new value for %s.%s"
+                        % ("a blank cell" if mode == FILL_BLANKS else "any type", note), title=TITLE)
+            return
+        items = [forms.TemplateListItem(c, checked=True, name_attr="text") for c in changes]
+        picked = forms.SelectFromList.show(
+            items, title="Detect Types in Project - %d change(s). Untick any you don't want." % len(changes),
+            button_name="Apply to Table", multiselect=True, width=900, height=640)
+        if not picked:
+            return
+        self._apply_changes(picked)
+        self.status_text.Text = ("Detect Types in Project: %d change(s) put in the table (unsaved - press Save)"
+                                 % len(picked))
+        if note:
+            forms.alert(note.strip(), title=TITLE)
+
+    def _apply_changes(self, changes):
+        touched = {}
+        self._busy = True
+        try:
+            for c in changes:
+                c.row[c.column] = c.value
+                touched.setdefault(cell_text(c.row["Family"]), set()).add(c.column)
+            for family, columns in touched.items():
+                for column in columns:
+                    self.family_rows[family][column] = self._summary(self.type_rows[family], column)
+        finally:
+            self._busy = False
+        self._dirty = True
+        self._set_choices()
+        self._sort_rows()
+        self._match_rows()
+        self._filter()
 
     # ---------- File ----------
     def open_click(self, sender, args):

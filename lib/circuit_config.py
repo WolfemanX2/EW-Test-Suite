@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# circuit_config module - version v3
+# circuit_config module - version v4
 # Change log (last change first):
+#   v4 - Family Defaults Config v8: "detection" - the Detect Types in Project rules and the default conduit type per
+#        Device Type (lib/family_detection.py); a file without them gets the starting rules.
 #   v3 - Family Defaults Config v3: the window was renamed from Auto Circuit - Config (no change to the file).
 #   v2 - Auto Circuit - Config v2: Address Groups have subgroups, each with its own number of addresses (a device of
 #        a group with several subgroups chooses one when it is addressed); Round To is any number typed per family /
@@ -23,6 +25,8 @@ Address and Routing Defaults:
                    gets that many addresses; with several (MMS Cabinet: Single Zone 6, Dual Zone 12 ...) the
                    subgroup is chosen when the device is addressed. A group's only subgroup may have no name.
     elevations     {conduit type label: elevation text, e.g. 15'-0"}; a type without one is asked for
+Detection Rules (Detect Types in Project, lib/family_detection.py):
+    detection      {"rules": [{"setting", "value", "keywords", "parameters"}], "conduits": {device type: name text}}
 
 The first time (no file yet), it is filled from the configs it replaces: Auto Conduit - Config (mounting and
 conduit type per family), Address SLC - Config (Module / Detector / Head End, counts, Address Options, rounding)
@@ -32,6 +36,7 @@ from a copy of it."""
 import os
 
 import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
+import family_detection as fd  # Detect Types in Project rules (lib/family_detection.py)
 
 CONFIG_PATH = None      # set to a shared path to make everyone use one file
 DEFAULT_CONFIG = cs.default_file("circuit_config.default.json")
@@ -47,6 +52,7 @@ MAX_ADDRESSES = 24
 FORMAT = 2              # the file's layout; a file without it is the v1 layout and is converted when read
 _V1_CHOOSE_GROUP = "Choose a group"
 FIELDS = ["mounting", "device_type", "conduit_type", "address_group", "round_to"]
+DETECTION_VALUES = {fd.MOUNTING: MOUNTINGS, fd.DEVICE_TYPE: DEVICE_TYPES}   # what a detection rule can set
 
 try:
     _TEXT = (str, unicode)      # IronPython 2
@@ -59,7 +65,8 @@ def config_path():
 
 
 def empty():
-    return {"families": {}, "types": {}, "address_groups": [], "elevations": {}, "notes": []}
+    return {"families": {}, "types": {}, "address_groups": [], "elevations": {}, "notes": [],
+            "detection": fd.default_detection()}
 
 
 def family_of(key):
@@ -154,6 +161,7 @@ def normalize(data):
         if text:
             cfg["elevations"][label] = text
     cfg["notes"] = [u"%s" % n for n in data.get("notes") or [] if isinstance(n, _TEXT)]
+    cfg["detection"] = fd.normalize(data.get("detection"), DETECTION_VALUES)
     return cfg
 
 
@@ -161,7 +169,8 @@ def to_data(cfg):
     return {"format": FORMAT, "families": cfg["families"], "types": cfg["types"],
             "address_groups": [{"name": name, "subgroups": [{"name": sub, "count": count} for sub, count in subs]}
                                for name, subs in cfg["address_groups"]],
-            "elevations": cfg["elevations"], "notes": list(cfg["notes"])}
+            "elevations": cfg["elevations"], "notes": list(cfg["notes"]),
+            "detection": cfg.get("detection") or fd.default_detection()}
 
 
 def read(path):
