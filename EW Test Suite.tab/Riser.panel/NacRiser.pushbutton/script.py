@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v13
-__title__ = "NAC\nRiser v13"
+# NAC Riser script - version v14
+__title__ = "NAC\nRiser v14"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"
@@ -32,8 +32,8 @@ __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "its Loop Spacing N (each Loop Spacing measured from the line below it, so circuit N is Loop Spacing 1 + "
            "... + N above the bottom of the panel), and the first line is locked to that reference line.\n\n"
            "A conduit teeing off the main run is drawn at the tee, out and back, then the main run carries on. "
-           "Devices on the circuit (same N#-#) that no conduit reaches are added at the end in address order and "
-           "marked NOT CONNECTED. Devices on the conduit without a NAC Address are passed through and listed "
+           "Devices on the circuit (same N#-#) that no conduit reaches: "
+           "you are asked whether to add them in address order, add them at the end of the line, or leave them off. Devices on the conduit without a NAC Address are passed through and listed "
            "afterwards.\n\n"
            "Symbols for each Family : Type, and the view scale, spacing, devices per line, wrap rounding and label "
            "offset, are set on the NAC tab of Riser - Config (kept apart from SLC Riser's). A type without a "

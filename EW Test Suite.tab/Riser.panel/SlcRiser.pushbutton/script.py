@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v50
-__title__ = "SLC\nRiser v50"
+# SLC Riser script - version v51
+__title__ = "SLC\nRiser v51"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -44,7 +44,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "Each loop is one line, with no T-tap rows. A conduit teeing off the main run is treated as a feed "
            "and a return in one conduit: its devices are drawn at the tee, out to the end of the branch and back, "
            "then the main run (the side with the most devices) carries on. Devices on the loop (same "
-           "N#L#) that no conduit reaches are added at the end in address order and marked NOT CONNECTED.\n\n"
+           "N#L#) that no conduit reaches: you are asked whether to add them in address order, add them at the end of the line, or leave them off.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so conduit of another type (NAC, power) joined by a tee is ignored.\n\n"
            "A type can have several symbols, drawn in order, one address each (the last symbol takes the rest). "

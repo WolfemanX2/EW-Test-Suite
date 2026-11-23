@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v15
+# riser_tool module - version v16
 # Change log (last change first):
+#   v16 - SLC Riser v51 / NAC Riser v14: devices on a circuit that no conduit reaches are no longer marked NOT
+#         CONNECTED; the user chooses to add them in address order, add them at the end, or leave them off.
+#         Callouts are measured filled in from their device and without the symbol size cap, so callouts side by
+#         side no longer overlap.
 #   v15 - SLC Riser v50 / NAC Riser v13: fix - adding a circuit below one already locked to the panel (Loop 1 after
 #         Loop 3) broke the lock: raising a Loop Spacing moves the locked circuits above with their reference
 #         lines, and they were then moved again. Now each circuit is only moved by what it hasn't moved already.
@@ -15,8 +19,6 @@
 #         one-line group now remembers its panel, first device, conduit types, loop and start (extensible storage);
 #         older groups are worked out from their name and address text. Every one-line ends with the kind's
 #         return_text (SLC RETURN / NAC RETURN). The panel detail's Panel Model comes from the panel's Model.
-#   v11 - SLC Riser v44 / NAC Riser v9 (code check): messages and yes / no questions use ew_common.alert (no warning
-#         icon or sound) instead of forms.alert.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -97,7 +99,9 @@ TEXT_GAP = 0.06         # between a symbol and the addresses under it
 BOX_SIZE = 0.375        # box drawn for a type that has no symbol
 MAX_SYMBOL = 2.0        # a symbol measured larger than this is treated as this size
 LINE_SPACING = 1.6      # text line height as a multiple of the text size
-NOT_CONNECTED_TEXT = "NOT CONNECTED"    # shown above a device the conduit doesn't reach
+UNCONNECTED_BY_ADDRESS = "Add Them in Address Order"     # devices on the circuit that no conduit reaches
+UNCONNECTED_AT_END = "Add Them at the End of the Line"
+UNCONNECTED_LEAVE_OFF = "Leave Them Off"
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
@@ -558,7 +562,9 @@ def choose_conduit_types(net, root_id, start_ids):
 
 def trace_from(root, firsts, allowed=None, circuits=None):
     """(rows, returns, elements, addresses, unaddressed devices, unconnected, conduit type UniqueIds followed) for the
-    conduit connected to root, or None if the user cancelled. firsts: the first device of each circuit (empty =
+    conduit connected to root, or None if the user cancelled. unconnected: {"added": [ids], "left_off": [ids],
+    "how": the user's choice} for devices on the circuits that no conduit reaches (add_unconnected).
+    firsts: the first device of each circuit (empty =
     every run leaving root). allowed: None = ask which conduit types to follow; "auto" = the types at the first
     devices (the ones the question starts ticked); otherwise the conduit type ids to follow. circuits: the
     circuits (KIND.groups) to draw; by default those of the first devices (all circuits when there are none)."""
@@ -591,15 +597,29 @@ def trace_from(root, firsts, allowed=None, circuits=None):
     # One line per run (no T-tap rows): a tee'd branch is drawn at the split, out and back, then the main run.
     rows = rl.flat_rows(root_id, children, lambda n: KIND.sort_key(net.addresses.get(n)))
     unconnected = add_unconnected(rows, net)
+    if unconnected is None:
+        return None
     for row in rows:
         row["label"] = KIND.row_label([net.addresses[n] for n in row["nodes"]])
     unaddressed = [net.elements[i] for i in passed if i in net.addresses and not net.addresses[i]]
     return rows, returns, net.elements, net.addresses, unaddressed, unconnected, type_uids
 
 
+def insert_by_address(nodes, i, addresses):
+    """Put device i into the one-line after the device with the highest address below its own (first if none)."""
+    key = KIND.sort_key(addresses.get(i))
+    best, pos = None, 0
+    for k, n in enumerate(nodes):
+        nk = KIND.sort_key(addresses.get(n))
+        if nk < key and (best is None or nk > best):
+            best, pos = nk, k + 1
+    nodes.insert(pos, i)
+
+
 def add_unconnected(rows, net):
-    """Devices on a run's circuit (e.g. same N#-#) that the conduit didn't reach are added to the end of that run in
-    address order. Returns their ids (they are flagged NOT CONNECTED on the riser)."""
+    """Devices on a run's circuit (e.g. same N#-#) that the conduit didn't reach: the user chooses to add them in
+    address order (each after the device with the next lower address), at the end of the line, or to leave them
+    off. Returns {"added": [ids], "left_off": [ids], "how": choice}, or None if the user cancelled."""
     loops_of = []
     for row in rows:
         loops = set()
@@ -610,7 +630,7 @@ def add_unconnected(rows, net):
     for loops in loops_of:
         wanted |= loops
     drawn = set(n for row in rows for n in row["nodes"])
-    unconnected = []
+    found = []      # (row, id), in address order
     for el, addresses in KIND.devices_on_groups(doc, wanted):
         i = net.remember(el)
         if i in drawn:
@@ -618,11 +638,27 @@ def add_unconnected(rows, net):
         loops = KIND.groups(addresses)
         for row, row_loops in zip(rows, loops_of):
             if loops & row_loops:
-                row["nodes"].append(i)
+                found.append((row, i))
                 drawn.add(i)
-                unconnected.append(i)
                 break
-    return unconnected
+    if not found:
+        return {"added": [], "left_off": [], "how": None}
+    labels = sorted(set(KIND.row_label([net.addresses.get(n) for n in row["nodes"]]) for row, _i in found) - set([""]))
+    where = (" on %s %s" % (KIND.run_word, ", ".join(labels))) if labels else ""
+    how = forms.CommandSwitchWindow.show(
+        [UNCONNECTED_BY_ADDRESS, UNCONNECTED_AT_END, UNCONNECTED_LEAVE_OFF],
+        message="%d device(s)%s have %s but no conduit path from the panel. Add them to the riser?"
+                % (len(found), where, KIND.address_phrase))
+    if not how:
+        return None
+    if how == UNCONNECTED_LEAVE_OFF:
+        return {"added": [], "left_off": [i for _row, i in found], "how": how}
+    for row, i in found:
+        if how == UNCONNECTED_BY_ADDRESS:
+            insert_by_address(row["nodes"], i, net.addresses)
+        else:
+            row["nodes"].append(i)
+    return {"added": [i for _row, i in found], "left_off": [], "how": how}
 
 
 # ---------- Drawing ----------
@@ -1530,15 +1566,18 @@ def shift_plan(plan, dx, dy):
     return out
 
 
-def measure_symbols(view, symbols):
+def measure_symbols(view, symbols, fill_from=None, capped=True):
     """{symbol id: (left, right, up, down)} - how far each symbol reaches from its insertion point,
-    found by placing one, measuring it and deleting it again."""
-    cap = paper(MAX_SYMBOL) / 2.0
+    found by placing one, measuring it and deleting it again. fill_from: {symbol id: device} whose same-named
+    parameters fill the placed one first (callouts). capped: a reach over MAX_SYMBOL / 2 counts as that."""
+    cap = paper(MAX_SYMBOL) / 2.0 if capped else None
     default = paper(BOX_SIZE) / 2.0
     placed = {}
     for key, sym in symbols.items():
         try:
             placed[key] = doc.Create.NewFamilyInstance(XYZ(0, 0, 0), sym, view)
+            if fill_from and key in fill_from:
+                ec.copy_matching_params(fill_from[key], placed[key])
         except Exception:
             pass
     doc.Regenerate()
@@ -1550,7 +1589,8 @@ def measure_symbols(view, symbols):
             try:
                 bb = inst.get_BoundingBox(view)
                 if bb is not None:
-                    ext = tuple(min(max(v, 0.0), cap) for v in (-bb.Min.X, bb.Max.X, bb.Max.Y, -bb.Min.Y))
+                    ext = tuple(max(v, 0.0) if cap is None else min(max(v, 0.0), cap)
+                                for v in (-bb.Min.X, bb.Max.X, bb.Max.Y, -bb.Min.Y))
             except Exception:
                 pass
             doc.Delete(inst.Id)
@@ -2089,8 +2129,7 @@ def draw_riser(update=None):
                      title=TITLE)
             return
         on_row = set(rows[0]["nodes"])
-        unconnected = [n for n in unconnected if n in on_row]
-    unconnected_set = set(unconnected)
+        unconnected["added"] = [n for n in unconnected["added"] if n in on_row]
     root_id = sr.eid_int(root.Id)
     if not rows:
         msg = ("No devices with %s are connected to the selected element by conduit of the "
@@ -2293,16 +2332,21 @@ def draw_riser(update=None):
                 refresh_panel(panel_inst, root)
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
-        if unconnected or any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
+        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
             above_type_id, above_h = small_text_type(type_id)
-        used = {}
-        for sym in list(node_symbol.values()) + list(node_callout.values()):
+        used, callouts_used, fill_from = {}, {}, {}
+        for sym in node_symbol.values():
             used[sr.eid_int(sym.Id)] = sym
-        for sym in used.values():
+        for n, sym in node_callout.items():
+            callouts_used[sr.eid_int(sym.Id)] = sym
+            fill_from.setdefault(sr.eid_int(sym.Id), elements[n])
+        for sym in list(used.values()) + list(callouts_used.values()):
             if not sym.IsActive:
                 sym.Activate()
         doc.Regenerate()
         sizes = measure_symbols(view, used)
+        # Callouts: filled in from a device first (their labels change their size), and not capped in size.
+        callout_sizes = measure_symbols(view, callouts_used, fill_from, capped=False)
 
         box = paper(BOX_SIZE) / 2.0
         # The run starts at its origin; the layout's "panel" is that point.
@@ -2318,11 +2362,9 @@ def draw_riser(update=None):
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
             above = named_value(elements[n], PANEL_NUMBER_PARAM) if n in firsts else ""
-            if n in firsts and n in unconnected_set:
-                above = "\n".join(t for t in (above, NOT_CONNECTED_TEXT) if t)
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
             if n in node_callout:
-                info[n]["callout"] = sizes[sr.eid_int(node_callout[n].Id)]
+                info[n]["callout"] = callout_sizes[sr.eid_int(node_callout[n].Id)]
                 info[n]["lines"] = []
             elif n in callout_parts:
                 info[n]["lines"] = []
@@ -2441,12 +2483,15 @@ def draw_riser(update=None):
     if no_subgroup:
         msg += ("\n\n%d type(s) have an Address Group but no subgroup with their number of addresses, so they have "
                 "the 45 degree address text; they are listed in the output window." % len(no_subgroup))
-    if unconnected:
-        msg += ("\n\n%d device(s) on this %s have no conduit path from the rest of the riser. They were added "
-                "in address order and marked %s; they are listed in the output window."
-                % (len(unconnected), KIND.run_word.lower(), NOT_CONNECTED_TEXT))
-        output.print_md("### %s - devices with no conduit path (added in address order)" % TITLE)
-        for i in unconnected:
+    no_path = unconnected["added"] or unconnected["left_off"]
+    if no_path:
+        done = {UNCONNECTED_BY_ADDRESS: "were added in address order",
+                UNCONNECTED_AT_END: "were added at the end of the line",
+                UNCONNECTED_LEAVE_OFF: "were left off"}.get(unconnected["how"], "")
+        msg += ("\n\n%d device(s) on this %s have no conduit path from the panel and %s; they are listed in the "
+                "output window." % (len(no_path), KIND.run_word.lower(), done))
+        output.print_md("### %s - devices with no conduit path (%s)" % (TITLE, done))
+        for i in no_path:
             output.print_md("- %s %s - %s" % (output.linkify(elements[i].Id), sr.family_key(doc, elements[i]),
                                               ", ".join(addresses.get(i) or [])))
     if unaddressed:
