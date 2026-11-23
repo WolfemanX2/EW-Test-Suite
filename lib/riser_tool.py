@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v11
+# riser_tool module - version v12
 # Change log (last change first):
+#   v12 - SLC Riser v47 / NAC Riser v10: run from a drafting view = Update Selected One-Line (pick a one-line group;
+#         its circuit is traced again and redrawn in place with the current symbols, callouts and settings). Each
+#         one-line group now remembers its panel, first device, conduit types, loop and start (extensible storage);
+#         older groups are worked out from their name and address text. Every one-line ends with the kind's
+#         return_text (SLC RETURN / NAC RETURN). The panel detail's Panel Model comes from the panel's Model.
 #   v11 - SLC Riser v44 / NAC Riser v9 (code check): messages and yes / no questions use ew_common.alert (no warning
 #         icon or sound) instead of forms.alert.
 #   v10 - SLC Riser v43 / NAC Riser v8: a device is always drawn with its type's symbols (the symbol rules by number
@@ -11,8 +16,6 @@
 #        callouts included) gets its Loop Spacing raised, and the circuits above move up with it (fit_circuit).
 #   v8 - SLC Riser v41 / NAC Riser v6: Loop Spacing N is measured from the line below it (Loop N-1), not
 #        from the bottom of the panel; loop N's height is Loop Spacing 1 + ... + N (stacked_height).
-#   v7 - SLC Riser v40 / NAC Riser v5: the first-device prompt and the start-point prompt are pyRevit option bars
-#        instead of alert boxes; the extra head end alert before selecting in the model is gone.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -26,7 +29,11 @@ run(kind) draws a riser for one circuit kind. The kind supplies (see nac_riser.C
   row_label(address_lists), row_number(...)  'N1-2' over the row; 2 = the head end's reference line / Loop Spacing 2
   devices_on_groups(doc, groups)             [(element, addresses)] on those circuits, in address order
   no_address_hint                            why a device on the conduit was left off
+  return_text                                'NAC RETURN', written after the last device of every one-line
   load_table, save_table, table_path, load_settings, save_settings, settings_path, DEFAULT_SETTINGS, SETTING_LIMITS
+
+Run from a drafting view, it offers Update Selected One-Line instead: the picked one-line group's circuit is traced
+again from what the group remembers (or, for older groups, from its name and address text) and redrawn in place.
 
 Used by SLC Riser (slc_riser.LoopKind) and NAC Riser (nac_riser.CircuitKind)."""
 from Autodesk.Revit.DB import (
@@ -43,10 +50,12 @@ except ImportError:
     VerticalTextAlignment = None    # older Revit: text is placed by its top already
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.DB import BuiltInCategory, FamilySymbol, CurveElement
-from Autodesk.Revit.UI.Selection import ObjectType, ObjectSnapTypes
+from Autodesk.Revit.UI.Selection import ObjectType, ObjectSnapTypes, ISelectionFilter
 from Autodesk.Revit.Exceptions import OperationCanceledException
+from Autodesk.Revit.DB.ExtensibleStorage import Schema, SchemaBuilder, AccessLevel, Entity
 from pyrevit import revit, forms, script
 
+import json
 import math
 import re
 
@@ -99,6 +108,9 @@ ORIGIN_PICK = "Pick Start Point"
 HEAD_FROM_LIST = "Select from List"
 HEAD_IN_MODEL = "Select in Model"
 HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
+UPDATE_ONELINE = "Update Selected One-Line"
+ONELINE_SCHEMA_GUID = "6f3f0a52-6c1e-4b5e-9a57-2f1d8c4e7b31"    # extensible storage on each one-line group
+PANEL_MODEL_PARAM = "Panel Model"   # the panel detail's field, filled from the panel's Model
 NEW_VIEW = "Generate New Drafting View"
 EXISTING_VIEW = "Add to Existing Drafting View"
 LABEL_ANGLE = math.pi / 4.0         # device address text: 45 degrees
@@ -533,16 +545,31 @@ def choose_conduit_types(net, root_id, start_ids):
     return set(c.tid for c in picked)
 
 
-def trace_from(root, firsts):
-    """(rows, returns, elements, addresses, unaddressed devices) for the conduit connected to root, or None
-    if the user cancelled. firsts: the first device of each circuit (empty = every run leaving root)."""
+def trace_from(root, firsts, allowed=None):
+    """(rows, returns, elements, addresses, unaddressed devices, unconnected, conduit type UniqueIds followed) for the
+    conduit connected to root, or None if the user cancelled. firsts: the first device of each circuit (empty =
+    every run leaving root). allowed: None = ask which conduit types to follow; "auto" = the types at the first
+    devices (the ones the question starts ticked); otherwise the conduit type ids to follow."""
     net = Network()
     root_id = net.remember(root)
     starts = [net.remember(el) for el in firsts]
-    allowed = choose_conduit_types(net, root_id, starts or [root_id])
     if allowed is None:
-        return None
+        allowed = choose_conduit_types(net, root_id, starts or [root_id])
+        if allowed is None:
+            return None
+    elif allowed == "auto":
+        in_network = net.all_conduit_types(root_id)
+        allowed = (net.conduit_types_at(starts or [root_id]) & in_network) or in_network
     net.allowed = allowed
+    type_uids = []
+    for tid in allowed:
+        try:
+            type_uids.append(doc.GetElement(net.type_elem_ids[tid]).UniqueId)
+        except Exception:
+            try:
+                type_uids.append(doc.GetElement(ElementId(tid)).UniqueId)
+            except Exception:
+                pass
     children, returns, passed = rl.trace(root_id, net.ports, net.is_node, starts or None)
     # One line per run (no T-tap rows): a tee'd branch is drawn at the split, out and back, then the main run.
     rows = rl.flat_rows(root_id, children, lambda n: KIND.sort_key(net.addresses.get(n)))
@@ -550,7 +577,7 @@ def trace_from(root, firsts):
     for row in rows:
         row["label"] = KIND.row_label([net.addresses[n] for n in row["nodes"]])
     unaddressed = [net.elements[i] for i in passed if i in net.addresses]
-    return rows, returns, net.elements, net.addresses, unaddressed, unconnected
+    return rows, returns, net.elements, net.addresses, unaddressed, unconnected, type_uids
 
 
 def add_unconnected(rows, net):
@@ -677,6 +704,36 @@ def room_text(el):
         name = ""
     number = (getattr(room, "Number", "") or "").strip()
     return " ".join(p for p in (name, number) if p) or NO_ROOM_TEXT
+
+
+def panel_model(root):
+    """The panel's Model: Revit's built-in Model parameter of its type (or of the panel), else a parameter named
+    Model; '' if there is none."""
+    holders = []
+    try:
+        holders.append(doc.GetElement(root.GetTypeId()))
+    except Exception:
+        pass
+    holders.append(root)
+    for holder in holders:
+        if holder is None:
+            continue
+        try:
+            p = holder.get_Parameter(BuiltInParameter.ALL_MODEL_MODEL)
+            text = (p.AsString() or "").strip() if p is not None else ""
+        except Exception:
+            text = ""
+        if text:
+            return text
+    return named_value(root, "Model")
+
+
+def refresh_panel(inst, root):
+    """Fill the panel detail's Panel #, Location and Panel Model from the panel again (Update Selected One-Line)."""
+    for name, value in ((PANEL_NUMBER_PARAM, named_value(root, PANEL_NUMBER_PARAM)), ("Location", room_text(root)),
+                        (PANEL_MODEL_PARAM, panel_model(root))):
+        if value:
+            set_text_param(inst, name, value)
 
 
 def set_text_param(inst, name, value):
@@ -875,6 +932,8 @@ def place_panel(view, sym, root):
         skipped.append(PANEL_NUMBER_PARAM)
     if not set_text_param(inst, "Location", room_text(root)):
         skipped.append("Location")
+    if not set_text_param(inst, PANEL_MODEL_PARAM, panel_model(root)):
+        skipped.append(PANEL_MODEL_PARAM)
     doc.Regenerate()
     bb = inst.get_BoundingBox(view)
     if bb is None:
@@ -1538,6 +1597,207 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
     return failed[0]
 
 
+# ---------- Update Selected One-Line (drafting views) ----------
+def oneline_schema():
+    """The extensible storage schema kept on each one-line group (one text field of JSON)."""
+    guid = System.Guid(ONELINE_SCHEMA_GUID)
+    schema = Schema.Lookup(guid)
+    if schema is None:
+        builder = SchemaBuilder(guid)
+        builder.SetReadAccessLevel(AccessLevel.Public)
+        builder.SetWriteAccessLevel(AccessLevel.Public)
+        builder.SetSchemaName("EWRiserOneLine")
+        builder.AddSimpleField("Data", clr.GetClrType(System.String))
+        schema = builder.Finish()
+    return schema
+
+
+def save_oneline_data(group, data):
+    """Remember how a one-line group was drawn (inside a transaction). A failure only means it can't be updated
+    from this data later (it is then worked out from the group)."""
+    try:
+        schema = oneline_schema()
+        entity = Entity(schema)
+        entity.Set[System.String]("Data", json.dumps(data))
+        group.SetEntity(entity)
+    except Exception as ex:
+        output.print_md("**%s:** could not store the circuit on group '%s' (%s); it can still be updated, worked "
+                        "out from its name and addresses." % (TITLE, group.GroupType.Name, ex))
+
+
+def read_oneline_data(group):
+    """What save_oneline_data stored on the group, or None."""
+    try:
+        schema = Schema.Lookup(System.Guid(ONELINE_SCHEMA_GUID))
+        if schema is None:
+            return None
+        entity = group.GetEntity(schema)
+        if entity is None or not entity.IsValid():
+            return None
+        return json.loads(entity.Get[System.String]("Data"))
+    except Exception:
+        return None
+
+
+class Update(object):
+    """A one-line group to redraw: the group, its view and name, and the circuit to trace (panel, first devices,
+    conduit types - "auto" when worked out), the loop it shows and where it starts (None = from its reference
+    line)."""
+    def __init__(self, group, view, root, firsts, allowed, loop, label, origin):
+        self.group, self.view, self.name = group, view, group.GroupType.Name
+        self.root, self.firsts, self.allowed = root, firsts, allowed
+        self.loop, self.label, self.origin = loop, label, origin
+
+
+class GroupFilter(ISelectionFilter):
+    def AllowElement(self, el):
+        return isinstance(el, Group)
+
+    def AllowReference(self, ref, point):
+        return False
+
+
+def pick_oneline_group(view):
+    try:
+        ref = uidoc.Selection.PickObject(ObjectType.Element, GroupFilter(),
+                                         "Select the one-line (its group) to update - Esc to cancel")
+    except OperationCanceledException:
+        return None
+    return doc.GetElement(ref.ElementId)
+
+
+def remove_group(group):
+    """Delete a one-line group (and its members), and its group type when nothing else uses it."""
+    gtype = group.GroupType
+    doc.Delete(group.Id)
+    try:
+        if gtype is not None and gtype.IsValidObject and gtype.Groups.Size == 0:
+            doc.Delete(gtype.Id)
+    except Exception:
+        pass
+
+
+def group_origin(members):
+    """Where a one-line starts: the left end of its topmost horizontal line, or None."""
+    best = None
+    for m in members:
+        try:
+            curve = m.GeometryCurve
+            p, q = curve.GetEndPoint(0), curve.GetEndPoint(1)
+        except Exception:
+            continue
+        if abs(p.Y - q.Y) > 1e-6:
+            continue
+        x = min(p.X, q.X)
+        if best is None or p.Y > best[1] + 1e-6 or (abs(p.Y - best[1]) <= 1e-6 and x < best[0]):
+            best = (x, p.Y)
+    return best
+
+
+def group_addresses(members):
+    """The device addresses written in a one-line group's text (first- / last on two lines included)."""
+    found = []
+    for m in members:
+        if not isinstance(m, TextNote):
+            continue
+        for line in (m.Text or "").splitlines():
+            text = line.strip().rstrip("-").strip()
+            if text and KIND.groups([text]) and text not in found:
+                found.append(text)
+    return found
+
+
+def panel_by_number(number):
+    """The head end whose Panel # is number: the only one, the user's choice of several, or one from the head
+    end list when none matches. None if cancelled."""
+    wanted = (number or "").strip().upper()
+    matches = []
+    if wanted:
+        try:
+            candidates = head_end_panels()
+        except Exception:
+            candidates = []
+        matches = [el for el in candidates if named_value(el, PANEL_NUMBER_PARAM).strip().upper() == wanted]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        by_label = dict(("%s  -  %s  [id %d]" % (number, ec.family_key(doc, el), sr.eid_int(el.Id)), el)
+                        for el in matches)
+        picked = forms.SelectFromList.show(sorted(by_label), title="Which panel is %s?" % number,
+                                           button_name="Use Panel", multiselect=False)
+        return by_label.get(picked) if picked else None
+    picked = choose_head_end_from_list()
+    return picked if picked not in (None, "model") else None
+
+
+def work_out_update(group, view):
+    """An Update for a one-line drawn before the circuit was stored on its group: the panel from the group name's
+    Panel # (FACU-01 - Loop A), the loop from the addresses written in it, and its lowest-address device on that
+    loop as the first device. None if it can't be worked out or the user cancelled."""
+    members = [doc.GetElement(i) for i in group.GetMemberIds()]
+    texts = group_addresses(members)
+    loops = KIND.groups(texts)
+    if not loops:
+        ec.alert("No %s was found in the text of '%s', so its circuit can't be worked out. (Is it a %s "
+                 "one-line?)" % (KIND.address_label, group.GroupType.Name, KIND.title), title=TITLE)
+        return None
+    name = group.GroupType.Name
+    root = panel_by_number(name.rsplit(" - ", 1)[0] if " - " in name else "")
+    if root is None:
+        return None
+    devices = KIND.devices_on_groups(doc, loops)
+    shown = [el for el, addresses in devices if set(addresses) & set(texts)]
+    first = (shown or [el for el, _a in devices] or [None])[0]
+    return Update(group, view, root, [first] if first is not None else [], "auto",
+                  KIND.row_number([texts]), KIND.row_label([texts]), group_origin(members))
+
+
+def prepare_update(view):
+    """Pick a one-line group in the drafting view and work out how to redraw it. None if cancelled."""
+    group = pick_oneline_group(view)
+    if group is None:
+        return None
+    data = read_oneline_data(group)
+    if data is None:
+        return work_out_update(group, view)
+    if data.get("kind") and data.get("kind") != KIND.title:
+        ec.alert("'%s' was drawn by %s. Run %s to update it." % (group.GroupType.Name, data["kind"], data["kind"]),
+                 title=TITLE)
+        return None
+    root = doc.GetElement(data.get("root") or "")
+    if root is None:
+        output.print_md("**%s:** the panel of '%s' is no longer in the model; working it out from the group name."
+                        % (TITLE, group.GroupType.Name))
+        return work_out_update(group, view)
+    firsts = [el for el in (doc.GetElement(u) for u in data.get("firsts") or []) if el is not None]
+    allowed = set()
+    for u in data.get("conduit_types") or []:
+        el = doc.GetElement(u)
+        if el is not None:
+            allowed.add(sr.eid_int(el.Id))
+    # Where it is now (it may have been moved since it was drawn), else where it was drawn.
+    origin = group_origin([doc.GetElement(i) for i in group.GetMemberIds()]) or data.get("origin")
+    return Update(group, view, root, firsts, allowed or "auto", data.get("loop"), data.get("label") or "",
+                  tuple(origin) if origin else None)
+
+
+def update_rows(rows, addresses, update):
+    """The traced row that is the one-line being updated: [row], or [] if none matches."""
+    if len(rows) == 1:
+        return rows
+    for row in rows:
+        if update.loop is not None and row_loop(addresses, row["nodes"]) == update.loop:
+            return [row]
+    for row in rows:
+        if update.label and row.get("label") == update.label:
+            return [row]
+    first_ids = set(sr.eid_int(el.Id) for el in update.firsts)
+    for row in rows:
+        if row["nodes"] and row["nodes"][0] in first_ids:
+            return [row]
+    return []
+
+
 # ---------- Main ----------
 REVIEW_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1708,17 +1968,46 @@ def run(kind):
 def main():
     if not apply_settings():
         return
-    root = starting_element()
-    if root is None:
+    view = uidoc.ActiveView
+    if isinstance(view, ViewDrafting):
+        # In a drafting view: work on the one-lines already drawn there.
+        choice = forms.CommandSwitchWindow.show([UPDATE_ONELINE], message="%s - drafting view options" % TITLE)
+        if choice != UPDATE_ONELINE:
+            return
+        update = prepare_update(view)
+        if update is not None:
+            draw_riser(update)
         return
+    draw_riser()
+
+
+def draw_riser(update=None):
+    """Create a riser (update None), or redraw the one-line group in update (an Update from prepare_update)."""
+    if update is None:
+        root = starting_element()
+        if root is None:
+            return
+        firsts = first_devices(root)
+        if firsts is None:
+            return
+        allowed = None
+    else:
+        root, firsts, allowed = update.root, update.firsts, update.allowed
     entry = conduit_entry(root)     # the panel, or its gutter box when the conduit lands there
-    firsts = first_devices(root)
-    if firsts is None:
-        return
-    traced = trace_from(entry, firsts)
+    traced = trace_from(entry, firsts, allowed)
     if traced is None:
         return
-    rows, returns, elements, addresses, unaddressed, unconnected = traced
+    rows, returns, elements, addresses, unaddressed, unconnected, type_uids = traced
+    first_uids = [el.UniqueId for el in firsts]
+    if update is not None and rows:
+        rows = update_rows(rows, addresses, update)
+        if not rows:
+            ec.alert("The circuit of '%s' could not be found from its panel any more (no traced %s matches it). "
+                     "Check the conduit, or draw it again from a plan view." % (update.name, KIND.run_word.lower()),
+                     title=TITLE)
+            return
+        on_row = set(rows[0]["nodes"])
+        unconnected = [n for n in unconnected if n in on_row]
     unconnected_set = set(unconnected)
     root_id = sr.eid_int(root.Id)
     if not rows:
@@ -1807,9 +2096,9 @@ def main():
                         if sid not in firsts and base_id(sid) in node_callout)
     drawn = [n for row in rows for n in row["nodes"]]
 
-    if not review_layout(rows, device_count):
+    if update is None and not review_layout(rows, device_count):
         return
-    target = choose_target_view()
+    target = update.view if update is not None else choose_target_view()
     if target is False:
         return
     if target is None and panel_sym is None:
@@ -1873,6 +2162,10 @@ def main():
                 if c["loop"] == loop:
                     match = (c, y)
                     break
+        if match is None and update is not None and update.origin is not None:
+            origins.append(update.origin)       # where the one-line being updated started
+            lock_refs.append(None)
+            continue
         if match is None and panel_inst is not None:
             if not reported:
                 report_reference_lines(placed_refs, panel_top)
@@ -1908,9 +2201,14 @@ def main():
     # 3. Draw each circuit and group it.
     failed = 0
     groups, not_locked, spacing_changes = [], [], []
-    t = Transaction(doc, ("Create %s" if target is None else "Add circuit to %s") % TITLE)
+    t = Transaction(doc, ("Update one-line - %s" % TITLE) if update is not None else
+                    ("Create %s" if target is None else "Add circuit to %s") % TITLE)
     t.Start()
     try:
+        if update is not None:
+            remove_group(update.group)          # its name is free again for the new one-line
+            if panel_inst is not None:
+                refresh_panel(panel_inst, root)
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
         if unconnected or any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
@@ -1951,7 +2249,8 @@ def main():
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "loop_label_raise": LOOP_LABEL_RAISE_IN / 12.0,
-               "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
+               "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP),
+               "end_text": getattr(KIND, "return_text", None)}
 
         for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
             if lock is not None and spacing_changes:
@@ -1972,12 +2271,16 @@ def main():
             group = None
             if new_ids:
                 group = doc.Create.NewGroup(List[ElementId](new_ids))
-                gname = unique_group_name(run_name(panel_name, row, i))
+                gname = unique_group_name(update.name if update is not None else run_name(panel_name, row, i))
                 try:
                     group.GroupType.Name = gname
                 except Exception:
                     pass
                 groups.append(group.GroupType.Name)
+                save_oneline_data(group, {
+                    "kind": KIND.title, "root": root.UniqueId, "firsts": first_uids, "conduit_types": type_uids,
+                    "loop": row_loop(addresses, row["nodes"]), "label": row.get("label") or "",
+                    "origin": [origin[0], origin[1]]})
             if lock is not None:
                 # The first line of the one-line: horizontal, starting at the origin.
                 first = None
@@ -2030,8 +2333,11 @@ def main():
         pass
 
     count = device_count
-    msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
-                                                    view.Name, count, len(rows))
+    if update is not None:
+        msg = "Updated '%s' in '%s': %d device(s)." % (update.name, view.Name, count)
+    else:
+        msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
+                                                        view.Name, count, len(rows))
     if groups:
         msg += "\n\nGroup(s): " + ", ".join(groups)
     if target is not None and panel_inst is None:

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v4
+# nac_riser module - version v5
 # Change log (last change first):
+#   v5 - NAC Riser v10: CircuitKind.return_text - every NAC one-line ends with 'NAC RETURN'.
 #   v4 - NAC Riser v9 (code check): the unused type_key / available_symbols / new_entry aliases removed.
 #   v3 - NAC Riser v8 / Riser - Config v9: the symbol rules are gone (new_rule / RULE_OPS removed); NAC devices have
 #        no Address Group callouts (ADDRESS_CALLOUTS = False hides that table on the NAC tab).
@@ -90,6 +91,7 @@ class CircuitKind(object):
         self.view_tag = ("%s Riser" % name).upper()
         self.config_name = "Riser - Config (%s Riser tab)" % name
         self.run_word = "Circuit"
+        self.return_text = "%s RETURN" % name.upper()     # written after the last device of every one-line
         self.address_label = self.param
         self.address_phrase = "a %s" % self.param
         self.head_prompt = "Select %s Power Supply" % name

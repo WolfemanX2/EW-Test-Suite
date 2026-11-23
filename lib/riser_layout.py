@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v24
+# riser_layout module - version v25
 # Change log (last change first):
+#   v25 - SLC Riser v47 / NAC Riser v10: cfg "end_text" ('SLC RETURN', 'NAC RETURN') is written after the last device
+#         of every one-line, the riser line running on to it (otherwise 'RETURNS TO PANEL' only when it returns).
 #   v24 - SLC Riser v46: address callouts go in a band below the bottom of the line's address text, each joined to its
 #         device by orthogonal detail lines (down from the symbol, across, down into the callout); callouts that
 #         would overlap are moved right (callout_band). The line below makes room for the band. A callout is inserted
@@ -12,8 +14,6 @@
 #         same room; the symbol rules (rule_matches, pick_rule) are removed.
 #   v21 - SLC Riser v35 / NAC Riser v1 (cleanup, no change to the drawings): removed the T-tap rows (build_rows, the
 #         T-TAP FROM label) and the unused panel_dy / exit_low options; rows no longer carry "source".
-#   v20 - Code consolidation step 2 (no change to SLC Riser's results): the tee rule in flat_rows is now
-#         tee_order, which conduit_trace also uses, so the addressing tools treat a tee the same way.
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -211,7 +211,8 @@ def layout(rows, root, info, returns, cfg):
     A row may carry "label" (its loop or circuit, e.g. "A" or "N1-2"), written above the start of the row.
     cfg      = spacing, per_line, wrap_rounding (extra devices allowed before a line wraps; 0 if not given), pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
                text above a symbol; line_h if not given), label_offset (how far below
-               the line a device label's top corner sits; 0 if not given)
+               the line a device label's top corner sits; 0 if not given), end_text (written after the last
+               device of every row, e.g. 'SLC RETURN'; without it, 'RETURNS TO PANEL' when the row returns)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
              "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None,
              "leader_texts": [(x, y, text, end x, end y)], "callouts": [(x, y, id)]}
@@ -377,7 +378,8 @@ def layout(rows, root, info, returns, cfg):
                     up = max(up, lh * 1.4 + label_raise)
                 if not custom_panel:
                     below = max(below, root_depth())
-            if last_chunk and nodes[-1] in returns:
+            end_text = cfg.get("end_text") or ("RETURNS TO PANEL" if nodes[-1] in returns else None)
+            if last_chunk and end_text:
                 up = max(up, lh)
             up += pad
             below += pad
@@ -418,14 +420,14 @@ def layout(rows, root, info, returns, cfg):
             end = xs[-1]                                # the last device's centre
             if not last_chunk:
                 end = turn_x(ci)
-            elif nodes[-1] in returns:
+            elif end_text:
                 ext = info[chunk[-1]]["ext"]
                 if forward:
                     end = xs[-1] + ext[1] + sp * 0.4
-                    out["texts"].append((end + sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "L"))
+                    out["texts"].append((end + sp * 0.05, y + lh * 0.6, end_text, "L"))
                 else:
                     end = xs[-1] - ext[0] - sp * 0.4
-                    out["texts"].append((end - sp * 0.05, y + lh * 0.6, "RETURNS TO PANEL", "R"))
+                    out["texts"].append((end - sp * 0.05, y + lh * 0.6, end_text, "R"))
             out["lines"].append(((min(start, end), y), (max(start, end), y)))   # one unbroken line
             prev_y = y
             cursor = y - below

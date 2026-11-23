@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v18
+# slc_riser module - version v19
 # Change log (last change first):
+#   v19 - SLC Riser v47: LoopKind.return_text - every SLC one-line ends with 'SLC RETURN'.
 #   v18 - SLC Riser v43 / NAC Riser v8 / Riser - Config v9: the symbol rules by number of addresses are gone (a type
 #         is always drawn with its own symbols; old saved rules are ignored). Address callouts: the drawing settings
 #         keep "address_callouts" {Address Group: {subgroup: callout symbol}} and callout_for finds a device's
@@ -12,8 +13,6 @@
 #         family name.
 #   v15 - SLC Riser v35: LoopKind, the SLC loop kind SLC Riser now runs the riser engine (lib/riser_tool.py) with;
 #         number_text (shared by the engine and Riser - Config); the unused LOCAL_DIR removed.
-#   v14 - NAC Riser v1 / Riser - Config v8 (no change to SLC Riser): load_table, save_table, load_settings and
-#         save_settings can be given another riser's file (NAC Riser's), so the risers share one copy of them.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -304,6 +303,7 @@ class LoopKind(object):
     view_tag = "SLC RISER"
     config_name = "Riser - Config (SLC Riser tab)"
     run_word = "Loop"
+    return_text = "SLC RETURN"          # written after the last device of every one-line
     address_label = "SLC address"
     address_phrase = "an SLC address"
     head_prompt = "Select Head End Panel"
