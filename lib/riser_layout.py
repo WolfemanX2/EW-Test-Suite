@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v21
+# riser_layout module - version v22
 # Change log (last change first):
+#   v22 - SLC Riser v43 / NAC Riser v8: address callouts - a device's info may carry "callout" (the extents of its
+#         Address Group callout symbol), drawn where its 45 degree text would go (out["callouts"]) and given the
+#         same room; the symbol rules (rule_matches, pick_rule) are removed.
 #   v21 - SLC Riser v35 / NAC Riser v1 (cleanup, no change to the drawings): removed the T-tap rows (build_rows, the
 #         T-TAP FROM label) and the unused panel_dy / exit_low options; rows no longer carry "source".
 #   v20 - Code consolidation step 2 (no change to SLC Riser's results): the tee rule in flat_rows is now
@@ -8,7 +11,6 @@
 #   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
 #         main run carries on (flat_rows).
 #   v18 - SLC Riser v31: one line per loop, lowest address next at a split (flat_rows).
-#   v17 - SLC Riser v30 / Config v7: symbol rules by number of addresses (rule_matches, pick_rule).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -16,32 +18,6 @@ Elements are plain ids here; the riser engine (lib/riser_tool.py) supplies the c
 
 tee_order is the tee rule for both SLC Riser and the conduit tracing of the addressing tools (lib/conduit_trace.py),
 so a tee is treated the same way everywhere."""
-
-
-def rule_matches(op, limit, value):
-    """True when value <op> limit, e.g. rule_matches("<=", 12, 7)."""
-    if op == "<=":
-        return value <= limit
-    if op == "<":
-        return value < limit
-    if op == "=":
-        return value == limit
-    if op == ">=":
-        return value >= limit
-    if op == ">":
-        return value > limit
-    return False
-
-
-def pick_rule(rules, value):
-    """Index of the first rule that matches value (checked top to bottom), or None."""
-    for i, rule in enumerate(rules or []):
-        try:
-            if rule_matches(rule["op"], int(rule["count"]), value):
-                return i
-        except Exception:
-            pass
-    return None
 
 
 def assign_symbols(addresses, count, repeat=False):
@@ -226,7 +202,9 @@ def layout(rows, root, info, returns, cfg):
     """Positions for the whole diagram, in the same length unit as cfg and the extents.
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
-                "above": text written above the symbol, or "" (optional)}
+                "above": text written above the symbol, or "" (optional),
+                "callout": (left, right, up, down) of its address callout symbol (optional) - drawn in place of
+                the address text, with its insertion point where the text's top corner would go}
     info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
                 its top right corner; its ext is (width, 0, 0, height) from there). It is drawn once and
                 every run comes out of its right side, the rows beside it. "exit_dy" is how far below the
@@ -238,7 +216,7 @@ def layout(rows, root, info, returns, cfg):
                the line a device label's top corner sits; 0 if not given)
     Returns {"symbols": [(x, y, id)], "boxes": [(x, y, left, right, up, down)],
              "lines": [((x1, y1), (x2, y2))], "texts": [(x, y, text, how)], "panel": (x, y) or None,
-             "leader_texts": [(x, y, text, end x, end y)]}
+             "leader_texts": [(x, y, text, end x, end y)], "callouts": [(x, y, id)]}
     "leader_texts" are the loop labels: level text centred on x with its top at y, and a vertical line from
     under it down to (end x, end y) on the riser line. cfg "loop_label_raise" lifts them (0 if not given).
 
@@ -262,7 +240,7 @@ def layout(rows, root, info, returns, cfg):
         text = info[n].get("above")
         return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
-    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": []}
+    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": [], "callouts": []}
     label_raise = cfg.get("loop_label_raise", 0.0)
     custom_panel = bool(info[root].get("panel"))
 
@@ -274,12 +252,18 @@ def layout(rows, root, info, returns, cfg):
         return max(len(t) for t in lines) * char_w, len(lines) * lh
 
     def label_drop(n):
-        """How far a device's turned label reaches below the riser line."""
+        """How far a device's turned label (or its callout) reaches below the riser line."""
+        callout = info[n].get("callout")
+        if callout:
+            return offset + callout[3]
         length, height = label_size(n)
         return (length + height) * diag + offset if length else 0.0
 
     def label_reach(n):
-        """How far a device's turned label reaches left of the device centreline."""
+        """How far a device's turned label (or its callout) reaches left of the device centreline."""
+        callout = info[n].get("callout")
+        if callout:
+            return callout[0]
         length, height = label_size(n)
         return length * diag if length else 0.0
 
@@ -299,6 +283,9 @@ def layout(rows, root, info, returns, cfg):
         above = info[n].get("above")
         if above and n != root:
             out["texts"].append((x, y + above_up(n), above, "A"))
+        if n != root and info[n].get("callout"):
+            out["callouts"].append((x, y - offset, n))
+            return
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])

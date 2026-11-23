@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v2
+# riser_config_editor module - version v3
 # Change log (last change first):
+#   v3 - Riser - Config v9: the Rules column and its window are gone (a type is always drawn with its own symbols);
+#        the SLC tab shows each type's Address Group (Family Defaults Config) and an Address Callouts table - a
+#        callout symbol per Address Group subgroup, used on the riser instead of the 45 degree address text.
+#        Messages use pyRevit option bars / plain boxes instead of the warning popup.
 #   v2 - SLC Riser v35 (cleanup): number_text comes from slc_riser instead of a copy here.
 #   v1 - Riser - Config v8 (was SLC Riser - Config v7) / NAC Riser v1: the config window, moved here from the
 #        SLC Riser - Config script, with an SLC Riser tab and a NAC Riser tab (each its own symbol table and
@@ -8,31 +12,45 @@
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
-offset) and its table of the symbols drawn for each Family : Type, with optional rules by number of addresses.
+offset) and its table of the symbols drawn for each Family : Type (in order, one address under each, the last
+takes the rest). A device's addresses are written under it as 45 degree text. On a tab whose store has
+ADDRESS_CALLOUTS (SLC Riser), a type's Address Group from Family Defaults Config is shown, and the Address Callouts
+table gives each Address Group subgroup an optional callout symbol: a device of that subgroup (worked out from its
+number of addresses) is labeled with the callout instead, its parameters filled from the device's same-named ones.
+
 A tab reads and writes its riser's own files through a store module with load_table, save_table, table_path,
-load_settings, save_settings, settings_path, DEFAULT_SETTINGS, SETTING_LIMITS and SCALES:
-    SLC Riser  lib/slc_riser.py   riser_symbols.json / riser_settings.json (the same files as before)
+load_settings, save_settings, settings_path, DEFAULT_SETTINGS, SETTING_LIMITS, SCALES and ADDRESS_CALLOUTS:
+    SLC Riser  lib/slc_riser.py   riser_symbols.json / riser_settings.json (callouts in the settings file)
     NAC Riser  lib/nac_riser.py   nac_riser_symbols.json / nac_riser_settings.json
 To add a riser (e.g. Voice), add a (header, prefix, store) line to TABS.
 
 show_editor() opens the window."""
 import clr
 clr.AddReference("System.Data")
-import json
 
 from System import String, DBNull
 from System.Data import DataTable, DataRowState
+from System.Windows import Visibility
 from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 from pyrevit import revit, forms
 
-import slc_riser as sr     # SLC Riser's files, and the table entries / rules / symbols shared by the risers
+import slc_riser as sr     # SLC Riser's files, and the table entries / symbols / callouts shared by the risers
 import nac_riser           # NAC Riser's files
+import circuit_config as cc    # Family Defaults Config: each type's Address Group and the groups' subgroups
 
 doc = revit.doc
 TITLE = "Riser - Config"
 TABS = [("SLC Riser", "slc_", sr), ("NAC Riser", "nac_", nac_riser)]     # (tab header, name prefix, store)
 SCOPES = [("Fire Alarm Device types", BuiltInCategory.OST_FireAlarmDevices),
           ("Electrical Equipment types (panels)", BuiltInCategory.OST_ElectricalEquipment)]
+TEXT_LABEL = "(45 degree address text)"     # the Address Callouts table when a subgroup has no callout
+CLOSE_ANYWAY = "Close Without Saving"
+KEEP_EDITING = "Keep Editing"
+
+
+def note(msg):
+    """A message box without the warning icon and sound."""
+    forms.alert(msg, title=TITLE, warn_icon=False)
 
 
 def cell_text(v):
@@ -156,171 +174,6 @@ class SymbolListEditor(forms.WPFWindow):
         self.Close()
 
 
-RULES_XAML = """
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Symbol Rules"
-        Width="860" Height="460" MinWidth="640" MinHeight="320"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-
-        <TextBlock x:Name="title_text" Grid.Row="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,0,0,8"/>
-
-        <DataGrid x:Name="grid" Grid.Row="1" Grid.Column="0" AutoGenerateColumns="False"
-                  CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single"
-                  SelectionUnit="FullRow" GridLinesVisibility="All" HeadersVisibility="Column"
-                  MouseDoubleClick="grid_double_click">
-            <DataGrid.Columns>
-                <DataGridComboBoxColumn Header="If number of addresses is" SelectedItemBinding="{Binding Op}" Width="160"/>
-                <DataGridTextColumn Header="Value" Binding="{Binding Count}" Width="70"/>
-                <DataGridTextColumn Header="Use symbols (double-click to change)" Binding="{Binding SymbolsText}"
-                                    IsReadOnly="True" Width="*"/>
-            </DataGrid.Columns>
-        </DataGrid>
-
-        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
-            <Button Content="Add Rule" Width="150" Margin="0,0,0,6" Click="add_click"/>
-            <Button Content="Remove Rule" Width="150" Margin="0,0,0,6" Click="remove_click"/>
-            <Button Content="Move Up" Width="150" Margin="0,0,0,6" Click="up_click"/>
-            <Button Content="Move Down" Width="150" Margin="0,0,0,16" Click="down_click"/>
-            <Button Content="Set Symbols..." Width="150" Margin="0,0,0,6" Click="symbols_click"/>
-            <Button Content="Use Default Symbols" Width="150" Click="default_click"/>
-        </StackPanel>
-
-        <DockPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="0,10,0,0" LastChildFill="False">
-            <Button Content="Cancel" Width="80" IsCancel="True" Click="cancel_click" DockPanel.Dock="Right"/>
-            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="ok_click" DockPanel.Dock="Right"/>
-        </DockPanel>
-    </Grid>
-</Window>
-"""
-
-DEFAULT_TEXT = "Default"
-
-
-def rules_text(rules):
-    """'<= 6: Default;  <= 12: Sym A : 1;  >= 13: Sym B : 1  >  Sym B : 2'"""
-    return ";   ".join("%s %d: %s" % (r["op"], r["count"], SEP.join(r["symbols"]) if r["symbols"] else DEFAULT_TEXT)
-                       for r in rules)
-
-
-class RulesEditor(forms.WPFWindow):
-    """Edit a type's rules. self.result = [rule, ...] or None."""
-    def __init__(self, title, symbols, rules):
-        forms.WPFWindow.__init__(self, RULES_XAML, literal_string=True)
-        self.symbols = symbols
-        self.result = None
-        self.title_text.Text = ("Rules for %s: which symbols to draw depending on how many addresses the device has. "
-                                "Rules are checked top to bottom and the first that matches is used; when none "
-                                "match, the type's default symbols are used. Example: <= 6 -> Default, <= 12 -> "
-                                "symbol A, >= 13 -> symbol B." % title)
-        self.dt = DataTable("Rules")
-        for name in ("Op", "Count", "SymbolsText", "Symbols"):
-            self.dt.Columns.Add(name, clr.GetClrType(String))
-        self.grid.Columns[0].ItemsSource = list(sr.RULE_OPS)
-        for r in rules:
-            self._add(r["op"], str(r["count"]), r["symbols"])
-        self.grid.ItemsSource = self.dt.DefaultView
-
-    def _add(self, op, count, symbols):
-        row = self.dt.NewRow()
-        row["Op"] = op
-        row["Count"] = count
-        self._set_symbols(row, symbols)
-        self.dt.Rows.Add(row)
-
-    def _set_symbols(self, row, symbols):
-        row["Symbols"] = json.dumps(list(symbols))
-        row["SymbolsText"] = SEP.join(symbols) if symbols else DEFAULT_TEXT
-
-    def _selected(self):
-        self.grid.CommitEdit()
-        i = self.grid.SelectedIndex
-        return i if 0 <= i < self.dt.Rows.Count else -1
-
-    def add_click(self, sender, args):
-        self.grid.CommitEdit()
-        self._add("<=", "1", [])
-        self.grid.SelectedIndex = self.dt.Rows.Count - 1
-
-    def remove_click(self, sender, args):
-        i = self._selected()
-        if i >= 0:
-            self.dt.Rows.RemoveAt(i)
-
-    def _move(self, step):
-        i = self._selected()
-        j = i + step
-        if i < 0 or j < 0 or j >= self.dt.Rows.Count:
-            return
-        a, b = self.dt.Rows[i], self.dt.Rows[j]
-        for name in ("Op", "Count", "SymbolsText", "Symbols"):
-            a[name], b[name] = b[name], a[name]
-        self.grid.SelectedIndex = j
-
-    def up_click(self, sender, args):
-        self._move(-1)
-
-    def down_click(self, sender, args):
-        self._move(1)
-
-    def symbols_click(self, sender, args):
-        i = self._selected()
-        if i < 0:
-            forms.alert("Select a rule first.", title=TITLE)
-            return
-        row = self.dt.Rows[i]
-        dlg = SymbolListEditor("this rule", self.symbols, json.loads(cell_text(row["Symbols"]) or "[]"))
-        dlg.ShowDialog()
-        if dlg.result is not None:
-            self._set_symbols(row, dlg.result)
-
-    def grid_double_click(self, sender, args):
-        col = self.grid.CurrentColumn
-        if col is not None and str(col.Header).startswith("Use symbols"):
-            self.symbols_click(sender, args)
-
-    def default_click(self, sender, args):
-        i = self._selected()
-        if i >= 0:
-            self._set_symbols(self.dt.Rows[i], [])
-
-    def ok_click(self, sender, args):
-        self.grid.CommitEdit()
-        rules, errors = [], []
-        for idx in range(self.dt.Rows.Count):
-            row = self.dt.Rows[idx]
-            op = cell_text(row["Op"])
-            try:
-                count = int(cell_text(row["Count"]))
-            except Exception:
-                count = None
-            if op not in sr.RULE_OPS:
-                errors.append("Rule %d: choose how to compare (%s)." % (idx + 1, ", ".join(sr.RULE_OPS)))
-            if count is None or count < 0:
-                errors.append("Rule %d: the value must be a whole number, 0 or more." % (idx + 1))
-            if errors:
-                continue
-            rules.append(sr.new_rule(op, count, json.loads(cell_text(row["Symbols"]) or "[]")))
-        if errors:
-            forms.alert("Please fix:\n\n" + "\n".join(errors), title=TITLE)
-            return
-        self.result = rules
-        self.Close()
-
-    def cancel_click(self, sender, args):
-        self.Close()
-
-
 number_text = sr.number_text      # 4.5 -> '4.5', 6.0 -> '6' (lib/slc_riser.py)
 
 
@@ -331,7 +184,6 @@ TAB_XAML = """
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <GroupBox Grid.Row="0" Header="PFX_HEADER drawing" Margin="0,0,0,10" Padding="8">
@@ -369,29 +221,58 @@ TAB_XAML = """
                     </GroupBox>
 
                     <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Choose the default symbols drawn on PFX_HEADER diagrams for each Family Type, in order (one address under each, the last symbol takes the rest), and optional rules that use other symbols depending on how many addresses a device has - e.g. &lt;= 6: Default, &lt;= 12: symbol A, &gt;= 13: symbol B. Rules are checked top to bottom and the first that matches is used; if none match, the default symbols are used. Double-click a cell (or use the buttons) to edit. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it)."/>
+                               Text="Choose the symbols drawn on PFX_HEADER diagrams for each Family Type, in order (one address under each, the last symbol takes the rest). Double-click a Symbols cell (or use the buttons) to edit. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it). Addresses are written under the device as 45 degree text, unless its Address Group subgroup has a callout (right)."/>
 
-                    <DataGrid x:Name="PFX_grid" Grid.Row="2"
-                              AutoGenerateColumns="False"
-                              CanUserAddRows="True" CanUserDeleteRows="True"
-                              SelectionMode="Extended" SelectionUnit="FullRow"
-                              GridLinesVisibility="All" HeadersVisibility="Column">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Family Type"
-                                                Binding="{Binding FamilyType}" Width="*"/>
-                            <DataGridTextColumn Header="Default Symbols (in order)"
-                                                Binding="{Binding Symbol}" IsReadOnly="True" Width="1.2*"/>
-                            <DataGridTextColumn Header="Rules (by number of addresses)"
-                                                Binding="{Binding RulesText}" IsReadOnly="True" Width="1.4*"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <DockPanel Grid.Column="0">
+                            <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+                                <Button x:Name="PFX_add_btn" Content="Add Types From Project..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
+                                <Button x:Name="PFX_set_btn" Content="Set Symbols For Selected..." Width="180" Margin="0,0,8,0" DockPanel.Dock="Left"/>
+                                <Button x:Name="PFX_delete_btn" Content="Delete Selected Rows" Width="140" DockPanel.Dock="Left"/>
+                            </DockPanel>
+                            <DataGrid x:Name="PFX_grid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="True" CanUserDeleteRows="True"
+                                      SelectionMode="Extended" SelectionUnit="FullRow"
+                                      GridLinesVisibility="All" HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Family Type"
+                                                        Binding="{Binding FamilyType}" Width="*"/>
+                                    <DataGridTextColumn Header="Symbols (in order)"
+                                                        Binding="{Binding Symbol}" IsReadOnly="True" Width="1.2*"/>
+                                    <DataGridTextColumn Header="Address Group (Family Defaults)"
+                                                        Binding="{Binding AddressGroup}" IsReadOnly="True" Width="0.8*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
 
-                    <DockPanel Grid.Row="3" Margin="0,10,0,0" LastChildFill="False">
-                        <Button x:Name="PFX_add_btn" Content="Add Types From Project..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
-                        <Button x:Name="PFX_set_btn" Content="Set Symbols For Selected..." Width="180" Margin="0,0,8,0" DockPanel.Dock="Left"/>
-                        <Button x:Name="PFX_rules_btn" Content="Edit Rules For Selected..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
-                        <Button x:Name="PFX_delete_btn" Content="Delete Selected Rows" Width="140" DockPanel.Dock="Left"/>
-                    </DockPanel>
+                        <GroupBox x:Name="PFX_callout_box" Grid.Column="1" Width="460" Margin="12,0,0,0" Padding="6"
+                                  Header="Address Callouts (by Address Group subgroup)">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
+                                           Text="A device whose type has this Address Group in Family Defaults Config, with this many addresses, is labeled with the callout symbol instead of the 45 degree address text. The callout goes where the text's top corner would (on the device centreline, the address offset below the riser line), and its parameters are filled from the device's parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...). The groups and subgroups come from Family Defaults Config."/>
+                                <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0" LastChildFill="False">
+                                    <Button x:Name="PFX_callout_set_btn" Content="Set Callout For Selected..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
+                                    <Button x:Name="PFX_callout_text_btn" Content="Use 45 Degree Text" Width="130" DockPanel.Dock="Left"/>
+                                </DockPanel>
+                                <DataGrid x:Name="PFX_callout_grid" AutoGenerateColumns="False" IsReadOnly="True"
+                                          CanUserAddRows="False" CanUserDeleteRows="False"
+                                          SelectionMode="Extended" SelectionUnit="FullRow"
+                                          GridLinesVisibility="All" HeadersVisibility="Column">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Address Group" Binding="{Binding Group}" Width="*"/>
+                                        <DataGridTextColumn Header="Subgroup" Binding="{Binding Subgroup}" Width="*"/>
+                                        <DataGridTextColumn Header="Addresses" Binding="{Binding Count}" Width="70"/>
+                                        <DataGridTextColumn Header="Callout" Binding="{Binding Shown}" Width="1.4*"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </GroupBox>
+                    </Grid>
                 </Grid>
             </TabItem>
 """
@@ -400,7 +281,7 @@ WINDOW_XAML = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Riser - Config"
-        Width="1150" Height="720" MinWidth="680" MinHeight="520"
+        Width="1250" Height="740" MinWidth="760" MinHeight="520"
         WindowStartupLocation="CenterScreen"
         Closing="window_closing">
     <Grid Margin="12">
@@ -426,8 +307,23 @@ def window_xaml():
     return WINDOW_XAML.replace("TAB_ITEMS", items)
 
 
+def _text_table(name, columns):
+    table = DataTable(name)
+    for column in columns:
+        col = table.Columns.Add(column, clr.GetClrType(String))
+        col.DefaultValue = ""
+    return table
+
+
+def _live(table):
+    for row in table.Rows:
+        if row.RowState != DataRowState.Deleted:
+            yield row
+
+
 class RiserTab(object):
-    """One riser's tab: its drawing settings and symbol table, read from and saved to its store's files."""
+    """One riser's tab: its drawing settings, symbol table and (SLC) address callouts, read from and saved to its
+    store's files."""
     def __init__(self, window, header, prefix, store):
         self.w = window
         self.name = header
@@ -436,19 +332,30 @@ class RiserTab(object):
         self._loading = True
         self.settings_dirty = False
         self.failed = False     # its table couldn't be read: the tab is shown empty and never saved
+        self.callouts_on = bool(getattr(store, "ADDRESS_CALLOUTS", False))
+        self.cfg = None         # Family Defaults Config (Address Groups), read for the callouts
+        self.extra_callouts = {}    # saved callouts for groups / subgroups no longer in Family Defaults (kept)
 
         try:
             table = store.load_table()
         except Exception as ex:
-            forms.alert("Could not read the %s symbol table, so the %s tab can't be changed:\n%s\n\nPath: %s"
-                        % (header, header, ex, store.table_path()), title=TITLE)
+            note("Could not read the %s symbol table, so the %s tab can't be changed:\n%s\n\nPath: %s"
+                 % (header, header, ex, store.table_path()))
             table, self.failed = {}, True
         try:
             settings = store.load_settings()
         except Exception as ex:
-            forms.alert("Could not read the %s drawing settings, so the defaults are shown:\n%s\n\nPath: %s"
-                        % (header, ex, store.settings_path()), title=TITLE)
+            note("Could not read the %s drawing settings, so the defaults are shown:\n%s\n\nPath: %s"
+                 % (header, ex, store.settings_path()))
             settings = dict(store.DEFAULT_SETTINGS)
+        callouts = settings.get(sr.CALLOUTS) or {}
+        if self.callouts_on:
+            try:
+                self.cfg = cc.load()
+            except Exception as ex:
+                note("Could not read Family Defaults Config, so the Address Groups can't be shown on the %s tab:"
+                     "\n%s\n\nThe saved callouts are kept." % (header, ex))
+                self.cfg = None
 
         self.c("scale_box").ItemsSource = [label for label, _ in store.SCALES]
         self._show_settings(settings)
@@ -457,22 +364,23 @@ class RiserTab(object):
         saved = set()
         for entry in table.values():
             saved.update(entry["symbols"])
-            for rule in entry["rules"]:
-                saved.update(rule["symbols"])
+        for subs in callouts.values():
+            saved.update(subs.values())
         self.symbols = sorted(set(sr.available_symbols(doc).keys()) | saved)
 
-        self.dt = DataTable("RiserSymbols")
-        self.dt.Columns.Add("FamilyType", clr.GetClrType(String))
-        sym_col = self.dt.Columns.Add("Symbol", clr.GetClrType(String))
-        sym_col.DefaultValue = ""
-        for name in ("RulesText", "RulesData"):
-            col = self.dt.Columns.Add(name, clr.GetClrType(String))
-            col.DefaultValue = "" if name == "RulesText" else "[]"
+        self.dt = _text_table("RiserSymbols", ("FamilyType", "Symbol", "AddressGroup"))
         for key in sorted(table.keys()):
-            self._add_row(key, table[key]["symbols"], table[key]["rules"])
+            self._add_row(key, table[key]["symbols"])
         self.dt.AcceptChanges()
         self.c("grid").ItemsSource = self.dt.DefaultView
         self.count = len(table)
+
+        self.dt_callouts = _text_table("AddressCallouts", ("Group", "Subgroup", "Count", "Symbol", "Shown"))
+        self._fill_callouts(callouts)
+        self.c("callout_grid").ItemsSource = self.dt_callouts.DefaultView
+        if not self.callouts_on:
+            self.c("callout_box").Visibility = Visibility.Collapsed
+            self.c("grid").Columns[2].Visibility = Visibility.Collapsed
 
         # Events (wired here, so each tab's controls call their own tab).
         self.c("scale_box").SelectionChanged += self.setting_changed
@@ -482,11 +390,14 @@ class RiserTab(object):
         self.c("grid").MouseDoubleClick += self.grid_double_click
         self.c("add_btn").Click += self.add_click
         self.c("set_btn").Click += self.set_click
-        self.c("rules_btn").Click += self.rules_click
         self.c("delete_btn").Click += self.delete_click
+        self.c("callout_grid").MouseDoubleClick += self.callout_set_click
+        self.c("callout_set_btn").Click += self.callout_set_click
+        self.c("callout_text_btn").Click += self.callout_text_click
         if self.failed:
-            for name in ("grid", "defaults_btn", "add_btn", "set_btn", "rules_btn", "delete_btn", "scale_box",
-                         "spacing_box", "per_line_box", "offset_box", "rounding_box"):
+            for name in ("grid", "defaults_btn", "add_btn", "set_btn", "delete_btn", "scale_box", "spacing_box",
+                         "per_line_box", "offset_box", "rounding_box", "callout_grid", "callout_set_btn",
+                         "callout_text_btn"):
                 self.c(name).IsEnabled = False
         self._loading = False
 
@@ -550,32 +461,21 @@ class RiserTab(object):
             out[key] = value
         return out
 
-    # ---- Table ----
-    def _add_row(self, key, symbols, rules=None):
+    # ---- Symbol table ----
+    def _group_of(self, key):
+        if not self.callouts_on or self.cfg is None or not key:
+            return ""
+        return cc.setting(self.cfg, key, "address_group") or ""
+
+    def _add_row(self, key, symbols):
         row = self.dt.NewRow()
         row["FamilyType"] = key
         row["Symbol"] = SEP.join(symbols)
-        self._set_rules(row, rules or [])
+        row["AddressGroup"] = self._group_of(key)
         self.dt.Rows.Add(row)
 
-    def _set_rules(self, row, rules):
-        row["RulesData"] = json.dumps(rules)
-        row["RulesText"] = rules_text(rules)
-
-    def _row_rules(self, row):
-        try:
-            return [sr.new_rule(r["op"], r["count"], r.get("symbols")) for r in
-                    json.loads(cell_text(row["RulesData"]) or "[]")]
-        except Exception:
-            return []
-
-    def _live_rows(self):
-        for row in self.dt.Rows:
-            if row.RowState != DataRowState.Deleted:
-                yield row
-
-    def _selected_rows(self):
-        return [i.Row for i in list(self.c("grid").SelectedItems) if hasattr(i, "Row")]
+    def _selected_rows(self, grid="grid"):
+        return [i.Row for i in list(self.c(grid).SelectedItems) if hasattr(i, "Row")]
 
     def commit(self):
         try:
@@ -585,14 +485,14 @@ class RiserTab(object):
 
     def add_click(self, sender, args):
         self.commit()
-        existing = set(cell_text(r["FamilyType"]) for r in self._live_rows())
+        existing = set(cell_text(r["FamilyType"]) for r in _live(self.dt))
         scope = forms.CommandSwitchWindow.show([s[0] for s in SCOPES],
                                                message="Which loaded types do you want to list?")
         if not scope:
             return
         keys = sorted(loaded_type_keys(dict(SCOPES)[scope]) - existing)
         if not keys:
-            forms.alert("No additional types to add.", title=TITLE)
+            self.status("no other loaded types to add")
             return
         picked = forms.SelectFromList.show(keys, title="Add types to the %s table" % self.name,
                                            button_name="Add Selected", multiselect=True)
@@ -600,7 +500,7 @@ class RiserTab(object):
             return
         for key in picked:
             self._add_row(key, [])
-        self.status("%d type(s) added (unsaved) - choose a Riser Symbol for each" % len(picked))
+        self.status("%d type(s) added (unsaved) - choose the symbols for each" % len(picked))
 
     def set_click(self, sender, args):
         self.commit()
@@ -612,40 +512,16 @@ class RiserTab(object):
         col = grid.CurrentColumn
         if item is None or not hasattr(item, "Row") or col is None:
             return
-        header = str(col.Header)
-        if header.startswith("Rules"):
-            self.commit()
-            self._edit_rules([item.Row])
-        elif header.startswith("Default"):
+        if str(col.Header).startswith("Symbols"):
             self.commit()
             self._edit_rows([item.Row])
 
-    def rules_click(self, sender, args):
-        self.commit()
-        self._edit_rules(self._selected_rows())
-
-    def _edit_rules(self, rows):
-        if not rows:
-            forms.alert("Select one or more rows first.", title=TITLE)
-            return
-        first = rows[0]
-        title = cell_text(first["FamilyType"]) or "this type"
-        if len(rows) > 1:
-            title = "%d selected types" % len(rows)
-        dlg = RulesEditor(title, self.symbols, self._row_rules(first))
-        dlg.ShowDialog()
-        if dlg.result is None:
-            return
-        for row in rows:
-            self._set_rules(row, dlg.result)
-        self.status("rules set on %d row(s) (unsaved)" % len(rows))
-
     def _edit_rows(self, rows):
         if not rows:
-            forms.alert("Select one or more rows first.", title=TITLE)
+            self.status("select one or more rows first")
             return
         if not self.symbols:
-            forms.alert("No Generic Annotation or Detail Item types are loaded in this project.", title=TITLE)
+            note("No Generic Annotation or Detail Item types are loaded in this project.")
             return
         first = rows[0]
         current = [x for x in cell_text(first["Symbol"]).split(SEP) if x]
@@ -665,21 +541,80 @@ class RiserTab(object):
             item.Row.Delete()
         self.status("%d row(s) deleted (unsaved)" % len(victims))
 
+    # ---- Address callouts ----
+    def _fill_callouts(self, callouts):
+        """One row per Address Group subgroup in Family Defaults Config; saved callouts of groups / subgroups that
+        aren't there any more are kept aside and saved again."""
+        shown = set()
+        groups = (self.cfg or {}).get("address_groups") or [] if self.callouts_on else []
+        for group, subs in groups:
+            for sub, number in subs:
+                symbol = (callouts.get(group) or {}).get(sub or "", "")
+                row = self.dt_callouts.NewRow()
+                row["Group"], row["Subgroup"], row["Count"] = group, sub or "", "%d" % number
+                self._set_callout(row, symbol)
+                self.dt_callouts.Rows.Add(row)
+                shown.add((group, sub or ""))
+        for group, subs in callouts.items():
+            for sub, symbol in subs.items():
+                if (group, sub) not in shown:
+                    self.extra_callouts.setdefault(group, {})[sub] = symbol
+        self.dt_callouts.AcceptChanges()
+
+    def _set_callout(self, row, symbol):
+        row["Symbol"] = symbol or ""
+        row["Shown"] = symbol or TEXT_LABEL
+
+    def callout_set_click(self, sender, args):
+        rows = self._selected_rows("callout_grid")
+        if not rows:
+            self.status("select one or more Address Group subgroups first")
+            return
+        if not self.symbols:
+            note("No Generic Annotation or Detail Item types are loaded in this project.")
+            return
+        first = rows[0]
+        what = ("%s - %s" % (cell_text(first["Group"]), cell_text(first["Subgroup"]) or "(only subgroup)")
+                if len(rows) == 1 else "%d subgroups" % len(rows))
+        picked = forms.SelectFromList.show([TEXT_LABEL] + self.symbols, title="Address callout for %s" % what,
+                                           button_name="Use", multiselect=False)
+        if not picked:
+            return
+        for row in rows:
+            self._set_callout(row, "" if picked == TEXT_LABEL else picked)
+        self.status("callout set on %d subgroup(s) (unsaved)" % len(rows))
+
+    def callout_text_click(self, sender, args):
+        rows = self._selected_rows("callout_grid")
+        for row in rows:
+            self._set_callout(row, "")
+        self.status("%d subgroup(s) set to the 45 degree text (unsaved)" % len(rows))
+
+    def read_callouts(self):
+        """{group: {subgroup: symbol}} as set in the table, plus the kept ones."""
+        out = dict((g, dict(subs)) for g, subs in self.extra_callouts.items())
+        for row in _live(self.dt_callouts):
+            symbol = cell_text(row["Symbol"])
+            if symbol:
+                out.setdefault(cell_text(row["Group"]), {})[cell_text(row["Subgroup"])] = symbol
+        return out
+
     # ---- Saving ----
     def has_changes(self):
         self.commit()
-        return not self.failed and (self.dt.GetChanges() is not None or self.settings_dirty)
+        return not self.failed and (self.dt.GetChanges() is not None or self.dt_callouts.GetChanges() is not None
+                                    or self.settings_dirty)
 
     def collect(self, errors):
         """(table, settings, types without a symbol) as typed, adding a message to errors for anything wrong."""
         self.commit()
         table, seen, blank = {}, set(), 0
         settings = self.read_settings(errors)
-        for idx, row in enumerate(self._live_rows(), start=1):
+        settings[sr.CALLOUTS] = self.read_callouts() if self.callouts_on else {}
+        for idx, row in enumerate(_live(self.dt), start=1):
             key = cell_text(row["FamilyType"])
             symbol = cell_text(row["Symbol"])
-            rules = self._row_rules(row)
-            if not key and not symbol and not rules:
+            if not key and not symbol:
                 continue    # fully blank row
             if not key:
                 errors.append("%s row %d: Family Type is blank." % (self.name, idx))
@@ -690,7 +625,7 @@ class RiserTab(object):
             seen.add(key)
             if not symbol:
                 blank += 1
-            table[key] = sr.new_entry([x for x in symbol.split(SEP) if x], rules)
+            table[key] = sr.new_entry([x for x in symbol.split(SEP) if x])
         return table, settings, blank
 
     def save(self, table, settings):
@@ -701,6 +636,7 @@ class RiserTab(object):
             return ("Could not save the %s drawing settings:\n%s\n\nPath: %s"
                     % (self.name, ex, self.store.settings_path()))
         self.settings_dirty = False
+        self.dt_callouts.AcceptChanges()
         try:
             self.store.save_table(table)
         except Exception as ex:
@@ -721,13 +657,13 @@ class RiserConfigWindow(forms.WPFWindow):
             if not tab.failed:
                 collected.append((tab,) + tab.collect(errors))
         if errors:
-            forms.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors), title=TITLE)
+            note("Nothing was saved. Please fix:\n\n" + "\n".join(errors))
             return
         parts = []
         for tab, table, settings, blank in collected:
             problem = tab.save(table, settings)
             if problem:
-                forms.alert(problem, title=TITLE)
+                note(problem)
                 return
             text = "%s: %d type(s)" % (tab.name, len(table))
             if blank:
@@ -740,9 +676,9 @@ class RiserConfigWindow(forms.WPFWindow):
 
     def window_closing(self, sender, args):
         if any(t.has_changes() for t in self.tab_list):
-            discard = forms.alert("You have unsaved changes.\n\nClose without saving?",
-                                  title=TITLE, yes=True, no=True)
-            if not discard:
+            answer = forms.CommandSwitchWindow.show([CLOSE_ANYWAY, KEEP_EDITING],
+                                                    message="You have unsaved changes in Riser - Config.")
+            if answer != CLOSE_ANYWAY:
                 args.Cancel = True
 
 

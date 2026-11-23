@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v9
+# riser_tool module - version v10
 # Change log (last change first):
+#   v10 - SLC Riser v43 / NAC Riser v8: a device is always drawn with its type's symbols (the symbol rules by number
+#         of addresses are gone). Address callouts: a device whose Address Group subgroup (Family Defaults Config,
+#         picked by its number of addresses) has a callout set in Riser - Config gets that callout instead of the
+#         45 degree text, its parameters filled from the device's same-named ones (device_callouts).
 #   v9 - SLC Riser v42 / NAC Riser v7: a new circuit that would overlap the circuits below or above it (text and
 #        callouts included) gets its Loop Spacing raised, and the circuits above move up with it (fit_circuit).
 #   v8 - SLC Riser v41 / NAC Riser v6: Loop Spacing N is measured from the line below it (Loop N-1), not
@@ -9,9 +13,6 @@
 #        instead of alert boxes; the extra head end alert before selecting in the model is gone.
 #   v6 - SLC Riser v39: the head end list can require the name keywords (the kind's head_list_keywords_required):
 #        Panel # makes a type Head End in Family Defaults Config, so '2 of 3' let panels without the keywords in.
-#   v5 - SLC Riser v38 / NAC Riser v3: a head end with no conduit connected is traced from the closest element with
-#        conduit connected within HEAD_SEARCH_RADIUS_FT, a GUTTER-BOX family 1-2 ft above it first
-#        (conduit_entry); a panel without conduit connectors can now be selected in the model.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -55,7 +56,7 @@ import System
 import slc_riser as sr        # Revit helpers and the symbol table entries shared by the risers
 import riser_layout as rl
 import ew_common as ec        # shared helpers (lib/ew_common.py)
-import circuit_config as cc   # Family Defaults Config: which types are Head End (lib/circuit_config.py)
+import circuit_config as cc   # Family Defaults Config: Head End types, Address Groups (lib/circuit_config.py)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -71,6 +72,7 @@ PER_LINE = 5            # devices on one line before the row wraps underneath
 WRAP_ROUNDING = 0       # a line only wraps when it would have more than PER_LINE + this
 DEVICE_SPACING_FT = 4.5 # device centre to device centre, in feet in the view
 LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the view) below the riser line
+ADDRESS_CALLOUTS = {}   # {Address Group: {subgroup: callout symbol}} from the kind's settings (SLC only)
 LOOP_LABEL_RAISE_IN = 5.0   # loop letter (A, B ...) sits this many inches (in the view) higher, with a
                             # detail line from under its centre down to the riser line
 ABOVE_TEXT_SIZE_IN = 5.0 / 64.0     # text above a device (its Panel #): size on the sheet, in inches
@@ -942,6 +944,54 @@ def device_label(view, x, y, text, type_id):
     TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
+def base_id(sid):
+    """The device id of a drawn symbol id ('<id>#<n>' for a device's second, third ... symbol)."""
+    text = "%s" % sid
+    if "#" not in text:
+        return sid
+    head = text.split("#", 1)[0]
+    try:
+        return int(head)
+    except ValueError:
+        return head
+
+
+def device_callouts(drawn, keys, addresses, available, not_loaded):
+    """{device id: callout FamilySymbol} for the devices whose Address Group subgroup has a callout (Riser - Config),
+    and [(Family : Type, Address Group, number of addresses)] of devices whose subgroup couldn't be worked out
+    (drawn with the 45 degree text; listed in the output window). Callouts that aren't loaded are added to
+    not_loaded and left out."""
+    found, no_subgroup = {}, []
+    if not ADDRESS_CALLOUTS:
+        return found, no_subgroup
+    try:
+        cfg = cc.load()
+    except Exception as ex:
+        output.print_md("**%s:** Family Defaults Config could not be read (%s), so every device has the 45 degree "
+                        "address text." % (TITLE, ex))
+        return found, no_subgroup
+    seen = set()
+    for n in drawn:
+        count = len(addresses.get(n, []))
+        group, sub, symbol = sr.callout_for(ADDRESS_CALLOUTS, cfg, keys[n], count)
+        if group and sub is None and (keys[n], count) not in seen:
+            seen.add((keys[n], count))
+            no_subgroup.append((keys[n], group, count))
+        if not symbol:
+            continue
+        if symbol in available:
+            found[n] = available[symbol]
+        else:
+            not_loaded.add(symbol)
+    if no_subgroup:
+        output.print_md("### %s - no Address Group subgroup for the number of addresses" % TITLE)
+        output.print_md("These are drawn with the 45 degree address text (no subgroup of their Address Group in "
+                        "Family Defaults Config has that many addresses):")
+        for key, group, count in no_subgroup:
+            output.print_md("- %s - %s, %d address(es)" % (key, group, count))
+    return found, no_subgroup
+
+
 def expand_devices(rows, returns, elements, addresses, keys, device_symbols, available):
     """Replace every device in the rows with the symbols drawn for it (see riser_layout.assign_symbols).
     The first symbol keeps the device's id; the others get '<id>#<n>'. elements, addresses and keys are
@@ -1380,7 +1430,8 @@ def shift_plan(plan, dx, dy):
            "lines": [((p[0] + dx, p[1] + dy), (q[0] + dx, q[1] + dy)) for p, q in plan["lines"]],
            "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]],
            "leader_texts": [(x + dx, y + dy, t, ex + dx, ey + dy)
-                            for x, y, t, ex, ey in plan.get("leader_texts", [])]}
+                            for x, y, t, ex, ey in plan.get("leader_texts", [])],
+           "callouts": [(x + dx, y + dy, n) for x, y, n in plan.get("callouts", [])]}
     return out
 
 
@@ -1412,9 +1463,12 @@ def measure_symbols(view, symbols):
     return sizes
 
 
-def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None):
+def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None, node_callout=None,
+         elements=None):
     """Create everything in the layout. Returns the number of things that could not be created.
-    created: a list that gets (start, end, detail curve) for every line drawn."""
+    created: a list that gets (start, end, detail curve) for every line drawn.
+    node_callout / elements: {id: callout FamilySymbol} and {id: device}; each callout's parameters are filled from
+    its device's same-named parameters."""
     failed = [0]
     min_len = doc.Application.ShortCurveTolerance
 
@@ -1431,6 +1485,12 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
     for x, y, n in plan["symbols"]:
         try:
             doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view)
+        except Exception:
+            failed[0] += 1
+    for x, y, n in plan.get("callouts", []):
+        try:
+            inst = doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_callout[n], view)
+            ec.copy_matching_params(elements[n], inst)
         except Exception:
             failed[0] += 1
     for x, y, l, r, u, d in plan["boxes"]:
@@ -1618,7 +1678,7 @@ def review_layout(rows, device_count=None):
 def apply_settings():
     """Use the drawing settings saved in the kind's tab of Riser - Config. False if the file can't be read and the user
     chose to stop."""
-    global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN
+    global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS
     try:
         settings = KIND.load_settings()
     except Exception as ex:
@@ -1632,6 +1692,7 @@ def apply_settings():
     WRAP_ROUNDING = settings["wrap_rounding"]
     DEVICE_SPACING_FT = settings["device_spacing_ft"]
     LABEL_OFFSET_IN = settings["label_offset_in"]
+    ADDRESS_CALLOUTS = settings.get(sr.CALLOUTS) or {}
     return True
 
 
@@ -1680,24 +1741,19 @@ def main():
     panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else []
     drawn = [n for row in rows for n in row["nodes"]]
     keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
-    # Symbols for each device: the first of its type's rules that matches its number of addresses, otherwise the
-    # type's default symbols. Symbols that aren't loaded are left out.
+    # Symbols for each device: its type's symbols. Symbols that aren't loaded are left out.
     device_symbols, missing, not_loaded = {}, [], set()
     for n in drawn:
         key = keys[n]
-        entry = table.get(key) or sr.new_entry()
-        wanted = entry["symbols"]
-        idx = rl.pick_rule(entry["rules"], len(addresses.get(n, [])))
-        if idx is not None and entry["rules"][idx]["symbols"]:
-            wanted = entry["rules"][idx]["symbols"]
+        wanted = (table.get(key) or sr.new_entry())["symbols"]
         loaded = [sym for sym in wanted if sym in available]
         not_loaded.update(sym for sym in wanted if sym not in available)
-        if not loaded and wanted is not entry["symbols"]:
-            loaded = [sym for sym in entry["symbols"] if sym in available]     # the rule's symbols aren't loaded
         if loaded:
             device_symbols[n] = loaded
         elif key not in missing:
             missing.append(key)
+    # Address callouts (SLC): by the device's Address Group subgroup; the others keep the 45 degree text.
+    device_callout, no_subgroup = device_callouts(drawn, keys, addresses, available, not_loaded)
     if not_loaded:
         forms.alert("These riser symbols are set in %s but are not loaded in this project, so they "
                     "are left out:\n\n%s" % (KIND.config_name, "\n".join(sorted(not_loaded))), title=TITLE)
@@ -1722,7 +1778,7 @@ def main():
                     for n in drawn:
                         if keys[n] == key and n not in device_symbols:
                             device_symbols[n] = [picked]
-                    table[key] = sr.new_entry([picked], old["rules"])
+                    table[key] = sr.new_entry([picked])
                     picked_any = True
                     continue
                 go_on = forms.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
@@ -1745,6 +1801,10 @@ def main():
     device_count = len(drawn)
     rows, returns, node_symbol, firsts = expand_devices(rows, returns, elements, addresses, keys,
                                                         device_symbols, available)
+    # A callout is drawn once per device, under its first symbol; its other symbols get no address text.
+    node_callout = dict((n, device_callout[n]) for n in firsts if n in device_callout)
+    callout_parts = set(sid for sid in [n for row in rows for n in row["nodes"]]
+                        if sid not in firsts and base_id(sid) in node_callout)
     drawn = [n for row in rows for n in row["nodes"]]
 
     if not review_layout(rows, device_count):
@@ -1856,7 +1916,7 @@ def main():
         if unconnected or any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
             above_type_id, above_h = small_text_type(type_id)
         used = {}
-        for sym in node_symbol.values():
+        for sym in list(node_symbol.values()) + list(node_callout.values()):
             used[sr.eid_int(sym.Id)] = sym
         for sym in used.values():
             if not sym.IsActive:
@@ -1881,6 +1941,11 @@ def main():
             if n in firsts and n in unconnected_set:
                 above = "\n".join(t for t in (above, NOT_CONNECTED_TEXT) if t)
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
+            if n in node_callout:
+                info[n]["callout"] = sizes[sr.eid_int(node_callout[n].Id)]
+                info[n]["lines"] = []
+            elif n in callout_parts:
+                info[n]["lines"] = []
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
         cfg = {"spacing": DEVICE_SPACING_FT, "per_line": PER_LINE, "wrap_rounding": WRAP_ROUNDING, "char_w": char_w,
@@ -1901,7 +1966,7 @@ def main():
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
             curves = []
-            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves)
+            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements)
             doc.Regenerate()
             new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
             group = None
@@ -1984,6 +2049,9 @@ def main():
     if panel_skipped:
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))
+    if no_subgroup:
+        msg += ("\n\n%d type(s) have an Address Group but no subgroup with their number of addresses, so they have "
+                "the 45 degree address text; they are listed in the output window." % len(no_subgroup))
     if unconnected:
         msg += ("\n\n%d device(s) on this %s have no conduit path from the rest of the riser. They were added "
                 "in address order and marked %s; they are listed in the output window."

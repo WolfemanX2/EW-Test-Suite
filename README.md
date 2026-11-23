@@ -57,7 +57,9 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
 - The head end panel is chosen from a list (panels with FACU / FACP / FAP / FAC in the family name that are also Head End in Family Defaults Config or have a Panel # parameter) or selected in the model. If no conduit is connected to the panel, the conduit is traced from the nearest element within 5' that has conduit connected, a GUTTER-BOX family 1-2' above the panel first.
-- **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type
+- **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type, and an
+  optional address callout symbol per Address Group subgroup (Family Defaults Config) used instead of the 45 degree
+  address text; the callout's parameters are filled from the device's same-named parameters
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
 - Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the NEX2-DETAIL-RISER panel detail.
@@ -199,7 +201,7 @@ share are in `lib/addressing_ui.py`.
 | Auto Circuit - Voice | v1 |
 | lib/auto_circuit.py | v1 |
 | lib/circuit_rules.py | v1 |
-| lib/ew_common.py | v3 |
+| lib/ew_common.py | v4 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
 | Family Defaults Config | v11 |
@@ -224,15 +226,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v42 |
-| NAC Riser | v7 |
-| Riser - Config (was SLC Riser - Config) | v8 |
+| SLC Riser | v43 |
+| NAC Riser | v8 |
+| Riser - Config (was SLC Riser - Config) | v9 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v17 |
-| lib/riser_tool.py | v9 |
-| lib/nac_riser.py | v2 |
-| lib/riser_config_editor.py | v2 |
-| lib/riser_layout.py | v21 |
+| lib/slc_riser.py | v18 |
+| lib/riser_tool.py | v10 |
+| lib/nac_riser.py | v3 |
+| lib/riser_config_editor.py | v3 |
+| lib/riser_layout.py | v22 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |

@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v17
+# slc_riser module - version v18
 # Change log (last change first):
+#   v18 - SLC Riser v43 / NAC Riser v8 / Riser - Config v9: the symbol rules by number of addresses are gone (a type
+#         is always drawn with its own symbols; old saved rules are ignored). Address callouts: the drawing settings
+#         keep "address_callouts" {Address Group: {subgroup: callout symbol}} and callout_for finds a device's
+#         subgroup (its Family Defaults Address Group, by its number of addresses) and callout.
 #   v17 - SLC Riser v39: the head end list needs FACU / FACP / FAP / FAC in the family name, plus Head End or a
 #         Panel # parameter (head_list_keywords_required).
 #   v16 - SLC Riser v37: LoopKind.head_list_keywords / head_list_min_matches - the head end list shows panels
@@ -10,8 +14,6 @@
 #         number_text (shared by the engine and Riser - Config); the unused LOCAL_DIR removed.
 #   v14 - NAC Riser v1 / Riser - Config v8 (no change to SLC Riser): load_table, save_table, load_settings and
 #         save_settings can be given another riser's file (NAC Riser's), so the risers share one copy of them.
-#   v13 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; a new
-#         user starts from config/riser_symbols.default.json / riser_settings.default.json when added.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -20,13 +22,16 @@ The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\riser_symbols
 SLC Riser tab of Riser - Config. Updates never overwrite it.
 
 The drawing settings (view scale, device spacing, devices per line, label offset) are the user's own file,
-%APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed on the SLC Riser tab of Riser - Config."""
+%APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed on the SLC Riser tab of Riser - Config. They also
+hold the address callouts: a device whose Address Group subgroup (Family Defaults Config) has a callout symbol is
+labeled with that symbol, its parameters filled from the device's same-named ones, instead of the 45 degree text."""
 from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector, FamilySymbol
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import slc_addressing as slc   # the SLC address reader and format, shared with the addressing tools
 import config_store as cs     # where settings files live, office defaults, safe write (lib/config_store.py)
+import circuit_config as cc    # Family Defaults Config: each type's Address Group and the groups' subgroups
 
 # Set this to a shared path (e.g. r"\\server\share\riser_symbols.json") so everyone uses one table.
 # Leave as None for a per-user file in %APPDATA%.
@@ -76,9 +81,45 @@ SETTING_LIMITS = {              # (smallest, largest) allowed
 }
 
 
+CALLOUTS = "address_callouts"       # settings key: {Address Group: {subgroup name: callout "Family : Type"}}
+ADDRESS_CALLOUTS = True             # Riser - Config shows the Address Callouts table on this riser's tab
+
+
+def clean_callouts(raw):
+    """{group: {subgroup: symbol}} with only non-blank text (a group's unnamed only subgroup is '')."""
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for group, subs in raw.items():
+        if not isinstance(subs, dict) or not (group or "").strip():
+            continue
+        kept = dict(((sub or "").strip(), (sym or "").strip()) for sub, sym in subs.items()
+                    if isinstance(sym, ("".__class__, u"".__class__)) and (sym or "").strip())
+        if kept:
+            out[group.strip()] = kept
+    return out
+
+
+def callout_for(callouts, cfg, key, count):
+    """(Address Group, subgroup, callout symbol) for a device type with this many addresses. The subgroup is the
+    group's first with that number of addresses (or its only one); the symbol is None for the 45 degree text.
+    (None, None, None) when the type has no Address Group in Family Defaults Config (cfg)."""
+    group = cc.setting(cfg, key, "address_group") if cfg else None
+    subs = cc.subgroups(cfg, group) if group else None
+    if not subs:
+        return group, None, None
+    sub = next((name for name, number in subs if number == count), None)
+    if sub is None and len(subs) == 1:
+        sub = subs[0][0]
+    if sub is None:
+        return group, None, None
+    return group, sub, (callouts.get(group) or {}).get(sub or "") or None
+
+
 def clean_settings(data):
-    """DEFAULT_SETTINGS with every valid value from data in place of the default."""
+    """DEFAULT_SETTINGS with every valid value from data in place of the default, and its address callouts."""
     out = dict(DEFAULT_SETTINGS)
+    out[CALLOUTS] = clean_callouts(data.get(CALLOUTS) if isinstance(data, dict) else None)
     for key, default in DEFAULT_SETTINGS.items():
         try:
             value = data.get(key)
@@ -103,7 +144,7 @@ def load_settings(path=None, start_from=None):
     if start_from:
         cs.start_from(path, [start_from])
     data = cs.read_json(path)
-    return dict(DEFAULT_SETTINGS) if data is None else clean_settings(data)
+    return clean_settings(data or {})
 
 
 def save_settings(settings, path=None):
@@ -210,34 +251,14 @@ def available_symbols(doc):
 
 
 # ---------- Lookup table ----------
-RULE_OPS = ["<=", "<", "=", ">=", ">"]     # how a rule compares a device's number of addresses
-
-
-def new_rule(op, count, symbols=None):
-    """A rule: when the number of addresses <op> count, draw these symbols ([] = the type's default ones)."""
-    return {"op": op, "count": int(count), "symbols": [s for s in (symbols or []) if s]}
-
-
-def new_entry(symbols=None, rules=None):
-    """A table entry: the default riser symbols for one Family : Type, in order, and the rules that pick other
-    symbols by the number of addresses (checked top to bottom, the first that matches is used)."""
-    return {"symbols": [s for s in (symbols or []) if s], "rules": list(rules or [])}
-
-
-def _read_rules(value):
-    rules = []
-    for r in (value or []):
-        try:
-            if r.get("op") in RULE_OPS:
-                rules.append(new_rule(r["op"], int(r.get("count")), [(s or "").strip() for s in r.get("symbols") or []]))
-        except Exception:
-            pass
-    return rules
+def new_entry(symbols=None):
+    """A table entry: the riser symbols for one Family : Type, in order."""
+    return {"symbols": [s for s in (symbols or []) if s]}
 
 
 def load_table(path=None, start_from=None):
-    """{"Family : Type" of a device: {"symbols": [default symbols, in order], "rules": [rule, ...]}}, each symbol
-    a "Family : Type". Older tables with a single "symbol" are read as a one-symbol list. Raises if the file
+    """{"Family : Type" of a device: {"symbols": [its symbols, in order]}}, each symbol a "Family : Type". Older
+    tables with a single "symbol" are read as a one-symbol list; their "rules" are ignored. Raises if the file
     can't be read. path / start_from: another riser's table and its office default (NAC Riser); SLC Riser's
     own by default."""
     table = {}
@@ -252,7 +273,7 @@ def load_table(path=None, start_from=None):
             symbols = value.get("symbols")
             if not isinstance(symbols, list):
                 symbols = [value.get("symbol") or ""]
-            table[key] = new_entry([(s or "").strip() for s in symbols], _read_rules(value.get("rules")))
+            table[key] = new_entry([(s or "").strip() for s in symbols])
         else:
             table[key] = new_entry([(value or "").strip()])
     return table
@@ -264,8 +285,7 @@ def save_table(table, path=None):
     data = {}
     for key, entry in table.items():
         symbols = list(entry.get("symbols") or [])
-        data[key] = {"symbols": symbols, "rules": list(entry.get("rules") or []),
-                     "symbol": symbols[0] if symbols else ""}     # read by older versions
+        data[key] = {"symbols": symbols, "symbol": symbols[0] if symbols else ""}     # "symbol": read by older versions
     cs.write_json(path or table_path(), data)
 
 

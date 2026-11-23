@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v3
+# ew_common module - version v4
 # Change log (last change first):
+#   v4 - SLC Riser v43: copy_matching_params - fill an element's own parameters from the same-named parameters of
+#        another element (and its type); used for the riser's address callouts.
 #   v3 - Auto-Circuit v11 / Address SLC v12 / Address NAC v5 / Address Voice v5: commit (run a change in a
 #        transaction and check Revit kept it), moved here from Auto-Circuit; Address SLC and Address NAC / Voice
 #        had copies of it.
@@ -27,9 +29,11 @@ shift_down           True while Shift is held (Shift+click to take a pick back)
 make_highlight / highlight                           colour picked elements in the active view
 
 Changing the model:
-commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't"""
+commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't
+copy_matching_params fill an element's own parameters from the same-named ones of another element and its type"""
 from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, IndependentTag, Transaction, TransactionStatus,
-                               OverrideGraphicSettings, Color, FillPatternElement, FilteredElementCollector)
+                               OverrideGraphicSettings, Color, FillPatternElement, FilteredElementCollector,
+                               StorageType, InternalDefinition)
 from Autodesk.Revit.DB.Electrical import Conduit
 from Autodesk.Revit.UI.Selection import ISelectionFilter
 from System.Windows.Input import Keyboard, ModifierKeys
@@ -250,3 +254,65 @@ def commit(t, work):
         except Exception:
             pass
         return str(ex)
+
+
+# ---------- Copying parameter values ----------
+def _source_params(src):
+    """{parameter name: Parameter} of src and its type; src's own parameter wins over its type's."""
+    found = {}
+    elements = [src]
+    try:
+        etype = src.Document.GetElement(src.GetTypeId())
+        if etype is not None:
+            elements.insert(0, etype)
+    except Exception:
+        pass
+    for el in elements:
+        for p in el.Parameters:
+            try:
+                found[p.Definition.Name] = p
+            except Exception:
+                pass
+    return found
+
+
+def _copy_value(src, dst):
+    """Set dst from src when their storage types allow it (text takes the value as Revit shows it). True if set."""
+    kind = dst.StorageType
+    if kind == StorageType.String:
+        text = src.AsString() if src.StorageType == StorageType.String else src.AsValueString()
+        return text is not None and dst.Set(text)
+    if kind == StorageType.Integer and src.StorageType == StorageType.Integer:
+        return dst.Set(src.AsInteger())
+    if kind == StorageType.Double and src.StorageType == StorageType.Double:
+        return dst.Set(src.AsDouble())
+    if kind == StorageType.Integer and src.StorageType == StorageType.String:
+        try:
+            return dst.Set(int((src.AsString() or "").strip()))
+        except Exception:
+            return False
+    return False
+
+
+def copy_matching_params(src, dst):
+    """Fill each of dst's own parameters (not Revit's built-in ones, not read-only) from src's parameter with the
+    same name - src's own, else its type's - e.g. a riser callout's SLC Address ... SLC Address 24 and Panel #
+    from the device. Parameters src has no value for are left as they are. Returns how many were set."""
+    values = _source_params(src)
+    count = 0
+    for p in dst.Parameters:
+        try:
+            if p.IsReadOnly:
+                continue
+            definition = p.Definition
+            if isinstance(definition, InternalDefinition) and \
+                    definition.BuiltInParameter != BuiltInParameter.INVALID:
+                continue
+            source = values.get(definition.Name)
+            if source is None or not source.HasValue:
+                continue
+            if _copy_value(source, p):
+                count += 1
+        except Exception:
+            continue
+    return count

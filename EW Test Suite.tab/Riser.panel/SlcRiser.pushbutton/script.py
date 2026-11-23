@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v42
-__title__ = "SLC\nRiser v42"
+# SLC Riser script - version v43
+__title__ = "SLC\nRiser v43"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -38,9 +38,11 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "N#L#) that no conduit reaches are added at the end in address order and marked NOT CONNECTED.\n\n"
            "Only conduit of the types you choose is followed (the types connected to the first devices are "
            "ticked to start with), so conduit of another type (NAC, power) joined by a tee is ignored.\n\n"
-           "A type can have several symbols, drawn in order, one address each (the last symbol takes the rest), "
-           "and rules that use other symbols depending on how many addresses the device has (e.g. 12 or fewer -> "
-           "symbol A, 13 or more -> symbol B; the first rule that matches is used, otherwise the default). "
+           "A type can have several symbols, drawn in order, one address each (the last symbol takes the rest). "
+           "Addresses are 45 degree text under the device, unless the type's Address Group (Family Defaults "
+           "Config) has a callout set for the device's subgroup (by its number of addresses) on the SLC Riser tab "
+           "of Riser - Config: then that callout symbol is placed instead, its parameters filled from the device's "
+           "parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...). "
            "Each Family : Type is drawn with the symbol(s) set for it on the SLC Riser tab of Riser - Config. A type without "
            "one is asked about when the tool runs, and the choice is saved to the table. "
            "A device whose Panel # parameter has a value shows it above its symbol (5/64\" text).\n\n"

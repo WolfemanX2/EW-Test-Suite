@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v7
-__title__ = "NAC\nRiser v7"
+# NAC Riser script - version v8
+__title__ = "NAC\nRiser v8"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v2
+# nac_riser module - version v3
 # Change log (last change first):
+#   v3 - NAC Riser v8 / Riser - Config v9: the symbol rules are gone (new_rule / RULE_OPS removed); NAC devices have
+#        no Address Group callouts (ADDRESS_CALLOUTS = False hides that table on the NAC tab).
 #   v2 - NAC Riser v4: the head end list needs NAC / NCP / NACP in the family name, plus Head End in Family Defaults
 #        Config or a Panel # parameter (head_list_keywords, head_list_keywords_required, head_list_min_matches).
 #   v1 - NAC Riser v1 / Riser - Config v8: the NAC circuit kind for the riser engine (lib/riser_tool.py), and
@@ -39,8 +41,7 @@ SETTING_LIMITS = sr.SETTING_LIMITS
 type_key = sr.type_key
 available_symbols = sr.available_symbols
 new_entry = sr.new_entry
-new_rule = sr.new_rule
-RULE_OPS = sr.RULE_OPS
+ADDRESS_CALLOUTS = False    # Riser - Config: no Address Callouts table on the NAC tab
 
 
 def table_path():
