@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v14
+# riser_tool module - version v15
 # Change log (last change first):
+#   v15 - SLC Riser v50 / NAC Riser v13: fix - adding a circuit below one already locked to the panel (Loop 1 after
+#         Loop 3) broke the lock: raising a Loop Spacing moves the locked circuits above with their reference
+#         lines, and they were then moved again. Now each circuit is only moved by what it hasn't moved already.
 #   v14 - SLC Riser v49 / NAC Riser v12: the automatic Loop Spacing adjustment never leaves Loop Spacing 1 below
 #         10' (MIN_LOOP_SPACING_1_FT); it is raised first, and the circuits move up with it.
 #   v13 - SLC Riser v48 / NAC Riser v11: a trace from chosen first devices (and every update) only draws devices of
@@ -14,10 +17,6 @@
 #         return_text (SLC RETURN / NAC RETURN). The panel detail's Panel Model comes from the panel's Model.
 #   v11 - SLC Riser v44 / NAC Riser v9 (code check): messages and yes / no questions use ew_common.alert (no warning
 #         icon or sound) instead of forms.alert.
-#   v10 - SLC Riser v43 / NAC Riser v8: a device is always drawn with its type's symbols (the symbol rules by number
-#         of addresses are gone). Address callouts: a device whose Address Group subgroup (Family Defaults Config,
-#         picked by its number of addresses) has a callout set in Riser - Config gets that callout instead of the
-#         45 degree text, its parameters filled from the device's same-named ones (device_callouts).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -1262,19 +1261,33 @@ def fit_circuit(view, panel, cands, loop, group):
     others = circuit_groups(view, panel, cands, group.Id)
     clear = paper(LOOP_CLEARANCE)
 
+    def low_point(g):
+        try:
+            box = g.get_BoundingBox(view)
+            return box.Min.Y if box is not None else None
+        except Exception:
+            return None
+
     def raise_spacing(n, delta):
         spacing = loop_spacing_values(panel)
         if n not in spacing:
             return False
+        moves = [g for k, items in others.items() if k >= n for g, _, _ in items]
+        if loop >= n:
+            moves.append(group)
+        before = [low_point(g) for g in moves]
         where = set_loop_spacing(panel, n, spacing[n] + delta)
         if where is None:
             return False
         changes.append((n, spacing[n], spacing[n] + delta, where))
-        moves = [g for k, items in others.items() if k >= n for g, _, _ in items]
-        if loop >= n:
-            moves.append(group)
-        for g in moves:
-            ElementTransformUtils.MoveElement(doc, g.Id, XYZ(0, delta, 0))
+        # Circuits locked to the panel move with their reference lines here; the rest are moved below, each only
+        # by what it hasn't moved already (moving a locked one again would break its lock).
+        doc.Regenerate()
+        for g, was in zip(moves, before):
+            now = low_point(g)
+            left = delta if was is None or now is None else delta - (now - was)
+            if abs(left) > 1e-6:
+                ElementTransformUtils.MoveElement(doc, g.Id, XYZ(0, left, 0))
         for k in list(others):
             if k >= n:
                 others[k] = [(g, b + delta, t + delta) for g, b, t in others[k]]
