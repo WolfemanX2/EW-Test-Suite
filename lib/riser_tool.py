@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v2
+# riser_tool module - version v3
 # Change log (last change first):
+#   v3 - SLC Riser v36 / NAC Riser v2: the head end is chosen from a list (types set to Head End in Family Defaults
+#        Config that have a Panel # parameter) or selected in the model (head_end_panels, choose_head_end_from_list).
 #   v2 - SLC Riser v35 (cleanup): SLC Riser now runs on this engine too (its own copy removed). Removed what nothing
 #        used: the T-tap run grouping (split_runs) and counts, y_range, PANEL_EXIT_FROM_TOP_FT / PANEL_EXIT_LOW_FT,
 #        choose_target_view's unused argument; number_text comes from slc_riser. Kind adds address_phrase; the
@@ -50,6 +52,7 @@ import System
 import slc_riser as sr        # Revit helpers and the symbol table entries shared by the risers
 import riser_layout as rl
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import circuit_config as cc   # Family Defaults Config: which types are Head End (lib/circuit_config.py)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -81,6 +84,9 @@ NOT_CONNECTED_TEXT = "NOT CONNECTED"    # shown above a device the conduit doesn
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
+HEAD_FROM_LIST = "Select from List"
+HEAD_IN_MODEL = "Select in Model"
+HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
 NEW_VIEW = "Generate New Drafting View"
 EXISTING_VIEW = "Add to Existing Drafting View"
 LABEL_ANGLE = math.pi / 4.0         # device address text: 45 degrees
@@ -108,11 +114,88 @@ def is_addressed_device(el):
 ElementOrTagFilter = ec.PickFilter          # from ew_common
 
 
+def has_parameter(el, name):
+    """True when the element or its type has a parameter with that name (case ignored), with or without a value."""
+    wanted = name.strip().lower()
+    holders = [el]
+    try:
+        holders.append(doc.GetElement(el.GetTypeId()))
+    except Exception:
+        pass
+    for holder in holders:
+        if holder is None:
+            continue
+        for p in holder.Parameters:
+            try:
+                if p.Definition.Name.strip().lower() == wanted:
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def head_end_panels():
+    """Panels in the model whose type is set to Head End in Family Defaults Config and that have a Panel #
+    parameter. Raises if Family Defaults Config can't be read."""
+    cfg = cc.load()
+    found = []
+    for cat in HEAD_END_CATEGORIES:
+        for el in (FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType()
+                   .OfClass(FamilyInstance).ToElements()):
+            try:
+                if cc.setting(cfg, ec.family_key(doc, el), "device_type") != cc.HEAD_END:
+                    continue
+            except Exception:
+                continue
+            if has_parameter(el, PANEL_NUMBER_PARAM):
+                found.append(el)
+    return found
+
+
+def choose_head_end_from_list():
+    """A head end chosen from the list, None if cancelled, or "model" to select it in the model instead."""
+    try:
+        panels = head_end_panels()
+    except Exception as ex:
+        go_on = forms.alert("Could not read Family Defaults Config:\n%s\n\nSelect the panel in the model instead?"
+                            % ex, title=TITLE, yes=True, no=True)
+        return "model" if go_on else None
+    if not panels:
+        go_on = forms.alert("No panels in this model have a Panel # parameter and a type set to Head End in "
+                            "Family Defaults Config.", sub_msg="Select the panel in the model instead?",
+                            title=TITLE, yes=True, no=True)
+        return "model" if go_on else None
+    by_label = {}
+    for el in panels:
+        number = named_value(el, PANEL_NUMBER_PARAM) or "(no Panel #)"
+        level = level_name(el)
+        label = "%s  -  %s%s" % (number, ec.family_key(doc, el), ("  (%s)" % level) if level else "")
+        if label in by_label:
+            label += "  [id %d]" % sr.eid_int(el.Id)
+        by_label[label] = el
+    picked = forms.SelectFromList.show(sorted(by_label, key=lambda t: t.upper()),
+                                       title="%s - %s" % (KIND.head_prompt, KIND.head_example),
+                                       button_name="Use Panel", multiselect=False)
+    if not picked:
+        return None
+    return by_label[picked]
+
+
 def starting_element():
     ids = list(uidoc.Selection.GetElementIds())
     if len(ids) == 1:
         el = resolve(doc.GetElement(ids[0]), is_conduit_source)
         if el is not None:
+            return el
+    how = forms.CommandSwitchWindow.show([HEAD_FROM_LIST, HEAD_IN_MODEL],
+                                         message="%s (%s)" % (KIND.head_prompt, KIND.head_example))
+    if not how:
+        return None
+    if how == HEAD_FROM_LIST:
+        el = choose_head_end_from_list()
+        if el != "model":
+            if el is not None and not is_conduit_source(el):
+                forms.toast("The panel has no conduit connectors - nothing will be traced from it.", title=TITLE)
             return el
     forms.alert(KIND.head_prompt, sub_msg=KIND.head_example, title=TITLE)
     try:
