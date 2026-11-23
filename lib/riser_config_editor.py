@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v4
+# riser_config_editor module - version v5
 # Change log (last change first):
+#   v5 - Riser - Config v11: the Address Callouts help says where callouts now go (a band below the address text,
+#        joined to the device by detail lines) and that their origin should be the top of the callout.
 #   v4 - Riser - Config v10: fixed 'Cannot import name Visibility' when the window opened (the WPF assembly is now
 #        loaded here instead of relying on pyRevit having loaded it first); messages use ew_common.alert.
 #   v3 - Riser - Config v9: the Rules column and its window are gone (a type is always drawn with its own symbols);
@@ -259,7 +261,7 @@ TAB_XAML = """
                                   Header="Address Callouts (by Address Group subgroup)">
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
-                                           Text="A device whose type has this Address Group in Family Defaults Config, with this many addresses, is labeled with the callout symbol instead of the 45 degree address text. The callout goes where the text's top corner would (on the device centreline, the address offset below the riser line), and its parameters are filled from the device's parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...). The groups and subgroups come from Family Defaults Config."/>
+                                           Text="A device whose type has this Address Group in Family Defaults Config, with this many addresses, is labeled with the callout symbol instead of the 45 degree address text. The callouts go in a band below the bottom of the line's address text, each joined to its device by detail lines (down, across, down) and moved right if it would overlap the one before; build them as Generic Annotations with their origin at the top of the callout. Their parameters are filled from the device's parameters with the same names (SLC Address ... SLC Address 24, Panel #, ...). The groups and subgroups come from Family Defaults Config."/>
                                 <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0" LastChildFill="False">
                                     <Button x:Name="PFX_callout_set_btn" Content="Set Callout For Selected..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
                                     <Button x:Name="PFX_callout_text_btn" Content="Use 45 Degree Text" Width="130" DockPanel.Dock="Left"/>

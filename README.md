@@ -59,7 +59,9 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - The head end panel is chosen from a list (panels with FACU / FACP / FAP / FAC in the family name that are also Head End in Family Defaults Config or have a Panel # parameter) or selected in the model. If no conduit is connected to the panel, the conduit is traced from the nearest element within 5' that has conduit connected, a GUTTER-BOX family 1-2' above the panel first.
 - **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type, and an
   optional address callout symbol per Address Group subgroup (Family Defaults Config) used instead of the 45 degree
-  address text; the callout's parameters are filled from the device's same-named parameters
+  address text, placed in a band below the line's address text with detail lines to the device (build callouts as
+  Generic Annotations with their origin at the top); the callout's parameters are filled from the device's same-named
+  parameters
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
 - Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the NEX2-DETAIL-RISER panel detail.
@@ -226,15 +228,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v45 |
+| SLC Riser | v46 |
 | NAC Riser | v9 |
-| Riser - Config (was SLC Riser - Config) | v10 |
+| Riser - Config (was SLC Riser - Config) | v11 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v18 |
 | lib/riser_tool.py | v11 |
 | lib/nac_riser.py | v4 |
-| lib/riser_config_editor.py | v4 |
-| lib/riser_layout.py | v23 |
+| lib/riser_config_editor.py | v5 |
+| lib/riser_layout.py | v24 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |

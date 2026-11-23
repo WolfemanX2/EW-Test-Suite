@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v23
+# riser_layout module - version v24
 # Change log (last change first):
+#   v24 - SLC Riser v46: address callouts go in a band below the bottom of the line's address text, each joined to its
+#         device by orthogonal detail lines (down from the symbol, across, down into the callout); callouts that
+#         would overlap are moved right (callout_band). The line below makes room for the band. A callout is inserted
+#         at its top (the callout families' origin).
 #   v23 - SLC Riser v44 / NAC Riser v9 (code check, no change to the drawings): assign_symbols' unused repeat
 #         option removed.
 #   v22 - SLC Riser v43 / NAC Riser v8: address callouts - a device's info may carry "callout" (the extents of its
@@ -10,8 +14,6 @@
 #         T-TAP FROM label) and the unused panel_dy / exit_low options; rows no longer carry "source".
 #   v20 - Code consolidation step 2 (no change to SLC Riser's results): the tee rule in flat_rows is now
 #         tee_order, which conduit_trace also uses, so the addressing tools treat a tee the same way.
-#   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
-#         main run carries on (flat_rows).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -197,8 +199,10 @@ def layout(rows, root, info, returns, cfg):
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
                 "above": text written above the symbol, or "" (optional),
-                "callout": (left, right, up, down) of its address callout symbol (optional) - drawn in place of
-                the address text, with its insertion point where the text's top corner would go}
+                "callout": (left, right, up, down) of its address callout symbol (optional) - drawn instead of
+                the address text, in a band below the bottom of the line's address text, joined to the device by
+                orthogonal leader lines and moved right when it would overlap the callout before it. The callouts
+                are generic annotations whose origin is their top, so out["callouts"] gives that top point}
     info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
                 its top right corner; its ext is (width, 0, 0, height) from there). It is drawn once and
                 every run comes out of its right side, the rows beside it. "exit_dy" is how far below the
@@ -246,10 +250,7 @@ def layout(rows, root, info, returns, cfg):
         return max(len(t) for t in lines) * char_w, len(lines) * lh
 
     def label_drop(n):
-        """How far a device's turned label (or its callout) reaches below the riser line."""
-        callout = info[n].get("callout")
-        if callout:
-            return offset + callout[3]
+        """How far a device's turned label reaches below the riser line (a callout's is in callout_band)."""
         length, height = label_size(n)
         return (length + height) * diag + offset if length else 0.0
 
@@ -278,8 +279,7 @@ def layout(rows, root, info, returns, cfg):
         if above and n != root:
             out["texts"].append((x, y + above_up(n), above, "A"))
         if n != root and info[n].get("callout"):
-            out["callouts"].append((x, y - offset, n))
-            return
+            return          # placed with its line's callout band
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])
@@ -287,6 +287,41 @@ def layout(rows, root, info, returns, cfg):
             out["texts"].append((x, y - d - text_gap, text, "C"))
         else:
             out["texts"].append((x, y - offset, text, "D"))
+
+    cgap = max(pad, lh)     # between the text and the callouts, and between two callouts
+
+    def callout_band(chunk, xs, text_below):
+        """Where a line's callouts go, relative to the riser line: (how far the band reaches below the line,
+        [(device, device x, callout x, callout top below the line)]). The callouts' tops line up cgap below the
+        lowest address text (or symbol); left to right, each is moved right as far as needed to clear the one
+        before it."""
+        items = sorted((x, n) for n, x in zip(chunk, xs) if info[n].get("callout"))
+        if not items:
+            return 0.0, []
+        top = text_below + cgap
+        placed, right_edge = [], None
+        for x, n in items:
+            l, r, u, d = info[n]["callout"]
+            cx = x if right_edge is None else max(x, right_edge + cgap + l)
+            right_edge = cx + r
+            placed.append((n, x, cx, top))
+        depth = top + max(info[n]["callout"][3] for _x, n in items)   # the origin is the callout's top
+        return depth, placed
+
+    def place_callouts(placed, y):
+        """The callouts of a line at y (inserted at their top) and their leaders: down from the symbol, across just
+        above the band, and down to the callout's top."""
+        for n, x, cx, top in placed:
+            top_y = y - top
+            out["callouts"].append((cx, top_y, n))
+            start = (x, y - info[n]["ext"][3])
+            if abs(cx - x) < 1e-9:
+                out["lines"].append((start, (x, top_y)))
+                continue
+            band_y = top_y + cgap * 0.5
+            out["lines"].append((start, (x, band_y)))
+            out["lines"].append(((x, band_y), (cx, band_y)))
+            out["lines"].append(((cx, band_y), (cx, top_y)))
 
     devices = [n for row in rows for n in row["nodes"]]
     reach = max(label_reach(n) for n in devices) if devices else 0.0
@@ -327,6 +362,8 @@ def layout(rows, root, info, returns, cfg):
             xs = xs_all[ci]
             up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
+            band_depth, band = callout_band(chunk, xs, below)
+            below = max(below, band_depth)
             run_dy = None
             if ci == 0 and custom_panel and panel_top is None:
                 run_dy = -abs(info[root].get("exit_dy", 0.0))
@@ -377,6 +414,7 @@ def layout(rows, root, info, returns, cfg):
 
             for n, x in zip(chunk, xs):
                 place(n, x, y)
+            place_callouts(band, y)
             end = xs[-1]                                # the last device's centre
             if not last_chunk:
                 end = turn_x(ci)
