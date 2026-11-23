@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v20
+# riser_layout module - version v21
 # Change log (last change first):
+#   v21 - SLC Riser v35 / NAC Riser v1 (cleanup, no change to the drawings): removed the T-tap rows (build_rows, the
+#         T-TAP FROM label) and the unused panel_dy / exit_low options; rows no longer carry "source".
 #   v20 - Code consolidation step 2 (no change to SLC Riser's results): the tee rule in flat_rows is now
 #         tee_order, which conduit_trace also uses, so the addressing tools treat a tee the same way.
 #   v19 - SLC Riser v32: a tee'd branch is drawn at the split, out and back (feed and return), then the
 #         main run carries on (flat_rows).
 #   v18 - SLC Riser v31: one line per loop, lowest address next at a split (flat_rows).
 #   v17 - SLC Riser v30 / Config v7: symbol rules by number of addresses (rule_matches, pick_rule).
-#   v16 - SLC Riser v29 / Config v6: several symbols per type, in order (assign_symbols).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
-Elements are plain ids here; the SLC Riser script supplies the connections and does the drawing.
+Elements are plain ids here; the riser engine (lib/riser_tool.py) supplies the connections and does the drawing.
 
 tee_order is the tee rule for both SLC Riser and the conduit tracing of the addressing tools (lib/conduit_trace.py),
 so a tee is treated the same way everywhere."""
@@ -162,36 +163,6 @@ def subtree_sizes(root, children):
     return size
 
 
-def build_rows(root, children):
-    """[{"nodes": [device ids in order], "source": None or the device id the row taps off}].
-    Every run leaving root is a row. Where the conduit splits at a device, the longer side carries on
-    in the same row and each other side becomes its own row, listed right after."""
-    size = subtree_sizes(root, children)
-    rows = []
-    stack = [(k, None) for k in reversed(children.get(root, []))]
-    while stack:
-        start, source = stack.pop()
-        chain, branches = [], []
-        cur = start
-        while True:
-            chain.append(cur)
-            kids = children.get(cur, [])
-            if not kids:
-                break
-            main = kids[0]
-            for k in kids[1:]:
-                if size[k] > size[main]:
-                    main = k
-            for k in kids:
-                if k != main:
-                    branches.append((k, cur))
-            cur = main
-        rows.append({"nodes": chain, "source": source})
-        for b in reversed(branches):
-            stack.append(b)
-    return rows
-
-
 def tee_order(sides, size, sort_key):
     """The order to take the sides of a split (a tee) in. Shared by SLC Riser (flat_rows) and the conduit
     tracing used by Address SLC, Address NAC / Voice and Auto-Circuit (conduit_trace.trace_downstream).
@@ -208,7 +179,7 @@ def tee_order(sides, size, sort_key):
 
 
 def flat_rows(root, children, sort_key):
-    """[{"nodes": [device ids in order], "source": None}] - one row per run leaving root, with no T-tap rows.
+    """[{"nodes": [device ids in order]}] - one row per run leaving root, with no T-tap rows.
 
     A conduit teeing off the main run is treated as a feed and a return pulled through the same conduit:
     at the split the tee'd branch is drawn first, out to its end and back, and then the main run carries on.
@@ -232,7 +203,7 @@ def flat_rows(root, children, sort_key):
             # split; a tie goes to the one that sorts last) last. Stack: last pushed is drawn first.
             for k in reversed(tee_order(kids, lambda k: size.get(k, 1), sort_key)):
                 stack.append(k)
-        rows.append({"nodes": order, "source": None})
+        rows.append({"nodes": order})
     return rows
 
 
@@ -259,12 +230,9 @@ def layout(rows, root, info, returns, cfg):
     info[root] may also carry "panel": True - the panel is drawn by the caller (out["panel"] = (x, y) of
                 its top right corner; its ext is (width, 0, 0, height) from there). It is drawn once and
                 every run comes out of its right side, the rows beside it. "exit_dy" is how far below the
-                top a run leaves when it has no place of its own, "exit_low" how far above the bottom a run
-                that ends up below the panel leaves it.
-    A run row may carry "panel_dy": where on the panel's right side it should leave, as a distance from the
-                panel's top (negative = below). The row is drawn at that height when there is room for it;
-                otherwise it leaves the panel there and drops down to its row.
-    A row may carry "label" (its loop, e.g. "L2"), written above the start of the row.
+                top the first run leaves; a run that ends up below the panel leaves it near its bottom.
+                (The riser tools lay out one run at a time, each from its own reference line.)
+    A row may carry "label" (its loop or circuit, e.g. "A" or "N1-2"), written above the start of the row.
     cfg      = spacing, per_line, wrap_rounding (extra devices allowed before a line wraps; 0 if not given), pad, text_gap, line_h, char_w, row_gap, above_h (line height of the
                text above a symbol; line_h if not given), label_offset (how far below
                the line a device label's top corner sits; 0 if not given)
@@ -344,7 +312,7 @@ def layout(rows, root, info, returns, cfg):
     root_r = info[root]["ext"][1]
     back_gap = max(sp * 0.5, reach + pad)   # a wrapped line comes back clear of the first label
     x_first = root_r + max(sp, back_gap + pad)      # first device of every line
-    x_back = x_first - back_gap     # where a wrapped line turns at the left, and where a tap row starts
+    x_back = x_first - back_gap     # where a wrapped line turns at the left
     cursor = None                   # bottom of what has been drawn so far
     panel_bottom = None             # bottom of the panel once it is placed
     panel_top = None                # top of the custom panel once it is placed
@@ -379,23 +347,18 @@ def layout(rows, root, info, returns, cfg):
             up = max(above_up(n) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             run_dy = None
-            if ci == 0 and row["source"] is None and custom_panel:
-                run_dy = row.get("panel_dy")
-                if panel_top is None and run_dy is None:
-                    run_dy = -abs(info[root].get("exit_dy", 0.0))
+            if ci == 0 and custom_panel and panel_top is None:
+                run_dy = -abs(info[root].get("exit_dy", 0.0))
             if ci == 0:
-                if row["source"] is None:
-                    if custom_panel:
-                        if panel_top is None:
-                            up = max(up, -run_dy - pad)     # the panel's top sits above the first run
-                    else:
-                        up = max(up, info[root]["ext"][2])
-                    if row.get("label"):
-                        up = max(up, lh * 1.4 + label_raise)
-                    if not custom_panel:
-                        below = max(below, root_depth())
+                if custom_panel:
+                    if panel_top is None:
+                        up = max(up, -run_dy - pad)     # the panel's top sits above the first run
                 else:
-                    up = max(up, lh * 2.6)      # room for the T-TAP label above the start of the row
+                    up = max(up, info[root]["ext"][2])
+                if row.get("label"):
+                    up = max(up, lh * 1.4 + label_raise)
+                if not custom_panel:
+                    below = max(below, root_depth())
             if last_chunk and nodes[-1] in returns:
                 up = max(up, lh)
             up += pad
@@ -409,42 +372,24 @@ def layout(rows, root, info, returns, cfg):
                 y = cursor - up
 
             if ci == 0:
-                if row["source"] is None:
-                    start = root_r
-                    if custom_panel and panel_top is None:
-                        panel_top = y - run_dy
-                        place(root, 0.0, panel_top)
-                        panel_bottom = panel_top - info[root]["ext"][3]
-                    elif custom_panel and run_dy is not None:
-                        target = panel_top + run_dy
-                        if target <= y:
-                            y = target          # room for it: drawn in line with its place on the panel
-                        else:
-                            # The rows above took its place: leave the panel there, then drop to the row.
-                            bus_x = root_r + sp * 0.04
-                            out["lines"].append(((root_r, target), (bus_x, target)))
-                            out["lines"].append(((bus_x, target), (bus_x, y)))
-                            start = bus_x
-                    elif panel_bottom is None or not custom_panel:
-                        place(root, 0.0, y)
-                        panel_bottom = y - info[root]["ext"][3]
-                    elif y < panel_bottom + pad:
-                        # Below the panel: out of its right side near the bottom, then down to this row.
-                        exit_y = panel_bottom + min(info[root]["ext"][3], max(pad, info[root].get("exit_low", pad)))
-                        bus_x = root_r + sp * 0.04
-                        out["lines"].append(((root_r, exit_y), (bus_x, exit_y)))
-                        out["lines"].append(((bus_x, exit_y), (bus_x, y)))
-                        start = bus_x
-                    if row.get("label"):
-                        lx = root_r + sp * 0.25
-                        out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"], lx, y))
-                else:
-                    src_lines = info[row["source"]]["lines"]
-                    label = "T-TAP FROM\n%s" % (src_lines[0].rstrip("-") if src_lines else "DEVICE")
-                    if row.get("label"):
-                        label = "%s %s" % (row["label"], label)
-                    out["texts"].append((x_back, y + lh * 2.4, label, "L"))
-                    start = x_back
+                start = root_r
+                if custom_panel and panel_top is None:
+                    panel_top = y - run_dy
+                    place(root, 0.0, panel_top)
+                    panel_bottom = panel_top - info[root]["ext"][3]
+                elif panel_bottom is None or not custom_panel:
+                    place(root, 0.0, y)
+                    panel_bottom = y - info[root]["ext"][3]
+                elif y < panel_bottom + pad:
+                    # Below the panel: out of its right side near the bottom, then down to this row.
+                    exit_y = panel_bottom + min(info[root]["ext"][3], pad)
+                    bus_x = root_r + sp * 0.04
+                    out["lines"].append(((root_r, exit_y), (bus_x, exit_y)))
+                    out["lines"].append(((bus_x, exit_y), (bus_x, y)))
+                    start = bus_x
+                if row.get("label"):
+                    lx = root_r + sp * 0.25
+                    out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"], lx, y))
             else:
                 start = turn_x(ci - 1)
                 out["lines"].append(((start, prev_y), (start, y)))     # down from the line above

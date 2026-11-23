@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v14
+# slc_riser module - version v15
 # Change log (last change first):
+#   v15 - SLC Riser v35: LoopKind, the SLC loop kind SLC Riser now runs the riser engine (lib/riser_tool.py) with;
+#         number_text (shared by the engine and Riser - Config); the unused LOCAL_DIR removed.
 #   v14 - NAC Riser v1 / Riser - Config v8 (no change to SLC Riser): load_table, save_table, load_settings and
 #         save_settings can be given another riser's file (NAC Riser's), so the risers share one copy of them.
 #   v13 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; a new
@@ -10,9 +12,7 @@
 #         SLC Address number); devices_on_loops reads with one reader.
 #   v11 - Code consolidation step 3 (no change to SLC Riser): eid_int, is_device, type_name, type_key,
 #         family_key and DEVICE_CATEGORIES come from ew_common.
-#   v10 - Code consolidation step 2 (no change to SLC Riser): eid_int, conduit_connectors and
-#         connected_elements now come from conduit_trace instead of a copy here.
-"""Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
+"""Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
 
@@ -33,7 +33,6 @@ import config_store as cs     # where settings files live, office defaults, safe
 TABLE_PATH = None
 SETTINGS_PATH = None    # same idea, for the drawing settings (e.g. r"\\server\share\riser_settings.json")
 
-LOCAL_DIR = cs.USER_DIR
 # Office defaults: a user with no file yet starts from a copy of these, when they are in the repository.
 DEFAULT_TABLE = cs.default_file("riser_symbols.default.json")
 DEFAULT_SETTINGS_FILE = cs.default_file("riser_settings.default.json")
@@ -268,3 +267,55 @@ def save_table(table, path=None):
         data[key] = {"symbols": symbols, "rules": list(entry.get("rules") or []),
                      "symbol": symbols[0] if symbols else ""}     # read by older versions
     cs.write_json(path or table_path(), data)
+
+
+# ---------- Shared text ----------
+def number_text(v):
+    """4.5 -> '4.5', 6.0 -> '6' (the riser engine and Riser - Config)."""
+    return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+
+# ---------- The SLC loop kind for the riser engine ----------
+class LoopKind(object):
+    """SLC loops for riser_tool.run(): the head end is the panel, each loop is one row labeled with its letter
+    (L1 = A), and loop N lines up with the NEX2-DETAIL-RISER reference line / Loop Spacing N."""
+    title = "SLC Riser"
+    riser_name = "SLC Riser"            # LEVEL 1 - SLC RISER - FACU-01
+    view_tag = "SLC RISER"
+    config_name = "Riser - Config (SLC Riser tab)"
+    run_word = "Loop"
+    address_label = "SLC address"
+    address_phrase = "an SLC address"
+    head_prompt = "Select Head End Panel"
+    head_example = "EX: FACU, NCP, APS, etc."
+    no_address_hint = "have no value in SLC Address (or SLC Address 2 ... %d)" % SLC_ADDRESS_COUNT
+
+    # Files: SLC Riser's own (riser_symbols.json / riser_settings.json).
+    table_path = staticmethod(table_path)
+    load_table = staticmethod(load_table)
+    save_table = staticmethod(save_table)
+    settings_path = staticmethod(settings_path)
+    load_settings = staticmethod(load_settings)
+    save_settings = staticmethod(save_settings)
+    DEFAULT_SETTINGS = DEFAULT_SETTINGS
+    SETTING_LIMITS = SETTING_LIMITS
+
+    # Addresses.
+    new_reader = staticmethod(AddressParamReader)       # reads each type's SLC Address parameters once
+    addresses = staticmethod(slc_addresses)             # (el, reader)
+    sort_key = staticmethod(address_sort_key)
+    groups = staticmethod(address_loops)                # {(node, loop)}
+    row_label = staticmethod(loop_label)                # 'B'
+
+    @staticmethod
+    def row_number(address_lists):
+        """The loop number of a row when all its addresses agree on one, else None."""
+        loops = set()
+        for addresses in address_lists:
+            for node, loop in address_loops(addresses):
+                loops.add(loop)
+        return loops.pop() if len(loops) == 1 else None
+
+    @staticmethod
+    def devices_on_groups(doc, groups):
+        return devices_on_loops(doc, groups)

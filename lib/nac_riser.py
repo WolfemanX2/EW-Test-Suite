@@ -87,9 +87,10 @@ class CircuitKind(object):
         self.title = "%s Riser" % name
         self.riser_name = "%s Riser" % name             # LEVEL 1 - NAC RISER - NAC-01
         self.view_tag = ("%s Riser" % name).upper()
-        self.config_name = "Riser - Config (%s tab)" % name
+        self.config_name = "Riser - Config (%s Riser tab)" % name
         self.run_word = "Circuit"
         self.address_label = self.param
+        self.address_phrase = "a %s" % self.param
         self.head_prompt = "Select %s Power Supply" % name
         self.head_example = "EX: FACU, NAC Panel, Booster Power Supply, etc."
         self.no_address_hint = "have no value in %s" % self.param

@@ -216,15 +216,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v34 |
+| SLC Riser | v35 |
 | NAC Riser | v1 |
 | Riser - Config (was SLC Riser - Config) | v8 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v14 |
-| lib/riser_tool.py | v1 |
+| lib/slc_riser.py | v15 |
+| lib/riser_tool.py | v2 |
 | lib/nac_riser.py | v1 |
-| lib/riser_config_editor.py | v1 |
-| lib/riser_layout.py | v20 |
+| lib/riser_config_editor.py | v2 |
+| lib/riser_layout.py | v21 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |

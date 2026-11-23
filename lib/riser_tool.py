@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v1
+# riser_tool module - version v2
 # Change log (last change first):
+#   v2 - SLC Riser v35 (cleanup): SLC Riser now runs on this engine too (its own copy removed). Removed what nothing
+#        used: the T-tap run grouping (split_runs) and counts, y_range, PANEL_EXIT_FROM_TOP_FT / PANEL_EXIT_LOW_FT,
+#        choose_target_view's unused argument; number_text comes from slc_riser. Kind adds address_phrase; the
+#        5/64" text type made when none exists is named after the riser ('SLC Riser 5/64"').
 #   v1 - NAC Riser v1: the riser engine, taken from SLC Riser v34 and given a circuit kind (KIND) for everything
 #        that depends on the circuit: which parameter holds the address, how addresses sort and group into
 #        circuits, the row labels, the view name, the symbol table and the drawing settings.
@@ -10,7 +14,7 @@ to the head end's numbered reference line.
 
 run(kind) draws a riser for one circuit kind. The kind supplies (see nac_riser.CircuitKind for one):
   title, riser_name, view_tag, config_name   'NAC Riser', 'NAC Riser' (in the view name), 'NAC RISER', the config
-  run_word, address_label                    'Circuit' (group names, prompts), 'NAC Address' (messages)
+  run_word, address_label, address_phrase    'Circuit' (group names, prompts), 'NAC Address', 'a NAC Address'
   head_prompt, head_example                  'Select NAC Power Supply', 'EX: FACU, NAC Panel ...'
   new_reader(), addresses(el, reader)        the device's addresses ([] = not on this riser)
   sort_key(addresses), groups(addresses)     order at a split; the circuits named in them, e.g. {(1, 2)}
@@ -19,7 +23,7 @@ run(kind) draws a riser for one circuit kind. The kind supplies (see nac_riser.C
   no_address_hint                            why a device on the conduit was left off
   load_table, save_table, table_path, load_settings, save_settings, settings_path, DEFAULT_SETTINGS, SETTING_LIMITS
 
-SLC Riser (v34) still has its own copy of this code; it can be moved onto this engine as a later step."""
+Used by SLC Riser (slc_riser.LoopKind) and NAC Riser (nac_riser.CircuitKind)."""
 from Autodesk.Revit.DB import (
     XYZ, Line, Transaction, FilteredElementCollector, FamilyInstance, ViewDrafting, ViewFamilyType,
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
@@ -64,7 +68,8 @@ LABEL_OFFSET_IN = 1.0   # device address text starts this many inches (in the vi
 LOOP_LABEL_RAISE_IN = 5.0   # loop letter (A, B ...) sits this many inches (in the view) higher, with a
                             # detail line from under its centre down to the riser line
 ABOVE_TEXT_SIZE_IN = 5.0 / 64.0     # text above a device (its Panel #): size on the sheet, in inches
-ABOVE_TEXT_TYPE_NAME = 'Riser 5/64"'    # made from the default text type if no 5/64" type exists
+ABOVE_TEXT_TYPE_NAME = 'Riser 5/64"'    # made from the default text type if no 5/64" type exists; set by run()
+                                        # to '<title> 5/64"'
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
 PAD = 0.125             # space above and below each line of devices
@@ -75,9 +80,6 @@ LINE_SPACING = 1.6      # text line height as a multiple of the text size
 NOT_CONNECTED_TEXT = "NOT CONNECTED"    # shown above a device the conduit doesn't reach
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
-PANEL_EXIT_FROM_TOP_FT = 10.0       # a loop with no reference line leaves the panel's right side this far
-                                    # below its top
-PANEL_EXIT_LOW_FT = 6.0             # extra runs below the panel leave its right side this far above its bottom
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 NEW_VIEW = "Generate New Drafting View"
 EXISTING_VIEW = "Add to Existing Drafting View"
@@ -423,7 +425,7 @@ def drafting_views():
     return found
 
 
-def choose_target_view(default_name):
+def choose_target_view():
     """None = generate a new view, a ViewDrafting = add to it, False = cancelled."""
     views = drafting_views()
     options = [NEW_VIEW, EXISTING_VIEW] if views else [NEW_VIEW]
@@ -447,27 +449,6 @@ def view_element_ids(view):
         return dict((sr.eid_int(i), i) for i in FilteredElementCollector(doc, view.Id).ToElementIds())
     except Exception:
         return {}
-
-
-def y_range(view, ids):
-    """(lowest, highest) Y of those elements (ElementIds) in the view, or None if none of them has a size."""
-    lo = hi = None
-    for i in ids:
-        try:
-            el = doc.GetElement(i)
-        except Exception:
-            el = None
-        if el is None:
-            continue
-        try:
-            bb = el.get_BoundingBox(view)
-        except Exception:
-            bb = None
-        if bb is None:
-            continue
-        lo = bb.Min.Y if lo is None else min(lo, bb.Min.Y)
-        hi = bb.Max.Y if hi is None else max(hi, bb.Max.Y)
-    return None if lo is None else (lo, hi)
 
 
 def panel_family_symbol():
@@ -797,19 +778,9 @@ def expand_devices(rows, returns, elements, addresses, keys, device_symbols, ava
     return new_rows, new_returns, node_symbol, firsts
 
 
-def split_runs(rows):
-    """Rows grouped per run: each run row with the T-tap rows that follow it."""
-    runs = []
-    for row in rows:
-        if row["source"] is None or not runs:
-            runs.append([])
-        runs[-1].append(row)
-    return runs
-
-
-def run_name(panel_name, run, index):
+def run_name(panel_name, row, index):
     """'NAC-01 - Circuit N1-2' (or '... - Run 2' when the circuit can't be read from the addresses)."""
-    label = run[0].get("label")
+    label = row.get("label")
     return "%s - %s" % (panel_name, ("%s %s" % (KIND.run_word, label)) if label else ("Run %d" % index))
 
 
@@ -1224,9 +1195,7 @@ REVIEW_XAML = """
 """
 
 
-def number_text(v):
-    """4.5 -> '4.5', 6.0 -> '6'"""
-    return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+number_text = sr.number_text      # 4.5 -> '4.5', 6.0 -> '6' (from slc_riser, shared with Riser - Config)
 
 
 class ReviewDialog(forms.WPFWindow):
@@ -1240,19 +1209,15 @@ class ReviewDialog(forms.WPFWindow):
         self.result = None
         self._ready = False
         total = sum(len(r["nodes"]) for r in rows)
-        runs = [r for r in rows if r["source"] is None]
-        taps = len(rows) - len(runs)
         if device_count is not None and device_count != total:
             self.count_text.Text = "%d device(s) (%d symbols) will be added to the riser." % (device_count, total)
         else:
             self.count_text.Text = "%d device(s) will be added to the riser." % total
         parts = []
-        for r in runs:
+        for r in rows:
             parts.append("%s%d" % (("%s %s: " % (KIND.run_word, r["label"])) if r.get("label") else "",
                                    len(r["nodes"])))
-        detail = "%d run(s)" % len(runs)
-        if taps:
-            detail += " and %d T-tap(s)" % taps
+        detail = "%d run(s)" % len(rows)
         self.detail_text.Text = detail + (" - " + ", ".join(parts) if parts else "")
         self.spacing_box.Text = number_text(DEVICE_SPACING_FT)
         self.per_line_box.Text = number_text(PER_LINE)
@@ -1347,9 +1312,10 @@ def apply_settings():
 
 def run(kind):
     """Draw a riser for this circuit kind (see the module notes)."""
-    global KIND, TITLE
+    global KIND, TITLE, ABOVE_TEXT_TYPE_NAME
     KIND = kind
     TITLE = kind.title
+    ABOVE_TEXT_TYPE_NAME = '%s 5/64"' % kind.title
     main()
 
 
@@ -1369,8 +1335,8 @@ def main():
     unconnected_set = set(unconnected)
     root_id = sr.eid_int(root.Id)
     if not rows:
-        msg = ("No devices with a %s are connected to the selected element by conduit of the "
-               "chosen type(s)." % KIND.address_label)
+        msg = ("No devices with %s are connected to the selected element by conduit of the "
+               "chosen type(s)." % KIND.address_phrase)
         if unaddressed:
             msg += ("\n\n%d Fire Alarm Device(s) on that conduit %s." % (len(unaddressed), KIND.no_address_hint))
         forms.alert(msg, title=TITLE)
@@ -1457,7 +1423,7 @@ def main():
 
     if not review_layout(rows, device_count):
         return
-    target = choose_target_view(view_name(root))
+    target = choose_target_view()
     if target is False:
         return
     if target is None and panel_sym is None:
@@ -1469,7 +1435,6 @@ def main():
 
     global VIEW_SCALE
     panel_name = (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip()
-    runs = split_runs(rows)
 
     # 1. The view, and the panel detail (a new one in a new view; the one already there otherwise).
     created_view = False
@@ -1513,9 +1478,9 @@ def main():
 
     # 2. Where each circuit's one-line starts, and the reference line it is locked to.
     origins, lock_refs, reported = [], [], False
-    for i, run in enumerate(runs, start=1):
-        name = run_name(panel_name, run, i)
-        loop = row_loop(addresses, run[0]["nodes"])
+    for i, row in enumerate(rows, start=1):
+        name = run_name(panel_name, row, i)
+        loop = row_loop(addresses, row["nodes"])
         match = None
         if exit_x is not None and loop is not None:
             for c, y in placed_refs:
@@ -1597,8 +1562,8 @@ def main():
                "loop_label_raise": LOOP_LABEL_RAISE_IN / 12.0,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP)}
 
-        for i, (run, origin, lock) in enumerate(zip(runs, origins, lock_refs), start=1):
-            plan = rl.layout(run, root_id, info, returns, cfg)
+        for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
+            plan = rl.layout([row], root_id, info, returns, cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
@@ -1609,7 +1574,7 @@ def main():
             group = None
             if new_ids:
                 group = doc.Create.NewGroup(List[ElementId](new_ids))
-                gname = unique_group_name(run_name(panel_name, run, i))
+                gname = unique_group_name(run_name(panel_name, row, i))
                 try:
                     group.GroupType.Name = gname
                 except Exception:
@@ -1623,7 +1588,7 @@ def main():
                             abs(min(p[0], q[0]) - origin[0]) < 1e-6:
                         first = curve
                         break
-                gname = run_name(panel_name, run, i)
+                gname = run_name(panel_name, row, i)
                 if first is None:
                     not_locked.append("%s: its first line could not be found" % gname)
                 else:
@@ -1658,12 +1623,8 @@ def main():
         pass
 
     count = device_count
-    taps = len(rows) - len(runs)
-    msg = "%s '%s': %d device(s) on %d run(s)" % ("Created" if target is None else "Added to",
-                                                   view.Name, count, len(runs))
-    if taps:
-        msg += " and %d T-tap(s)" % taps
-    msg += "."
+    msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
+                                                    view.Name, count, len(rows))
     if groups:
         msg += "\n\nGroup(s): " + ", ".join(groups)
     if target is not None and panel_inst is None:
@@ -1676,9 +1637,9 @@ def main():
         msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
                 % (PANEL_FAMILY, " / ".join(panel_skipped)))
     if unconnected:
-        msg += ("\n\n%d device(s) on this circuit have no conduit path from the rest of the riser. They were added "
+        msg += ("\n\n%d device(s) on this %s have no conduit path from the rest of the riser. They were added "
                 "in address order and marked %s; they are listed in the output window."
-                % (len(unconnected), NOT_CONNECTED_TEXT))
+                % (len(unconnected), KIND.run_word.lower(), NOT_CONNECTED_TEXT))
         output.print_md("### %s - devices with no conduit path (added in address order)" % TITLE)
         for i in unconnected:
             output.print_md("- %s %s - %s" % (output.linkify(elements[i].Id), sr.family_key(doc, elements[i]),
@@ -1686,7 +1647,7 @@ def main():
     if unaddressed:
         msg += ("\n\n%d Fire Alarm Device(s) on the conduit have no %s and were left off. "
                 "They are listed in the output window." % (len(unaddressed), KIND.address_label))
-        output.print_md("### %s - devices on the conduit without a %s" % (TITLE, KIND.address_label))
+        output.print_md("### %s - devices on the conduit without %s" % (TITLE, KIND.address_phrase))
         for el in unaddressed:
             output.print_md("- %s %s" % (output.linkify(el.Id), sr.family_key(doc, el)))
     forms.alert(msg, title=TITLE)

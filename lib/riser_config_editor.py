@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v1
+# riser_config_editor module - version v2
 # Change log (last change first):
+#   v2 - SLC Riser v35 (cleanup): number_text comes from slc_riser instead of a copy here.
 #   v1 - Riser - Config v8 (was SLC Riser - Config v7) / NAC Riser v1: the config window, moved here from the
 #        SLC Riser - Config script, with an SLC Riser tab and a NAC Riser tab (each its own symbol table and
 #        drawing settings) and one Save / Close for both.
@@ -320,9 +321,7 @@ class RulesEditor(forms.WPFWindow):
         self.Close()
 
 
-def number_text(v):
-    """4.5 -> '4.5', 6.0 -> '6'"""
-    return ("%.4f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+number_text = sr.number_text      # 4.5 -> '4.5', 6.0 -> '6' (lib/slc_riser.py)
 
 
 TAB_XAML = """
