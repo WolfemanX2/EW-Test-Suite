@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# family_detection module - version v2
+# family_detection module - version v3
 # Change log (last change first):
+#   v3 - Family Defaults Config v11 (cleanup): first_values - the first match of each setting, used by detect and by
+#        the window (which had its own copy of it).
 #   v2 - Family Defaults Config v10: device_choices - when a type matches Device Type rules of more than one group
 #        (Head End / SLC / NAC), the first match of each group with why it matched, so the user can choose;
 #        keywords_match / parameters_match say which keyword / parameter matched. A family with another group's
@@ -148,13 +150,18 @@ def _original(lower, param_names):
     return lower
 
 
+def first_values(found):
+    """{field: value} of the first match of each setting, from matches()."""
+    out = {}
+    for r, _why in found:
+        out.setdefault(SETTING_FIELDS[r["setting"]], r["value"])
+    return out
+
+
 def detect(name, param_names, rules):
     """{field: value} for the first matching rule of each setting. name: 'Family Type' text to search;
     param_names: the family's parameter names (any case)."""
-    found = {}
-    for r, _why in matches(name, param_names, rules):
-        found.setdefault(SETTING_FIELDS[r["setting"]], r["value"])
-    return found
+    return first_values(matches(name, param_names, rules))
 
 
 def parameter_only_matches(name, param_names, rules):

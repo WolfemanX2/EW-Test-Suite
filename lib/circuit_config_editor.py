@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v10
+# circuit_config_editor module - version v11
 # Change log (last change first):
+#   v11 - Family Defaults Config v11 (cleanup, no change in use): the first match of each setting comes from
+#         family_detection.first_values (no copy here); _elevation_changed renamed _mark_dirty (it also tracks the
+#         Detection Rules tables); _unsaved removed (self._dirty is used directly).
 #   v10 - Family Defaults Config v10: a type matching Device Type rules of more than one group (Head End / SLC / NAC,
 #         e.g. Panel # and SLC Address, with or without an SLC keyword) is asked about - once per family and set of matches, with why each matched -
 #         before the review list (_resolve_device_conflicts).
@@ -12,8 +15,6 @@
 #        of families that aren't placed are read once and shared with the Circuit column (family_params).
 #   v7 - Family Defaults Config v7: editing several selected rows works: a click on a cell of a selected row keeps
 #        the selection (the grid would narrow it to that row) and the rows are taken when the edit starts.
-#   v6 - Family Defaults Config v6: editing a cell of a selected row sets that column on every selected row (the
-#        'Set selected rows' bar is removed).
 """The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
@@ -404,10 +405,10 @@ class ConfigEditor(forms.WPFWindow):
         self.dt.ColumnChanged += self._column_changed
         self.dt_groups.RowChanged += self._lists_changed
         self.dt_groups.RowDeleted += self._lists_changed
-        self.dt_elev.ColumnChanged += self._elevation_changed
+        self.dt_elev.ColumnChanged += self._mark_dirty
         for table in (self.dt_rules, self.dt_conduit_rules):
-            table.RowChanged += self._elevation_changed
-            table.RowDeleted += self._elevation_changed
+            table.RowChanged += self._mark_dirty
+            table.RowDeleted += self._mark_dirty
         self._ready = True
         if cfg["notes"]:
             self.Loaded += lambda sender, args: forms.alert(
@@ -771,7 +772,7 @@ class ConfigEditor(forms.WPFWindow):
         except Exception:
             pass
 
-    def _elevation_changed(self, sender, e):
+    def _mark_dirty(self, sender, e):
         if not self._busy:
             self._dirty = True
 
@@ -916,9 +917,6 @@ class ConfigEditor(forms.WPFWindow):
         self._dirty = False
         self.status_text.Text = "Saved"
 
-    def _unsaved(self):
-        return self._dirty
-
     # ---------- Detection Rules tab ----------
     def _show_detection(self, detection):
         """Fill the Detection Rules tab (call with _busy set)."""
@@ -1046,9 +1044,7 @@ class ConfigEditor(forms.WPFWindow):
                     continue
                 key = cell_text(trow["Key"])
                 hits = fd.matches(key.replace(" : ", " "), names, detection["rules"])
-                found = {}
-                for rule, _why in hits:
-                    found.setdefault(fd.SETTING_FIELDS[rule["setting"]], rule["value"])
+                found = fd.first_values(hits)
                 partial = fd.parameter_only_matches(key.replace(" : ", " "), names, detection["rules"])
                 found_types.append((family, trow, key, found, fd.device_choices(hits, partial)))
         if not self._resolve_device_conflicts(found_types, mode):
@@ -1176,7 +1172,7 @@ class ConfigEditor(forms.WPFWindow):
             return
         go_on = forms.alert("Replace your settings with the ones in:\n%s\n\nThe default file is only read. Your "
                             "current settings are saved as a backup next to them.%s"
-                            % (source, "\n\nYour unsaved changes in this window will be lost." if self._unsaved()
+                            % (source, "\n\nYour unsaved changes in this window will be lost." if self._dirty
                                else ""), title=TITLE, yes=True, no=True)
         if not go_on:
             return
@@ -1198,7 +1194,7 @@ class ConfigEditor(forms.WPFWindow):
 
     def window_closing(self, sender, args):
         self._commit()
-        if self._unsaved():
+        if self._dirty:
             discard = forms.alert("You have unsaved changes.\n\nClose without saving?", title=TITLE, yes=True, no=True)
             if not discard:
                 args.Cancel = True

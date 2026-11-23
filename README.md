@@ -201,10 +201,10 @@ share are in `lib/addressing_ui.py`.
 | lib/ew_common.py | v3 |
 | lib/addressing_ui.py | v3 |
 | lib/config_store.py | v1 |
-| Family Defaults Config | v10 |
-| lib/circuit_config.py | v4 |
-| lib/circuit_config_editor.py | v10 |
-| lib/family_detection.py | v2 |
+| Family Defaults Config | v11 |
+| lib/circuit_config.py | v5 |
+| lib/circuit_config_editor.py | v11 |
+| lib/family_detection.py | v3 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
 | Link Clash | v13 |

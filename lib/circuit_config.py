@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# circuit_config module - version v4
+# circuit_config module - version v5
 # Change log (last change first):
+#   v5 - Family Defaults Config v11 (cleanup): the unused FIELDS list removed.
 #   v4 - Family Defaults Config v8: "detection" - the Detect Types in Project rules and the default conduit type per
 #        Device Type (lib/family_detection.py); a file without them gets the starting rules.
 #   v3 - Family Defaults Config v3: the window was renamed from Auto Circuit - Config (no change to the file).
@@ -51,7 +52,6 @@ SLC_TYPES = [MODULE, DETECTOR]
 MAX_ADDRESSES = 24
 FORMAT = 2              # the file's layout; a file without it is the v1 layout and is converted when read
 _V1_CHOOSE_GROUP = "Choose a group"
-FIELDS = ["mounting", "device_type", "conduit_type", "address_group", "round_to"]
 DETECTION_VALUES = {fd.MOUNTING: MOUNTINGS, fd.DEVICE_TYPE: DEVICE_TYPES}   # what a detection rule can set
 
 try:
