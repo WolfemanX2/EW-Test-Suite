@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v10
-__title__ = "NAC\nRiser v10"
+# NAC Riser script - version v11
+__title__ = "NAC\nRiser v11"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"
@@ -9,6 +9,8 @@ __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "If no conduit is connected to the power supply, it is traced from the nearest element within 5' that has conduit "
            "connected - a GUTTER-BOX family 1-2' above the power supply first.\n\n"
            "Every one-line ends with 'NAC RETURN'. The panel detail's Panel Model is the panel's Model.\n\n"
+           "When you pick the first device, only devices on its circuit are drawn: devices of other circuits on shared "
+           "conduit are passed through.\n\n"
            "Run it from a drafting view instead to get the drafting view options: Update Selected One-Line - "
            "select a one-line group and its circuit is traced again in the model and redrawn in place (same "
            "group name, locked to the same reference line) with the current symbols, callouts and Riser - Config "

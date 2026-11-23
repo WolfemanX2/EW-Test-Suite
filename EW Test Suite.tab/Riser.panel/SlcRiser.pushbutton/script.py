@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v47
-__title__ = "SLC\nRiser v47"
+# SLC Riser script - version v48
+__title__ = "SLC\nRiser v48"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -8,6 +8,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "
            "connected - a GUTTER-BOX family 1-2' above the panel first.\n\n"
            "Every one-line ends with 'SLC RETURN'. The panel detail's Panel Model is the panel's Model.\n\n"
+           "When you pick the first device, only devices on its loop are drawn: devices of other loops on shared "
+           "conduit are passed through.\n\n"
            "Run it from a drafting view instead to get the drafting view options: Update Selected One-Line - "
            "select a one-line group and its circuit is traced again in the model and redrawn in place (same "
            "group name, locked to the same reference line) with the current symbols, callouts and Riser - Config "

@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v12
+# riser_tool module - version v13
 # Change log (last change first):
+#   v13 - SLC Riser v48 / NAC Riser v11: a trace from chosen first devices (and every update) only draws devices of
+#         their circuits - devices of other loops on shared conduit are passed through (Network.wanted); an Update
+#         of Loop 3 had picked up Loop 1 devices. Older one-lines start from the first device drawn on them (their
+#         top-left address) instead of the loop's lowest address, and each one-line also stores its circuits.
 #   v12 - SLC Riser v47 / NAC Riser v10: run from a drafting view = Update Selected One-Line (pick a one-line group;
 #         its circuit is traced again and redrawn in place with the current symbols, callouts and settings). Each
 #         one-line group now remembers its panel, first device, conduit types, loop and start (extensible storage);
@@ -14,8 +18,6 @@
 #         45 degree text, its parameters filled from the device's same-named ones (device_callouts).
 #   v9 - SLC Riser v42 / NAC Riser v7: a new circuit that would overlap the circuits below or above it (text and
 #        callouts included) gets its Loop Spacing raised, and the circuits above move up with it (fit_circuit).
-#   v8 - SLC Riser v41 / NAC Riser v6: Loop Spacing N is measured from the line below it (Loop N-1), not
-#        from the bottom of the panel; loop N's height is Loop Spacing 1 + ... + N (stacked_height).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -442,6 +444,7 @@ class Network(object):
         self.type_elem_ids = {} # conduit type id -> its ElementId
         self._cache = {}
         self.allowed = None
+        self.wanted = None      # circuits (KIND.groups) drawn; a device of another circuit is passed through
         self.reader = KIND.new_reader()     # passed to KIND.addresses for the whole run
 
     def remember(self, el):
@@ -473,7 +476,15 @@ class Network(object):
         return [[e for e in g if self.followed(e)] for g in groups]
 
     def is_node(self, i):
-        return bool(self.addresses.get(i))
+        """A device drawn on this riser: it has an address, and (with wanted) it is on one of those circuits.
+        A device whose addresses can't be read as a circuit is still drawn."""
+        addresses = self.addresses.get(i)
+        if not addresses:
+            return False
+        if not self.wanted:
+            return True
+        circuits = KIND.groups(addresses)
+        return not circuits or bool(circuits & self.wanted)
 
     def conduit_types_at(self, ids):
         """Conduit type ids joined to these elements, directly or through one fitting / box."""
@@ -545,14 +556,20 @@ def choose_conduit_types(net, root_id, start_ids):
     return set(c.tid for c in picked)
 
 
-def trace_from(root, firsts, allowed=None):
+def trace_from(root, firsts, allowed=None, circuits=None):
     """(rows, returns, elements, addresses, unaddressed devices, unconnected, conduit type UniqueIds followed) for the
     conduit connected to root, or None if the user cancelled. firsts: the first device of each circuit (empty =
     every run leaving root). allowed: None = ask which conduit types to follow; "auto" = the types at the first
-    devices (the ones the question starts ticked); otherwise the conduit type ids to follow."""
+    devices (the ones the question starts ticked); otherwise the conduit type ids to follow. circuits: the
+    circuits (KIND.groups) to draw; by default those of the first devices (all circuits when there are none)."""
     net = Network()
     root_id = net.remember(root)
     starts = [net.remember(el) for el in firsts]
+    if circuits is None:
+        circuits = set()
+        for i in starts:
+            circuits |= KIND.groups(net.addresses.get(i))
+    net.wanted = set(circuits) or None
     if allowed is None:
         allowed = choose_conduit_types(net, root_id, starts or [root_id])
         if allowed is None:
@@ -576,7 +593,7 @@ def trace_from(root, firsts, allowed=None):
     unconnected = add_unconnected(rows, net)
     for row in rows:
         row["label"] = KIND.row_label([net.addresses[n] for n in row["nodes"]])
-    unaddressed = [net.elements[i] for i in passed if i in net.addresses]
+    unaddressed = [net.elements[i] for i in passed if i in net.addresses and not net.addresses[i]]
     return rows, returns, net.elements, net.addresses, unaddressed, unconnected, type_uids
 
 
@@ -1643,10 +1660,11 @@ class Update(object):
     """A one-line group to redraw: the group, its view and name, and the circuit to trace (panel, first devices,
     conduit types - "auto" when worked out), the loop it shows and where it starts (None = from its reference
     line)."""
-    def __init__(self, group, view, root, firsts, allowed, loop, label, origin):
+    def __init__(self, group, view, root, firsts, allowed, loop, label, origin, circuits):
         self.group, self.view, self.name = group, view, group.GroupType.Name
         self.root, self.firsts, self.allowed = root, firsts, allowed
         self.loop, self.label, self.origin = loop, label, origin
+        self.circuits = set(circuits or []) or None     # only these circuits' devices are drawn
 
 
 class GroupFilter(ISelectionFilter):
@@ -1694,16 +1712,52 @@ def group_origin(members):
     return best
 
 
-def group_addresses(members):
-    """The device addresses written in a one-line group's text (first- / last on two lines included)."""
-    found = []
+def group_address_notes(members):
+    """[(addresses written in the note, x, y of the note)] for each address text in a one-line group (first- /
+    last on two lines included)."""
+    notes = []
     for m in members:
         if not isinstance(m, TextNote):
             continue
+        texts = []
         for line in (m.Text or "").splitlines():
             text = line.strip().rstrip("-").strip()
-            if text and KIND.groups([text]) and text not in found:
+            if text and KIND.groups([text]):
+                texts.append(text)
+        if texts:
+            try:
+                point = (m.Coord.X, m.Coord.Y)
+            except Exception:
+                point = (0.0, 0.0)
+            notes.append((texts, point[0], point[1]))
+    return notes
+
+
+def group_addresses(members):
+    """The device addresses written in a one-line group's text."""
+    found = []
+    for texts, _x, _y in group_address_notes(members):
+        for text in texts:
+            if text not in found:
                 found.append(text)
+    return found
+
+
+def first_drawn_addresses(members):
+    """The addresses of the first device drawn on a one-line: its top line's leftmost address text."""
+    notes = group_address_notes(members)
+    if not notes:
+        return []
+    top = max(y for _t, _x, y in notes)
+    on_top = [n for n in notes if abs(n[2] - top) < 0.01]
+    return min(on_top, key=lambda n: n[1])[0]
+
+
+def row_circuits(addresses, nodes):
+    """The circuits (KIND.groups) of the devices in a row."""
+    found = set()
+    for n in nodes:
+        found |= KIND.groups(addresses.get(n))
     return found
 
 
@@ -1746,10 +1800,13 @@ def work_out_update(group, view):
     if root is None:
         return None
     devices = KIND.devices_on_groups(doc, loops)
+    # The first device drawn on it (where the one-line starts), else the lowest address shown on it.
+    first_texts = set(first_drawn_addresses(members))
+    starting = [el for el, addresses in devices if set(addresses) & first_texts]
     shown = [el for el, addresses in devices if set(addresses) & set(texts)]
-    first = (shown or [el for el, _a in devices] or [None])[0]
+    first = (starting or shown or [el for el, _a in devices] or [None])[0]
     return Update(group, view, root, [first] if first is not None else [], "auto",
-                  KIND.row_number([texts]), KIND.row_label([texts]), group_origin(members))
+                  KIND.row_number([texts]), KIND.row_label([texts]), group_origin(members), loops)
 
 
 def prepare_update(view):
@@ -1777,8 +1834,14 @@ def prepare_update(view):
             allowed.add(sr.eid_int(el.Id))
     # Where it is now (it may have been moved since it was drawn), else where it was drawn.
     origin = group_origin([doc.GetElement(i) for i in group.GetMemberIds()]) or data.get("origin")
+    circuits = set(tuple(c) for c in data.get("circuits") or [])
+    if not circuits:        # stored before v13: the circuits of its first devices, else its address text
+        reader = KIND.new_reader()
+        for el in firsts:
+            circuits |= KIND.groups(KIND.addresses(el, reader))
+        circuits = circuits or KIND.groups(group_addresses([doc.GetElement(i) for i in group.GetMemberIds()]))
     return Update(group, view, root, firsts, allowed or "auto", data.get("loop"), data.get("label") or "",
-                  tuple(origin) if origin else None)
+                  tuple(origin) if origin else None, circuits)
 
 
 def update_rows(rows, addresses, update):
@@ -1990,11 +2053,11 @@ def draw_riser(update=None):
         firsts = first_devices(root)
         if firsts is None:
             return
-        allowed = None
+        allowed, circuits = None, None
     else:
-        root, firsts, allowed = update.root, update.firsts, update.allowed
+        root, firsts, allowed, circuits = update.root, update.firsts, update.allowed, update.circuits
     entry = conduit_entry(root)     # the panel, or its gutter box when the conduit lands there
-    traced = trace_from(entry, firsts, allowed)
+    traced = trace_from(entry, firsts, allowed, circuits)
     if traced is None:
         return
     rows, returns, elements, addresses, unaddressed, unconnected, type_uids = traced
@@ -2280,6 +2343,7 @@ def draw_riser(update=None):
                 save_oneline_data(group, {
                     "kind": KIND.title, "root": root.UniqueId, "firsts": first_uids, "conduit_types": type_uids,
                     "loop": row_loop(addresses, row["nodes"]), "label": row.get("label") or "",
+                    "circuits": sorted(list(c) for c in row_circuits(addresses, row["nodes"])),
                     "origin": [origin[0], origin[1]]})
             if lock is not None:
                 # The first line of the one-line: horizontal, starting at the origin.
