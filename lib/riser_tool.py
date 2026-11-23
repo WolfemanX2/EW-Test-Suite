@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v13
+# riser_tool module - version v14
 # Change log (last change first):
+#   v14 - SLC Riser v49 / NAC Riser v12: the automatic Loop Spacing adjustment never leaves Loop Spacing 1 below
+#         10' (MIN_LOOP_SPACING_1_FT); it is raised first, and the circuits move up with it.
 #   v13 - SLC Riser v48 / NAC Riser v11: a trace from chosen first devices (and every update) only draws devices of
 #         their circuits - devices of other loops on shared conduit are passed through (Network.wanted); an Update
 #         of Loop 3 had picked up Loop 1 devices. Older one-lines start from the first device drawn on them (their
@@ -16,8 +18,6 @@
 #         of addresses are gone). Address callouts: a device whose Address Group subgroup (Family Defaults Config,
 #         picked by its number of addresses) has a callout set in Riser - Config gets that callout instead of the
 #         45 degree text, its parameters filled from the device's same-named ones (device_callouts).
-#   v9 - SLC Riser v42 / NAC Riser v7: a new circuit that would overlap the circuits below or above it (text and
-#        callouts included) gets its Loop Spacing raised, and the circuits above move up with it (fit_circuit).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -92,6 +92,7 @@ ABOVE_TEXT_TYPE_NAME = 'Riser 5/64"'    # made from the default text type if no 
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
 LOOP_CLEARANCE = 0.125  # least space between two circuits on the panel detail; more Loop Spacing is added to keep it
+MIN_LOOP_SPACING_1_FT = 10.0    # the automatic adjustment never leaves Loop Spacing 1 smaller than this
 PAD = 0.125             # space above and below each line of devices
 TEXT_GAP = 0.06         # between a symbol and the addresses under it
 BOX_SIZE = 0.375        # box drawn for a type that has no symbol
@@ -1249,8 +1250,9 @@ def circuit_groups(view, panel, cands, exclude_id=None):
 def fit_circuit(view, panel, cands, loop, group):
     """Make room for the circuit just drawn (group, on loop `loop`): if it would overlap a circuit below it, its
     Loop Spacing is raised; if it would overlap one above, the Loop Spacing of the line above it is raised. The
-    circuits above the raised line - and this one, when its own spacing changed - move up with it. Returns
-    [(loop, old, new, "instance" / "type")] for the Loop Spacing values changed."""
+    circuits above the raised line - and this one, when its own spacing changed - move up with it. Loop Spacing 1
+    is first raised to MIN_LOOP_SPACING_1_FT when it is smaller. Returns [(loop, old, new, "instance" / "type")] for
+    the Loop Spacing values changed."""
     changes = []
     doc.Regenerate()
     bb = group.get_BoundingBox(view)
@@ -1278,6 +1280,10 @@ def fit_circuit(view, panel, cands, loop, group):
                 others[k] = [(g, b + delta, t + delta) for g, b, t in others[k]]
         return True
 
+    first = loop_spacing_values(panel).get(1)
+    if first is not None and first < MIN_LOOP_SPACING_1_FT - 1e-6 and raise_spacing(1, MIN_LOOP_SPACING_1_FT - first):
+        bottom += MIN_LOOP_SPACING_1_FT - first     # every loop sits on Loop Spacing 1, this one included
+        top += MIN_LOOP_SPACING_1_FT - first
     below = [t for k, items in others.items() if k < loop for _, _, t in items]
     if below:
         need = max(below) + clear - bottom

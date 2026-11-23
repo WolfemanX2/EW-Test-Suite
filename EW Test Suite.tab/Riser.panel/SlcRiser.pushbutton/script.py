@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v48
-__title__ = "SLC\nRiser v48"
+# SLC Riser script - version v49
+__title__ = "SLC\nRiser v49"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
-           "panel's Loop Spacing is raised to make room and the circuits above move up with it.\n\n"
+           "panel's Loop Spacing is raised to make room and the circuits above move up with it. Loop Spacing 1 is never left below 10'.\n\n"
            "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "
            "connected - a GUTTER-BOX family 1-2' above the panel first.\n\n"
            "Every one-line ends with 'SLC RETURN'. The panel detail's Panel Model is the panel's Model.\n\n"
