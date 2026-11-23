@@ -61,6 +61,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
 - Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the NEX2-DETAIL-RISER panel detail.
+- The power supply is chosen from a list (NAC / NCP / NACP in the family name, plus Head End in Family Defaults Config or a Panel # parameter) or selected in the model.
 - **Riser - Config (NAC Riser tab):** its own drawing settings and symbols, kept apart from SLC Riser's
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
@@ -224,12 +225,12 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v39 |
-| NAC Riser | v3 |
+| NAC Riser | v4 |
 | Riser - Config (was SLC Riser - Config) | v8 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v17 |
 | lib/riser_tool.py | v6 |
-| lib/nac_riser.py | v1 |
+| lib/nac_riser.py | v2 |
 | lib/riser_config_editor.py | v2 |
 | lib/riser_layout.py | v21 |
 | Line Nuke | v4 |

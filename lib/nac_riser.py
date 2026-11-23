@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v1
+# nac_riser module - version v2
 # Change log (last change first):
+#   v2 - NAC Riser v4: the head end list needs NAC / NCP / NACP in the family name, plus Head End in Family Defaults
+#        Config or a Panel # parameter (head_list_keywords, head_list_keywords_required, head_list_min_matches).
 #   v1 - NAC Riser v1 / Riser - Config v8: the NAC circuit kind for the riser engine (lib/riser_tool.py), and
 #        NAC Riser's own symbol table and drawing settings (the NAC tab of Riser - Config).
 """NAC Riser: what the riser engine (lib/riser_tool.py) needs to know about NAC circuits.
@@ -94,6 +96,11 @@ class CircuitKind(object):
         self.head_prompt = "Select %s Power Supply" % name
         self.head_example = "EX: FACU, NAC Panel, Booster Power Supply, etc."
         self.no_address_hint = "have no value in %s" % self.param
+        # Select from List (riser_tool.head_end_panels): a power supply is listed when its family name contains one
+        # of these words (case ignored) and it is also Head End in Family Defaults Config or has a Panel # parameter.
+        self.head_list_keywords = ["NAC", "NCP", "NACP"] if kind == "N" else None
+        self.head_list_keywords_required = True
+        self.head_list_min_matches = 2
 
     # ---- Addresses ----
     def new_reader(self):
