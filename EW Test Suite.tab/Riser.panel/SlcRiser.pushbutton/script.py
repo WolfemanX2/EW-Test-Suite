@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v39
-__title__ = "SLC\nRiser v39"
+# SLC Riser script - version v40
+__title__ = "SLC\nRiser v40"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "

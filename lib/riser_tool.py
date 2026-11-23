@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v6
+# riser_tool module - version v7
 # Change log (last change first):
+#   v7 - SLC Riser v40 / NAC Riser v5: the first-device prompt and the start-point prompt are pyRevit option bars
+#        instead of alert boxes; the extra head end alert before selecting in the model is gone.
 #   v6 - SLC Riser v39: the head end list can require the name keywords (the kind's head_list_keywords_required):
 #        Panel # makes a type Head End in Family Defaults Config, so '2 of 3' let panels without the keywords in.
 #   v5 - SLC Riser v38 / NAC Riser v3: a head end with no conduit connected is traced from the closest element with
@@ -10,10 +12,6 @@
 #        head_list_keywords / head_list_min_matches; SLC: 2 of Head End, Panel #, FACU / FACP / FAP / FAC in the name).
 #   v3 - SLC Riser v36 / NAC Riser v2: the head end is chosen from a list (types set to Head End in Family Defaults
 #        Config that have a Panel # parameter) or selected in the model (head_end_panels, choose_head_end_from_list).
-#   v2 - SLC Riser v35 (cleanup): SLC Riser now runs on this engine too (its own copy removed). Removed what nothing
-#        used: the T-tap run grouping (split_runs) and counts, y_range, PANEL_EXIT_FROM_TOP_FT / PANEL_EXIT_LOW_FT,
-#        choose_target_view's unused argument; number_text comes from slc_riser. Kind adds address_phrase; the
-#        5/64" text type made when none exists is named after the riser ('SLC Riser 5/64"').
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -92,6 +90,9 @@ NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 HEAD_SEARCH_RADIUS_FT = 5.0    # a head end with no conduit: look this far around it for an element with conduit
 GUTTER_NAME = "GUTTERBOX"      # family names like GUTTER-BOX / Gutter Box come first (letters and digits compared)
 GUTTER_ABOVE_FT = (0.0, 3.0)   # ... and, among those, one this far above the top of the panel (typically 1-2 ft)
+FIRST_PICK = "Select First Device"
+FIRST_ALL_RUNS = "Trace Every Run From Panel"
+ORIGIN_PICK = "Pick Start Point"
 HEAD_FROM_LIST = "Select from List"
 HEAD_IN_MODEL = "Select in Model"
 HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
@@ -301,7 +302,6 @@ def starting_element():
         el = choose_head_end_from_list()
         if el != "model":
             return el
-    forms.alert(KIND.head_prompt, sub_msg=KIND.head_example, title=TITLE)
     try:
         ref = uidoc.Selection.PickObject(ObjectType.Element, ElementOrTagFilter(is_head_candidate),
                                          "%s (or its tag) - %s" % (KIND.head_prompt, KIND.head_example))
@@ -313,11 +313,13 @@ def starting_element():
 def first_devices(root):
     """[the device picked (directly or by its tag) as the first in the circuit], or [] if the user pressed
     Esc to follow every run from the panel. None = cancelled."""
-    choice = forms.alert("Select first Device in Circuit",
-                         sub_msg="Press Esc while picking to trace every conduit run leaving the panel instead.",
-                         title=TITLE, ok=True, cancel=True)
+    choice = forms.CommandSwitchWindow.show(
+        [FIRST_PICK, FIRST_ALL_RUNS],
+        message="Select first Device in Circuit (or its tag). Esc while picking = trace every run from the panel.")
     if not choice:
         return None
+    if choice == FIRST_ALL_RUNS:
+        return []
     flt = ElementOrTagFilter(is_addressed_device)
     while True:
         try:
@@ -1222,7 +1224,10 @@ def pick_origin(view, name, reason):
             uidoc.ActiveView = view
     except Exception:
         pass
-    forms.alert("Select where the one-line diagram for %s should start." % name, sub_msg=reason, title=TITLE)
+    choice = forms.CommandSwitchWindow.show(
+        [ORIGIN_PICK], message="Select where the one-line diagram for %s should start. %s" % (name, reason))
+    if not choice:
+        return None
     try:
         p = uidoc.Selection.PickPoint(ObjectSnapTypes.Endpoints | ObjectSnapTypes.Nearest |
                                       ObjectSnapTypes.Intersections,
