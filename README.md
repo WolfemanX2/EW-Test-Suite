@@ -56,7 +56,11 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/SlcRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> SLC Riser - Configurable
 - Draws a one-line SLC riser diagram in a drafting view, with each device shown in order of connection along the conduit and labeled with its SLC address.
-- **SLC Riser - Config:** sets the drawing settings and the symbols used for each device type
+- **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type
+
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
+- Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the NEX2-DETAIL-RISER panel detail.
+- **Riser - Config (NAC Riser tab):** its own drawing settings and symbols, kept apart from SLC Riser's
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
@@ -130,8 +134,10 @@ it. Users who already have their own file keep it.
 |---|---|---|
 | Family Defaults Config | `circuit_config.json` | `circuit_config.default.json` |
 | Link Clash - Config | `clash_rules.json` | `clash_rules.default.json` |
-| SLC Riser - Config (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
-| SLC Riser - Config (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
+| Riser - Config, SLC Riser tab (symbols) | `riser_symbols.json` | `riser_symbols.default.json` |
+| Riser - Config, SLC Riser tab (drawing settings) | `riser_settings.json` | `riser_settings.default.json` |
+| Riser - Config, NAC Riser tab (symbols) | `nac_riser_symbols.json` | `nac_riser_symbols.default.json` |
+| Riser - Config, NAC Riser tab (drawing settings) | `nac_riser_settings.json` | `nac_riser_settings.default.json` |
 
 Family Defaults Config replaced Auto Conduit - Config, Address SLC - Config and Address NAC / Voice - Config, and is
 read by the Auto Circuit tools (the tools in Obsolete still read those three files). The first time it opens, it is
@@ -166,7 +172,9 @@ network location (then no default is copied).
 - Riser symbol table: `%APPDATA%\pyRevit\EWTestSuite\riser_symbols.json` per user. pyRevit updates never
   overwrite it. To share it, set `TABLE_PATH` in `lib/slc_riser.py` to a network location.
 - Riser drawing settings (view scale, spacing, devices per line, text offset): `%APPDATA%\pyRevit\EWTestSuite\riser_settings.json`
-  per user, changed in SLC Riser - Config. To share them, set `SETTINGS_PATH` in `lib/slc_riser.py` to a network location.
+  per user, changed on the SLC Riser tab of Riser - Config. To share them, set `SETTINGS_PATH` in `lib/slc_riser.py` to a network location.
+- NAC Riser symbol table and drawing settings: `nac_riser_symbols.json` and `nac_riser_settings.json` in the same folder,
+  changed on the NAC Riser tab of Riser - Config. To share them, set `TABLE_PATH` / `SETTINGS_PATH` in `lib/nac_riser.py`.
 - Clash statuses: `%APPDATA%\pyRevit\LinkClash\` per model. To share them, set `STATUS_DIR` in the Link
   Clash script to a network location.
 
@@ -209,9 +217,13 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v34 |
-| SLC Riser - Config | v7 |
+| NAC Riser | v1 |
+| Riser - Config (was SLC Riser - Config) | v8 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v13 |
+| lib/slc_riser.py | v14 |
+| lib/riser_tool.py | v1 |
+| lib/nac_riser.py | v1 |
+| lib/riser_config_editor.py | v1 |
 | lib/riser_layout.py | v20 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |

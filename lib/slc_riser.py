@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v13
+# slc_riser module - version v14
 # Change log (last change first):
+#   v14 - NAC Riser v1 / Riser - Config v8 (no change to SLC Riser): load_table, save_table, load_settings and
+#         save_settings can be given another riser's file (NAC Riser's), so the risers share one copy of them.
 #   v13 - Code consolidation step 7 (no tool change): paths, reading and the safe write come from config_store; a new
 #         user starts from config/riser_symbols.default.json / riser_settings.default.json when added.
 #   v12 - Code consolidation step 6 (SLC Riser v34): SLC addresses are read and parsed with
@@ -10,17 +12,15 @@
 #         family_key and DEVICE_CATEGORIES come from ew_common.
 #   v10 - Code consolidation step 2 (no change to SLC Riser): eid_int, conduit_connectors and
 #         connected_elements now come from conduit_trace instead of a copy here.
-#   v9 - SLC Riser v31: address_sort_key, address_loops and devices_on_loops (lowest address next at a
-#        split, devices with no conduit path added and flagged).
 """Shared pieces of the riser tools: the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
 
 The table is the user's own file, %APPDATA%\\pyRevit\\EWTestSuite\\riser_symbols.json. It is changed with the
-SLC Riser - Config tool. Updates never overwrite it.
+SLC Riser tab of Riser - Config. Updates never overwrite it.
 
 The drawing settings (view scale, device spacing, devices per line, label offset) are the user's own file,
-%APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed with SLC Riser - Config."""
+%APPDATA%\\pyRevit\\EWTestSuite\\riser_settings.json, also changed on the SLC Riser tab of Riser - Config."""
 from Autodesk.Revit.DB import BuiltInCategory, FilteredElementCollector, FamilySymbol
 
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
@@ -94,18 +94,23 @@ def clean_settings(data):
     return out
 
 
-def load_settings():
-    """The drawing settings, with the defaults for anything missing. Raises if the file can't be read."""
-    path = settings_path()
-    if not SETTINGS_PATH:
-        cs.start_from(path, [DEFAULT_SETTINGS_FILE])
+def load_settings(path=None, start_from=None):
+    """The drawing settings, with the defaults for anything missing. Raises if the file can't be read.
+    path / start_from: another riser's settings file and the office default it starts from (NAC Riser);
+    SLC Riser's own by default."""
+    if path is None:
+        path = settings_path()
+        start_from = None if SETTINGS_PATH else DEFAULT_SETTINGS_FILE
+    if start_from:
+        cs.start_from(path, [start_from])
     data = cs.read_json(path)
     return dict(DEFAULT_SETTINGS) if data is None else clean_settings(data)
 
 
-def save_settings(settings):
-    """Write the drawing settings, creating the folder if needed. Raises if they can't be written."""
-    cs.write_json(settings_path(), clean_settings(settings))
+def save_settings(settings, path=None):
+    """Write the drawing settings (to path, or SLC Riser's file), creating the folder if needed. Raises if they
+    can't be written."""
+    cs.write_json(path or settings_path(), clean_settings(settings))
 
 
 # ---------- Address text ----------
@@ -231,14 +236,17 @@ def _read_rules(value):
     return rules
 
 
-def load_table():
+def load_table(path=None, start_from=None):
     """{"Family : Type" of a device: {"symbols": [default symbols, in order], "rules": [rule, ...]}}, each symbol
     a "Family : Type". Older tables with a single "symbol" are read as a one-symbol list. Raises if the file
-    can't be read."""
+    can't be read. path / start_from: another riser's table and its office default (NAC Riser); SLC Riser's
+    own by default."""
     table = {}
-    path = table_path()
-    if not TABLE_PATH:
-        cs.start_from(path, [DEFAULT_TABLE])
+    if path is None:
+        path = table_path()
+        start_from = None if TABLE_PATH else DEFAULT_TABLE
+    if start_from:
+        cs.start_from(path, [start_from])
     data = cs.read_json(path, {})
     for key, value in data.items():
         if isinstance(value, dict):
@@ -251,11 +259,12 @@ def load_table():
     return table
 
 
-def save_table(table):
-    """Write the table, creating the folder if needed. Raises if it can't be written."""
+def save_table(table, path=None):
+    """Write the table (to path, or SLC Riser's file), creating the folder if needed. Raises if it can't be
+    written."""
     data = {}
     for key, entry in table.items():
         symbols = list(entry.get("symbols") or [])
         data[key] = {"symbols": symbols, "rules": list(entry.get("rules") or []),
                      "symbol": symbols[0] if symbols else ""}     # read by older versions
-    cs.write_json(table_path(), data)
+    cs.write_json(path or table_path(), data)

@@ -2,4 +2,4 @@ title: Tool Configs
 layout:
   - FamilyDefaultsConfig
   - LinkClashConfig
-  - SlcRiserConfig
+  - RiserConfig
