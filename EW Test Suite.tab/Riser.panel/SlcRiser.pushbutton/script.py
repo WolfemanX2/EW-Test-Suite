@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v40
-__title__ = "SLC\nRiser v40"
+# SLC Riser script - version v41
+__title__ = "SLC\nRiser v41"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If no conduit is connected to the panel, it is traced from the nearest element within 5' that has conduit "
@@ -22,7 +22,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
            "device one device spacing away from the right end of its reference line. The height of loop N is "
-           "read from the placed panel's Loop Spacing N parameter (distance up from the bottom of the panel). "
+           "read from the placed panel's Loop Spacing parameters: each is measured from the line below it (Loop "
+           "Spacing 1 from the bottom of the panel), so loop N is Loop Spacing 1 + ... + N above the bottom. "
            "Each loop leaves the panel in line with the family's reference line "
            "(reference line or reference plane) named for that loop number - 3, L3, Loop 3 or Ref Line 3 in its subcategory, "
            "line style or name (N1L3 -> 3). With no match you choose one of the family's reference lines or "

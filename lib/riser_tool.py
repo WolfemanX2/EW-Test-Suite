@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v7
+# riser_tool module - version v8
 # Change log (last change first):
+#   v8 - SLC Riser v41 / NAC Riser v6: Loop Spacing N is measured from the line below it (Loop N-1), not
+#        from the bottom of the panel; loop N's height is Loop Spacing 1 + ... + N (stacked_height).
 #   v7 - SLC Riser v40 / NAC Riser v5: the first-device prompt and the start-point prompt are pyRevit option bars
 #        instead of alert boxes; the extra head end alert before selecting in the model is gone.
 #   v6 - SLC Riser v39: the head end list can require the name keywords (the kind's head_list_keywords_required):
@@ -10,8 +12,6 @@
 #        (conduit_entry); a panel without conduit connectors can now be selected in the model.
 #   v4 - SLC Riser v37: the head end list can count criteria instead of requiring all of them (the kind's
 #        head_list_keywords / head_list_min_matches; SLC: 2 of Head End, Panel #, FACU / FACP / FAP / FAC in the name).
-#   v3 - SLC Riser v36 / NAC Riser v2: the head end is chosen from a list (types set to Head End in Family Defaults
-#        Config that have a Panel # parameter) or selected in the model (head_end_panels, choose_head_end_from_list).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -689,6 +689,16 @@ def set_text_param(inst, name, value):
 
 LOOP_SPACING = re.compile(r"^\s*Loop\s*Spacing\s*0*(\d+)\s*$", re.IGNORECASE)
 PANEL_FAMILY_INFO = {"spacing": {}, "bottom": None, "x": None}   # filled by panel_reference_lines()
+
+
+def stacked_height(spacing, loop):
+    """Height of loop N's line above the bottom of the panel. Each Loop Spacing is measured from the line below
+    it (Loop Spacing 1 from the bottom of the panel), so the height is Loop Spacing 1 + 2 + ... + N.
+    None when one of them is missing."""
+    try:
+        return sum(spacing[n] for n in range(1, int(loop) + 1))
+    except (KeyError, TypeError, ValueError):
+        return None
 LOOP_LABEL = re.compile(r"^(?:N\s*\d+\s*)?(?:LOOP|L)?\s*[-_.#]?\s*0*(\d+)$", re.IGNORECASE)
 
 
@@ -820,10 +830,12 @@ def panel_reference_lines(sym):
     # Reference lines first, then reference planes, then plain lines with a loop name; top to bottom.
     order = {"Reference Line": 0, "Reference Plane": 1, "Line": 2}
     found.sort(key=lambda c: (order.get(c["kind"], 3), -c["y"]))
-    # The bottom of the panel in the family: a loop's line height less its Loop Spacing.
+    # The bottom of the panel in the family: a loop's line height less its height above the bottom
+    # (Loop Spacing 1 + ... + N).
     spacing = PANEL_FAMILY_INFO["spacing"]
-    bottoms = sorted(c["y"] - spacing[c["loop"]] for c in found
-                     if c["loop"] is not None and c["loop"] in spacing and c["kind"] != "Line")
+    bottoms = sorted(c["y"] - stacked_height(spacing, c["loop"]) for c in found
+                     if c["loop"] is not None and c["kind"] != "Line"
+                     and stacked_height(spacing, c["loop"]) is not None)
     PANEL_FAMILY_INFO["bottom"] = bottoms[len(bottoms) // 2] if bottoms else None
     xs = [c["x"] for c in found if c["loop"] is not None and c["kind"] != "Line"]
     PANEL_FAMILY_INFO["x"] = max(set(xs), key=xs.count) if xs else None
@@ -1046,8 +1058,9 @@ def loop_spacing_values(panel):
 
 def panel_exit_points(view, panel, cands):
     """(x of the panel's right side, top of the panel, [(candidate, y in the view)]), or (None, None, []).
-    A loop's height comes from the placed panel's Loop Spacing N (up from the bottom of the panel); its
-    reference line's height in the family is the fallback. Each candidate also gets "vx" (x of its right
+    A loop's height comes from the placed panel's Loop Spacing values: each is measured from the line below it,
+    so loop N is Loop Spacing 1 + ... + N above the bottom of the panel. Its reference line's height in the family
+    is the fallback when one of those is missing. Each candidate also gets "vx" (x of its right
     end in the view, where its one-line starts) and "y_eff" (its height in the family as placed).
     Loops with a Loop Spacing but no reference line found get a candidate of their own."""
     if panel is None:
@@ -1062,20 +1075,28 @@ def panel_exit_points(view, panel, cands):
     cands = list(cands)
     have = set(c["loop"] for c in cands if c["loop"] is not None and c["kind"] != "Line")
     for loop in sorted(spacing):
-        if loop not in have:
+        if loop not in have and stacked_height(spacing, loop) is not None:
             cands.append({"kind": "Loop Spacing", "labels": ["Loop Spacing %d" % loop], "y": None,
                           "x": common_x, "loop": loop, "name": None, "is_ref": ""})
     out = []
     for c in cands:
         try:
             y_fam = c["y"]
-            if c["loop"] in spacing and bottom is not None:
-                y_fam = bottom + spacing[c["loop"]]
+            height = stacked_height(spacing, c["loop"]) if c["loop"] is not None else None
+            if c["loop"] in spacing and height is None:
+                missing = [n for n in range(1, c["loop"]) if n not in spacing]
+                output.print_md("%s: Loop Spacing %s missing on the panel, so loop %d is placed at its reference "
+                                "line as drawn in the family." % (TITLE, ", ".join(str(n) for n in missing),
+                                                                  c["loop"]))
+            if height is not None and bottom is not None:
+                y_fam = bottom + height
             if y_fam is None:
+                if height is None:
+                    continue
                 # No reference line to measure from: up from the bottom of the panel as drawn.
                 c["y_eff"] = None
                 c["vx"] = bb.Max.X
-                out.append((c, bb.Min.Y + spacing[c["loop"]]))
+                out.append((c, bb.Min.Y + height))
                 continue
             c["y_eff"] = y_fam
             p = tf.OfPoint(XYZ(c["x"] if c["x"] is not None else 0.0, y_fam, 0))
