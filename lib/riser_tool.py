@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v30
+# riser_tool module - version v31
 # Change log (last change first):
+#   v31 - SLC Riser v59 / NAC Riser v28: the drafting view options are offered when the active view is a drafting
+#         view by its view type too, or holds one-lines this riser drew (in_drafting_view), and the model / active
+#         view are read again on every run (run) - a drafting view could get the plan view prompts instead.
 #   v30 - SLC Riser v58 / NAC Riser v27: Update Panel in the drafting view options - every one-line of a panel in
 #         the view is traced again and redrawn, lowest loop / circuit first, as one undo step with one summary;
 #         each question (devices with no conduit path, a type with no symbol, which panel detail) is asked once
@@ -13,8 +16,6 @@
 #   v27 - SLC Riser v56 / NAC Riser v24: overlaps between circuits are found from what is drawn in the groups
 #         (lines, symbols, text as its real - turned - outline), not the groups' boxes (group_shapes,
 #         shapes_clash, raise_needed).
-#   v26 - SLC Riser v55 / NAC Riser v23: drawing a circuit again replaces its previous one-line - the detail
-#         groups named for it (and its '(2)', '(3)' copies) are deleted first (remove_previous_groups).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -41,7 +42,7 @@ from Autodesk.Revit.DB import (
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, ElementTransformUtils, GroupType, SketchPlane, Plane,
     ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference,
-    Outline, BoundingBoxIntersectsFilter, Group, TransactionGroup
+    Outline, BoundingBoxIntersectsFilter, Group, TransactionGroup, ViewType
 )
 from System.Collections.Generic import List
 try:
@@ -2746,18 +2747,40 @@ def apply_settings():
 
 def run(kind):
     """Draw a riser for this circuit kind (see the module notes)."""
-    global KIND, TITLE, ABOVE_TEXT_TYPE_NAME
+    global KIND, TITLE, ABOVE_TEXT_TYPE_NAME, doc, uidoc
+    # The open model and its active view as they are now (this module can stay loaded between runs).
+    doc, uidoc = revit.doc, revit.uidoc
     KIND = kind
     TITLE = kind.title
     ABOVE_TEXT_TYPE_NAME = '%s 5/64"' % kind.title
     main()
 
 
+def in_drafting_view(view):
+    """True when the riser runs from a drafting view (its class or view type), or from a view holding one-lines this
+    riser drew: it then offers the drafting view options."""
+    if view is None:
+        return False
+    try:
+        if isinstance(view, ViewDrafting) or view.ViewType == ViewType.DraftingView:
+            return True
+    except Exception:
+        pass
+    try:
+        for g in FilteredElementCollector(doc, view.Id).OfClass(Group).ToElements():
+            data = read_oneline_data(g)
+            if data is not None and data.get("kind") in (None, "", KIND.title):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def main():
     if not apply_settings():
         return
-    view = uidoc.ActiveView
-    if isinstance(view, ViewDrafting):
+    view = uidoc.ActiveView or doc.ActiveView
+    if in_drafting_view(view):
         # In a drafting view: work on the one-lines already drawn there.
         choice = forms.CommandSwitchWindow.show([UPDATE_ONELINE, UPDATE_PANEL],
                                                 message="%s - drafting view options" % TITLE)
