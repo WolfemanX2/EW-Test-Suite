@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v25
+# riser_layout module - version v26
 # Change log (last change first):
+#   v26 - NAC Riser v19: a device's info may carry "level" - its address text is level and centred under the
+#         symbol instead of at 45 degrees (label_drop / label_reach / place).
 #   v25 - SLC Riser v47 / NAC Riser v10: cfg "end_text" ('SLC RETURN', 'NAC RETURN') is written after the last device
 #         of every one-line, the riser line running on to it (otherwise 'RETURNS TO PANEL' only when it returns).
 #   v24 - SLC Riser v46: address callouts go in a band below the bottom of the line's address text, each joined to its
@@ -12,8 +14,6 @@
 #   v22 - SLC Riser v43 / NAC Riser v8: address callouts - a device's info may carry "callout" (the extents of its
 #         Address Group callout symbol), drawn where its 45 degree text would go (out["callouts"]) and given the
 #         same room; the symbol rules (rule_matches, pick_rule) are removed.
-#   v21 - SLC Riser v35 / NAC Riser v1 (cleanup, no change to the drawings): removed the T-tap rows (build_rows, the
-#         T-TAP FROM label) and the unused panel_dy / exit_low options; rows no longer carry "source".
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -253,6 +253,8 @@ def layout(rows, root, info, returns, cfg):
     def label_drop(n):
         """How far a device's turned label reaches below the riser line (a callout's is in callout_band)."""
         length, height = label_size(n)
+        if info[n].get("level"):        # level text centred under the symbol
+            return info[n]["ext"][3] + text_gap + height if length else 0.0
         return (length + height) * diag + offset if length else 0.0
 
     def label_reach(n):
@@ -261,6 +263,8 @@ def layout(rows, root, info, returns, cfg):
         if callout:
             return callout[0]
         length, height = label_size(n)
+        if info[n].get("level"):
+            return length * 0.5
         return length * diag if length else 0.0
 
     def root_depth():
@@ -284,7 +288,7 @@ def layout(rows, root, info, returns, cfg):
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])
-        if n == root:
+        if n == root or info[n].get("level"):
             out["texts"].append((x, y - d - text_gap, text, "C"))
         else:
             out["texts"].append((x, y - offset, text, "D"))

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v21
+# riser_tool module - version v22
 # Change log (last change first):
+#   v22 - NAC Riser v19: a kind with level_labels gets level address text centred under each symbol, and with
+#         candela_line a second line with the device's candela (Candela parameter, else the type name: 30CD).
 #   v21 - NAC Riser v18: Trace Selected Circuits only lists circuits of the selected panel's power supplies (the
 #         numbers in its panel_number_params, matched by the kind's supply_of); all circuits if it has none.
 #   v20 - NAC Riser v17: the panel detail is filled by fill_panel - Panel #, Panel Model, Location (the room, or
@@ -11,7 +13,6 @@
 #   v18 - NAC Riser v15: a kind with select_runs offers 'Trace Selected Circuits' instead of 'Trace Every Run From
 #         Panel' - a list of every circuit in the project (N1-2 (5 devices)); the chosen ones are traced from the
 #         panel, one one-line each (choose_circuits, split_rows_by_circuit).
-#   v17 - VESDA Pipe Swap v3 (no riser change): named_value now calls the shared copy in ew_common.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -324,6 +325,46 @@ def starting_element():
     except OperationCanceledException:
         return None
     return resolve(doc.GetElement(ref.ElementId), is_head_candidate)
+
+
+CANDELA_PARAM = "Candela"
+
+
+def candela_text(el):
+    """The device's candela as '30CD': its Candela parameter (a hidden shared parameter is read too), else the number
+    at the end of its type name ('... 30cd', '...-75CD', '... 110'). '' if neither has one."""
+    holders = [el]
+    try:
+        holders.append(doc.GetElement(el.GetTypeId()))
+    except Exception:
+        pass
+    for holder in holders:
+        if holder is None:
+            continue
+        try:
+            p = holder.LookupParameter(CANDELA_PARAM)
+        except Exception:
+            p = None
+        if p is None or not p.HasValue:
+            continue
+        try:
+            if p.StorageType == StorageType.String:
+                text = p.AsString() or ""
+            elif p.StorageType == StorageType.Integer:
+                text = str(p.AsInteger())
+            else:
+                text = p.AsValueString() or ("%g" % p.AsDouble())
+        except Exception:
+            text = ""
+        m = re.search(r"\d+(?:\.\d+)?", text)
+        if m:
+            return "%sCD" % m.group(0).rstrip("0").rstrip(".") if "." in m.group(0) else "%sCD" % m.group(0)
+    try:
+        name = sr.type_name(doc.GetElement(el.GetTypeId()))
+    except Exception:
+        name = ""
+    m = re.search(r"(\d+)\s*cd\s*$", name or "", re.IGNORECASE) or re.search(r"(\d+)\s*$", name or "")
+    return ("%sCD" % m.group(1)) if m else ""
 
 
 def panel_supplies(root):
@@ -2471,8 +2512,14 @@ def draw_riser(update=None):
             else:
                 ext = (box, box, box, box)
                 lines.insert(0, keys[n].split(" : ")[-1])
+            if getattr(KIND, "candela_line", False) and n in firsts:
+                candela = candela_text(elements[n])
+                if candela:
+                    lines.append(candela)
             above = named_value(elements[n], PANEL_NUMBER_PARAM) if n in firsts else ""
             info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
+            if getattr(KIND, "level_labels", False):
+                info[n]["level"] = True
             if n in node_callout:
                 info[n]["callout"] = callout_sizes[sr.eid_int(node_callout[n].Id)]
                 info[n]["lines"] = []
