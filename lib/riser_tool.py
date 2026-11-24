@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v22
+# riser_tool module - version v23
 # Change log (last change first):
+#   v23 - NAC Riser v20: a kind with redraw_on_overlap asks, when a circuit would overlap the one below or above it,
+#         whether to redraw it with a different wrap length, make room (raise Loop Spacing) or keep it as drawn
+#         (circuit_overlap, draw_circuit).
 #   v22 - NAC Riser v19: a kind with level_labels gets level address text centred under each symbol, and with
 #         candela_line a second line with the device's candela (Candela parameter, else the type name: 30CD).
 #   v21 - NAC Riser v18: Trace Selected Circuits only lists circuits of the selected panel's power supplies (the
@@ -10,9 +13,6 @@
 #         panel_number_params, Power Supply #1-3 as integers taken from the panel's text (NACP-01 -> 1).
 #   v19 - SLC Riser v52 / NAC Riser v16: the head end detail family comes from the riser's drawing settings
 #         (Riser - Config) instead of always NEX2-DETAIL-RISER.
-#   v18 - NAC Riser v15: a kind with select_runs offers 'Trace Selected Circuits' instead of 'Trace Every Run From
-#         Panel' - a list of every circuit in the project (N1-2 (5 devices)); the chosen ones are traced from the
-#         panel, one one-line each (choose_circuits, split_rows_by_circuit).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -1427,6 +1427,49 @@ def circuit_groups(view, panel, cands, exclude_id=None):
     return found
 
 
+OVERLAP_REDRAW = "Redraw With Different Wrap Length"
+OVERLAP_ROOM = "Make Room (Raise Loop Spacing)"
+OVERLAP_KEEP = "Keep As Drawn"
+
+
+def circuit_overlap(view, panel, cands, loop, group):
+    """Which neighbours the circuit just drawn (group, on loop `loop`) would overlap, text and callouts included:
+    a list with "below" and / or "above" (empty when it fits)."""
+    doc.Regenerate()
+    bb = group.get_BoundingBox(view)
+    if bb is None:
+        return []
+    others = circuit_groups(view, panel, cands, group.Id)
+    clear = paper(LOOP_CLEARANCE)
+    found = []
+    below = [t for k, items in others.items() if k < loop for _, _, t in items]
+    if below and max(below) + clear > bb.Min.Y + 1e-6:
+        found.append("below")
+    above = [b for k, items in others.items() if k > loop for _, b, _ in items]
+    if above and bb.Max.Y + clear > min(above) + 1e-6:
+        found.append("above")
+    return found
+
+
+def ask_wrap_length(name, current):
+    """A new 'devices before wrapping' for a circuit, or None."""
+    while True:
+        text = forms.ask_for_string(
+            default=str(current), title=TITLE,
+            prompt="Devices before wrapping for %s (now %d). More devices per line means fewer lines, so the "
+                   "one-line takes less height." % (name, current))
+        if text is None:
+            return None
+        try:
+            value = int(text.strip())
+        except Exception:
+            value = None
+        lo, hi = sr.SETTING_LIMITS["devices_per_line"]
+        if value is not None and lo <= value <= hi:
+            return value
+        ec.alert("Enter a whole number from %d to %d." % (lo, hi), title=TITLE)
+
+
 def fit_circuit(view, panel, cands, loop, group):
     """Make room for the circuit just drawn (group, on loop `loop`): if it would overlap a circuit below it, its
     Loop Spacing is raised; if it would overlap one above, the Loop Spacing of the line above it is raised. The
@@ -2533,20 +2576,15 @@ def draw_riser(update=None):
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP),
                "end_text": getattr(KIND, "return_text", None)}
 
-        for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
-            if lock is not None and spacing_changes:
-                # An earlier circuit raised a Loop Spacing: read this one's place on the panel again.
-                for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
-                    if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
-                        lock = (c, y)
-                        origin = (c.get("vx", origin[0]), y)
-                        break
-            plan = rl.layout([row], root_id, info, returns, cfg)
+        def draw_circuit(row, origin, i, row_cfg):
+            """Draw one circuit's one-line at origin and group it. (group or None, [(start, end, curve)], items that
+            could not be drawn)."""
+            plan = rl.layout([row], root_id, info, returns, row_cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
             curves = []
-            failed += draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements)
+            n_failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements)
             doc.Regenerate()
             new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
             group = None
@@ -2563,6 +2601,67 @@ def draw_riser(update=None):
                     "loop": row_loop(addresses, row["nodes"]), "label": row.get("label") or "",
                     "circuits": sorted(list(c) for c in row_circuits(addresses, row["nodes"])),
                     "origin": [origin[0], origin[1]]})
+            return group, curves, n_failed
+
+        def remove_circuit(group):
+            """Delete a circuit's group, its members and its group type (so the redraw keeps the name)."""
+            gtype = group.GroupType
+            name = gtype.Name
+            if name in groups:
+                groups.remove(name)
+            members = list(group.GetMemberIds())
+            doc.Delete(group.Id)
+            for mid in members:
+                try:
+                    if doc.GetElement(mid) is not None:
+                        doc.Delete(mid)
+                except Exception:
+                    pass
+            try:
+                if doc.GetElement(gtype.Id) is not None:
+                    doc.Delete(gtype.Id)
+            except Exception:
+                pass
+            doc.Regenerate()
+
+        for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
+            if lock is not None and spacing_changes:
+                # An earlier circuit raised a Loop Spacing: read this one's place on the panel again.
+                for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
+                    if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
+                        lock = (c, y)
+                        origin = (c.get("vx", origin[0]), y)
+                        break
+            group, curves, n_failed = draw_circuit(row, origin, i, cfg)
+            failed += n_failed
+            make_room = True
+            if (group is not None and lock is not None and lock[0]["loop"] is not None
+                    and getattr(KIND, "redraw_on_overlap", False)):
+                # Ask before making room: a different wrap length may fit it between its neighbours.
+                row_cfg = dict(cfg)
+                name = run_name(panel_name, row, i)
+                while True:
+                    sides = circuit_overlap(view, panel_inst, panel_refs, lock[0]["loop"], group)
+                    if not sides:
+                        break
+                    choice = forms.CommandSwitchWindow.show(
+                        [OVERLAP_REDRAW, OVERLAP_ROOM, OVERLAP_KEEP],
+                        message="%s overlaps the circuit %s it (wrapping after %d devices)."
+                                % (name, " and ".join(sides), row_cfg["per_line"]))
+                    if choice == OVERLAP_KEEP:
+                        make_room = False
+                        break
+                    if choice != OVERLAP_REDRAW:
+                        break
+                    per_line = ask_wrap_length(name, row_cfg["per_line"])
+                    if per_line is None:
+                        continue
+                    row_cfg["per_line"] = per_line
+                    remove_circuit(group)
+                    group, curves, n_failed = draw_circuit(row, origin, i, row_cfg)
+                    failed += n_failed
+                    if group is None:
+                        break
             if lock is not None:
                 # The first line of the one-line: horizontal, starting at the origin.
                 first = None
@@ -2572,7 +2671,7 @@ def draw_riser(update=None):
                         first = curve
                         break
                 # Room for it between the circuits below and above (its text and callouts included).
-                if group is not None and lock[0]["loop"] is not None:
+                if group is not None and lock[0]["loop"] is not None and make_room:
                     changed = fit_circuit(view, panel_inst, panel_refs, lock[0]["loop"], group)
                     if changed:
                         spacing_changes.extend(changed)

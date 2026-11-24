@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v9
+# nac_riser module - version v10
 # Change log (last change first):
+#   v10 - NAC Riser v20: CircuitKind.redraw_on_overlap - an overlapping circuit can be redrawn with another wrap length.
 #   v9 - NAC Riser v19: CircuitKind.level_labels and candela_line - NAC address text is level and centred under
 #        the symbol, with the candela on the line below (N1-1.2 / 30CD).
 #   v8 - NAC Riser v18: CircuitKind.supply_of(circuit) - the power supply number (N#) of a circuit, for the list.
 #   v7 - NAC Riser v17: CircuitKind.location_name_only (Location = room / space name) and panel_number_params
 #        (Power Supply #1-3: the number in the panel's text, written to the panel detail as an integer).
 #   v6 - NAC Riser v15: CircuitKind.select_runs - the first-device prompt offers 'Trace Selected Circuits'.
-#   v5 - NAC Riser v10: CircuitKind.return_text - every NAC one-line ends with 'NAC RETURN'.
 """NAC Riser: what the riser engine (lib/riser_tool.py) needs to know about NAC circuits.
 
 The head end is a power supply (FACU, NAC panel, booster ...). Each circuit leaving it is one row, labeled with the
@@ -112,6 +112,9 @@ class CircuitKind(object):
         # Address text: level and centred under the symbol (not at 45 degrees), with the device's candela below it.
         self.level_labels = True
         self.candela_line = True
+        # A circuit that would overlap the one below or above it: ask to redraw it with a different wrap length
+        # (riser_tool) before making room by raising Loop Spacing.
+        self.redraw_on_overlap = True
 
     # ---- Addresses ----
     def new_reader(self):
