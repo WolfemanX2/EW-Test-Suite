@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v20
+# riser_tool module - version v21
 # Change log (last change first):
+#   v21 - NAC Riser v18: Trace Selected Circuits only lists circuits of the selected panel's power supplies (the
+#         numbers in its panel_number_params, matched by the kind's supply_of); all circuits if it has none.
 #   v20 - NAC Riser v17: the panel detail is filled by fill_panel - Panel #, Panel Model, Location (the room, or
 #         MEP space, the panel is in; name only for a kind with location_name_only) and, for a kind with
 #         panel_number_params, Power Supply #1-3 as integers taken from the panel's text (NACP-01 -> 1).
@@ -10,10 +12,6 @@
 #         Panel' - a list of every circuit in the project (N1-2 (5 devices)); the chosen ones are traced from the
 #         panel, one one-line each (choose_circuits, split_rows_by_circuit).
 #   v17 - VESDA Pipe Swap v3 (no riser change): named_value now calls the shared copy in ew_common.
-#   v16 - SLC Riser v51 / NAC Riser v14: devices on a circuit that no conduit reaches are no longer marked NOT
-#         CONNECTED; the user chooses to add them in address order, add them at the end, or leave them off.
-#         Callouts are measured filled in from their device and without the symbol size cap, so callouts side by
-#         side no longer overlap.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -328,9 +326,21 @@ def starting_element():
     return resolve(doc.GetElement(ref.ElementId), is_head_candidate)
 
 
-def choose_circuits():
+def panel_supplies(root):
+    """The power supply numbers of the selected panel: the number in each of the kind's panel_number_params
+    (Power Supply #1-3: NACP-01 -> 1). Empty when it has none."""
+    found = set()
+    for name in getattr(KIND, "panel_number_params", None) or []:
+        number = number_in(named_value(root, name))
+        if number is not None:
+            found.add(number)
+    return found
+
+
+def choose_circuits(root=None):
     """The circuits (KIND.groups) chosen from a list of every circuit in the project, shown as 'N1-2 (5 devices)'.
-    None when cancelled or there are none."""
+    With a kind that has supply_of, only circuits of the selected panel's power supplies are listed (all when the
+    panel names none). None when cancelled or there are none."""
     counts, labels = {}, {}
     reader = KIND.new_reader()
     for el in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_FireAlarmDevices)
@@ -350,13 +360,24 @@ def choose_circuits():
     if not counts:
         ec.alert("No devices in this project have %s." % KIND.address_phrase, title=TITLE)
         return None
+    supplies = panel_supplies(root) if root is not None and hasattr(KIND, "supply_of") else set()
+    if supplies:
+        counts = dict((g, n) for g, n in counts.items() if KIND.supply_of(g) in supplies)
+        if not counts:
+            ec.alert("No devices in this project are on the selected panel's power supplies (%s)."
+                     % ", ".join(str(n) for n in sorted(supplies)), title=TITLE)
+            return None
     CIRCUIT_LABELS.clear()
     CIRCUIT_LABELS.update(labels)
     by_label = {}
     for g in sorted(counts):
         by_label["%s (%d device%s)" % (labels[g], counts[g], "" if counts[g] == 1 else "s")] = g
     picked = forms.SelectFromList.show([k for k in sorted(by_label, key=lambda k: by_label[k])],
-                                       title="%s - %s" % (TITLE, FIRST_SELECTED), button_name="Trace",
+                                       title="%s - %s%s" % (TITLE, FIRST_SELECTED,
+                                                            (" (power supplies %s)" % ", ".join(
+                                                                str(n) for n in sorted(supplies)))
+                                                            if supplies else ""),
+                                       button_name="Trace",
                                        multiselect=True)
     if not picked:
         return None
@@ -396,7 +417,7 @@ def first_devices(root):
     if choice == FIRST_ALL_RUNS:
         return [], None
     if choice == FIRST_SELECTED:
-        circuits = choose_circuits()
+        circuits = choose_circuits(root)
         if circuits is None:
             return None
         return [], circuits
