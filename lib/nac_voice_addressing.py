@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v9
+# nac_voice_addressing module - version v10
 # Change log (last change first):
+#   v10 - Auto Circuit - NAC v3 / Auto Circuit - Voice v3: max current counts only the devices already on the
+#        circuit numbered before the next address (up to the starting device), not ones after it.
 #   v9 - Auto Circuit - NAC v1 / Auto Circuit - Voice v1: hooks for the Auto Circuit tools: Session.load_table(),
 #        CONFIG_HINT (the config named when a type is asked about) and settings_line() (named in the report).
 #   v8 - Address NAC v6 / Address Voice v6: one kind per run (the leftovers of the combined NAC + Voice tool
@@ -11,10 +13,6 @@
 #        steps, one shared copy).
 #   v6 - Code consolidation step 5 (no tool change): the New Circuit window, choose, the start choices and the
 #        preselected device come from addressing_ui; the device scans from nac_voice_types.
-#   v5 - Address NAC v4 / Address Voice v4: Head End devices are never addressed (skipped when picked, passed
-#        over downstream, listed in the summary).
-#   v4 - Code consolidation step 4 (no tool change): resolve_device, DeviceOrTagFilter and ConduitFilter come from
-#        ew_common.
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -192,8 +190,8 @@ class DownstreamDialog(forms.WPFWindow):
         self.count_note.Text = ("The next device on %s is .%d, so the count includes the %d device(s) already "
                                 "numbered before it." % (circuit_text, next_number, next_number - 1))
         self.current_box.Text = defaults["current"]
-        self.existing_check.Content = ("Include the %d device(s) already on %s (%s)"
-                                       % (existing_count, circuit_text, nv.fmt_amps(existing_amps)))
+        self.existing_check.Content = ("Include the %d device(s) already on %s before .%d (%s)"
+                                       % (existing_count, circuit_text, next_number, nv.fmt_amps(existing_amps)))
         self.existing_check.IsChecked = defaults["include_existing"]
         {"end": self.end_radio, "count": self.count_radio,
          "current": self.current_radio}[defaults["mode"]].IsChecked = True
@@ -453,15 +451,16 @@ class Session(object):
 
     # ---- Address downstream ----
     def circuit_load(self, kind, leave_out):
-        """(amps, device count) of the devices already addressed on the circuit, leaving out element ids in
-        leave_out (the ones about to be addressed)."""
+        """(amps, device count) of the devices already on the circuit up to the starting point - numbered before
+        the next address - leaving out element ids in leave_out (the ones about to be addressed). Devices numbered
+        at or after the next address are being readdressed or come later, so they are not counted."""
         s = self.state[kind]
         amps, count = 0.0, 0
         for el in all_devices():
             if nv.eid_int(el.Id) in leave_out:
                 continue
             parsed = address_on(el, kind)
-            if parsed and parsed[0] == s["source"] and parsed[1] == s["circuit"]:
+            if parsed and parsed[0] == s["source"] and parsed[1] == s["circuit"] and parsed[2] < s["next"]:
                 amps += nv.get_current(doc, el) or 0.0
                 count += 1
         return amps, count
