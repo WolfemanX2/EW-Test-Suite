@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v5
+# riser_config_editor module - version v6
 # Change log (last change first):
+#   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
+#        head end (picked from the loaded Detail Item families, or typed).
 #   v5 - Riser - Config v11: the Address Callouts help says where callouts now go (a band below the address text,
 #        joined to the device by detail lines) and that their origin should be the top of the callout.
 #   v4 - Riser - Config v10: fixed 'Cannot import name Visibility' when the window opened (the WPF assembly is now
@@ -10,9 +12,6 @@
 #        callout symbol per Address Group subgroup, used on the riser instead of the 45 degree address text.
 #        Messages use pyRevit option bars / plain boxes instead of the warning popup.
 #   v2 - SLC Riser v35 (cleanup): number_text comes from slc_riser instead of a copy here.
-#   v1 - Riser - Config v8 (was SLC Riser - Config v7) / NAC Riser v1: the config window, moved here from the
-#        SLC Riser - Config script, with an SLC Riser tab and a NAC Riser tab (each its own symbol table and
-#        drawing settings) and one Save / Close for both.
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -39,6 +38,8 @@ from System.Data import DataTable, DataRowState
 from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory
 from pyrevit import revit, forms
 from System.Windows import Visibility
+from System.Windows.Controls import TextChangedEventHandler
+from System.Windows.Controls.Primitives import TextBoxBase
 
 import slc_riser as sr     # SLC Riser's files, and the table entries / symbols / callouts shared by the risers
 import nac_riser           # NAC Riser's files
@@ -58,6 +59,18 @@ KEEP_EDITING = "Keep Editing"
 def note(msg):
     """A message box without the warning icon and sound."""
     ec.alert(msg, title=TITLE)
+
+
+def detail_families():
+    """Names of the Detail Item families loaded in the project, sorted."""
+    names = set()
+    for s in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_DetailComponents)
+              .WhereElementIsElementType().ToElements()):
+        try:
+            names.add(s.FamilyName)
+        except Exception:
+            pass
+    return sorted(names, key=lambda n: n.upper())
 
 
 def cell_text(v):
@@ -207,7 +220,13 @@ TAB_XAML = """
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Panel detail family:" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="The Detail Item family drawn for the head end panel on this riser (its Panel #, Location, reference lines and Loop Spacing parameters are used)."/>
+                            <ComboBox x:Name="PFX_panel_family_box" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,6,0,0"
+                                      IsEditable="True"
+                                      ToolTip="Pick a loaded Detail Item family, or type the family name."/>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Drafting view scale:" VerticalAlignment="Center" Margin="0,0,8,6"/>
                             <ComboBox x:Name="PFX_scale_box" Grid.Row="0" Grid.Column="1" Margin="0,0,0,6" IsEditable="False"/>
                             <TextBlock Grid.Row="0" Grid.Column="3" Text="Spacing between devices (ft):" VerticalAlignment="Center" Margin="0,0,8,6"/>
@@ -390,6 +409,10 @@ class RiserTab(object):
             self.c("grid").Columns[2].Visibility = Visibility.Collapsed
 
         # Events (wired here, so each tab's controls call their own tab).
+        self.c("panel_family_box").ItemsSource = detail_families()
+        self.c("panel_family_box").AddHandler(TextBoxBase.TextChangedEvent,
+                                              TextChangedEventHandler(self.setting_changed))
+        self.c("panel_family_box").SelectionChanged += self.setting_changed
         self.c("scale_box").SelectionChanged += self.setting_changed
         for name in ("spacing_box", "per_line_box", "offset_box", "rounding_box"):
             self.c(name).TextChanged += self.setting_changed
@@ -403,7 +426,8 @@ class RiserTab(object):
         self.c("callout_text_btn").Click += self.callout_text_click
         if self.failed:
             for name in ("grid", "defaults_btn", "add_btn", "set_btn", "delete_btn", "scale_box", "spacing_box",
-                         "per_line_box", "offset_box", "rounding_box", "callout_grid", "callout_set_btn",
+                         "per_line_box", "offset_box", "rounding_box", "panel_family_box", "callout_grid",
+                         "callout_set_btn",
                          "callout_text_btn"):
                 self.c(name).IsEnabled = False
         self._loading = False
@@ -430,6 +454,7 @@ class RiserTab(object):
         self.c("per_line_box").Text = number_text(settings["devices_per_line"])
         self.c("rounding_box").Text = number_text(settings["wrap_rounding"])
         self.c("offset_box").Text = number_text(settings["label_offset_in"])
+        self.c("panel_family_box").Text = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
         self._loading = False
 
     def setting_changed(self, sender, args):
@@ -437,7 +462,9 @@ class RiserTab(object):
             self.settings_dirty = True
 
     def defaults_click(self, sender, args):
-        self._show_settings(self.store.DEFAULT_SETTINGS)
+        defaults = dict(self.store.DEFAULT_SETTINGS)
+        defaults[sr.PANEL_FAMILY_KEY] = sr.DEFAULT_PANEL_FAMILY
+        self._show_settings(defaults)
         self.settings_dirty = True
         self.status("default drawing settings shown (unsaved)")
 
@@ -466,6 +493,10 @@ class RiserTab(object):
                               % (self.name, what, "whole number" if kind is int else "number",
                                  number_text(lo), number_text(hi)))
             out[key] = value
+        family = (self.c("panel_family_box").Text or "").strip()
+        if not family:
+            errors.append("%s: choose the panel detail family." % self.name)
+        out[sr.PANEL_FAMILY_KEY] = family
         return out
 
     # ---- Symbol table ----

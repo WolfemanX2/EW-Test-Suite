@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v18
+# riser_tool module - version v19
 # Change log (last change first):
+#   v19 - SLC Riser v52 / NAC Riser v16: the head end detail family comes from the riser's drawing settings
+#         (Riser - Config) instead of always NEX2-DETAIL-RISER.
 #   v18 - NAC Riser v15: a kind with select_runs offers 'Trace Selected Circuits' instead of 'Trace Every Run From
 #         Panel' - a list of every circuit in the project (N1-2 (5 devices)); the chosen ones are traced from the
 #         panel, one one-line each (choose_circuits, split_rows_by_circuit).
@@ -12,8 +14,6 @@
 #   v15 - SLC Riser v50 / NAC Riser v13: fix - adding a circuit below one already locked to the panel (Loop 1 after
 #         Loop 3) broke the lock: raising a Loop Spacing moves the locked circuits above with their reference
 #         lines, and they were then moved again. Now each circuit is only moved by what it hasn't moved already.
-#   v14 - SLC Riser v49 / NAC Riser v12: the automatic Loop Spacing adjustment never leaves Loop Spacing 1 below
-#         10' (MIN_LOOP_SPACING_1_FT); it is raised first, and the circuits move up with it.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -98,7 +98,7 @@ UNCONNECTED_BY_ADDRESS = "Add Them in Address Order"     # devices on the circui
 UNCONNECTED_AT_END = "Add Them at the End of the Line"
 UNCONNECTED_LEAVE_OFF = "Leave Them Off"
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
-PANEL_FAMILY = "NEX2-DETAIL-RISER"  # detail item drawn for the head end panel
+PANEL_FAMILY = sr.DEFAULT_PANEL_FAMILY   # detail item drawn for the head end panel; set from the riser's settings
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 HEAD_SEARCH_RADIUS_FT = 5.0    # a head end with no conduit: look this far around it for an element with conduit
 GUTTER_NAME = "GUTTERBOX"      # family names like GUTTER-BOX / Gutter Box come first (letters and digits compared)
@@ -2100,7 +2100,7 @@ def review_layout(rows, device_count=None):
 def apply_settings():
     """Use the drawing settings saved in the kind's tab of Riser - Config. False if the file can't be read and the user
     chose to stop."""
-    global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS
+    global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS, PANEL_FAMILY
     try:
         settings = KIND.load_settings()
     except Exception as ex:
@@ -2115,6 +2115,7 @@ def apply_settings():
     DEVICE_SPACING_FT = settings["device_spacing_ft"]
     LABEL_OFFSET_IN = settings["label_offset_in"]
     ADDRESS_CALLOUTS = settings.get(sr.CALLOUTS) or {}
+    PANEL_FAMILY = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
     return True
 
 

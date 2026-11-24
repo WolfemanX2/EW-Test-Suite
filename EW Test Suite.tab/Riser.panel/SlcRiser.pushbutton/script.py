@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v51
-__title__ = "SLC\nRiser v51"
+# SLC Riser script - version v52
+__title__ = "SLC\nRiser v52"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -30,7 +30,8 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "(N#L#M# / N#L#D#) underneath; a device with several addresses shows the first and last on two "
            "lines (first- / last). The address text is at 45 degrees, right justified, hanging below "
            "the riser line, its top corner 1\" under its device; devices are 6' apart, and the riser line runs unbroken through the devices. Each row is labeled with its loop as a letter (L1 = A, L2 = B ...), read from those addresses. "
-           "The head end panel is drawn with the NEX2-DETAIL-RISER detail item (Panel # and Location - the "
+           "The head end panel is drawn with the panel detail family set on the SLC Riser tab of Riser - Config "
+           "(NEX2-DETAIL-RISER by default) (Panel # and Location - the "
            "room name and number - filled in from the panel); every run comes out of its right side, the first "
            "device one device spacing away from the right end of its reference line. The height of loop N is "
            "read from the placed panel's Loop Spacing parameters: each is measured from the line below it (Loop "

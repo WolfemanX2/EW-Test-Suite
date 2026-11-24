@@ -60,16 +60,16 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - **Update Selected One-Line:** run SLC Riser or NAC Riser from a drafting view, pick a one-line group, and its
   circuit is traced again and redrawn in place with the current symbols, callouts and settings. Each one-line ends
   with SLC RETURN / NAC RETURN; the panel detail's Panel Model comes from the panel's Model.
-- **Riser - Config (SLC Riser tab):** sets the drawing settings and the symbols used for each device type, and an
+- **Riser - Config (SLC Riser tab):** sets the drawing settings (including the panel detail family drawn for the head end) and the symbols used for each device type, and an
   optional address callout symbol per Address Group subgroup (Family Defaults Config) used instead of the 45 degree
   address text, placed in a band below the line's address text with detail lines to the device (build callouts as
   Generic Annotations with their origin at the top); the callout's parameters are filled from the device's same-named
   parameters
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
-- Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the NEX2-DETAIL-RISER panel detail.
+- Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the panel detail (the family set on the NAC Riser tab of Riser - Config).
 - The power supply is chosen from a list (NAC / NCP / NACP in the family name, plus Head End in Family Defaults Config or a Panel # parameter) or selected in the model.
-- **Riser - Config (NAC Riser tab):** its own drawing settings and symbols, kept apart from SLC Riser's
+- **Riser - Config (NAC Riser tab):** its own drawing settings (including its own panel detail family) and symbols, kept apart from SLC Riser's
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/VESDA.panel/VesdaPipeSwap.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/VESDA.panel/VesdaPipeSwap.pushbutton/icon.png" width="32" height="32" alt=""></picture> VESDA Pipe Swap - Configurable
 - Changes the pipe type of a VESDA run without Revit's Change Type rebuilding it: pipes get the new type and keep their size, and elbows / tees (plus crosses, transitions, unions, caps) are swapped for the parts in the new type's Routing Preferences, in place and still connected.
@@ -238,14 +238,14 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v51 |
-| NAC Riser | v15 |
+| SLC Riser | v52 |
+| NAC Riser | v16 |
 | Riser - Config (was SLC Riser - Config) | v11 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v19 |
-| lib/riser_tool.py | v18 |
+| lib/slc_riser.py | v20 |
+| lib/riser_tool.py | v19 |
 | lib/nac_riser.py | v6 |
-| lib/riser_config_editor.py | v5 |
+| lib/riser_config_editor.py | v6 |
 | lib/riser_layout.py | v25 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |

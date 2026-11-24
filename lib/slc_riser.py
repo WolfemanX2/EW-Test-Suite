@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v19
+# slc_riser module - version v20
 # Change log (last change first):
+#   v20 - Riser - Config v12 / SLC Riser v52 / NAC Riser v16: the drawing settings keep "panel_family", the detail
+#         family drawn for the head end (PANEL_FAMILY_KEY, DEFAULT_PANEL_FAMILY), set per riser in Riser - Config.
 #   v19 - SLC Riser v47: LoopKind.return_text - every SLC one-line ends with 'SLC RETURN'.
 #   v18 - SLC Riser v43 / NAC Riser v8 / Riser - Config v9: the symbol rules by number of addresses are gone (a type
 #         is always drawn with its own symbols; old saved rules are ignored). Address callouts: the drawing settings
@@ -11,8 +13,6 @@
 #   v16 - SLC Riser v37: LoopKind.head_list_keywords / head_list_min_matches - the head end list shows panels
 #         meeting 2 of 3: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the
 #         family name.
-#   v15 - SLC Riser v35: LoopKind, the SLC loop kind SLC Riser now runs the riser engine (lib/riser_tool.py) with;
-#         number_text (shared by the engine and Riser - Config); the unused LOCAL_DIR removed.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -80,6 +80,8 @@ SETTING_LIMITS = {              # (smallest, largest) allowed
 }
 
 
+PANEL_FAMILY_KEY = "panel_family"           # settings key: the detail family drawn for the head end
+DEFAULT_PANEL_FAMILY = "NEX2-DETAIL-RISER"
 CALLOUTS = "address_callouts"       # settings key: {Address Group: {subgroup name: callout "Family : Type"}}
 ADDRESS_CALLOUTS = True             # Riser - Config shows the Address Callouts table on this riser's tab
 
@@ -119,6 +121,8 @@ def clean_settings(data):
     """DEFAULT_SETTINGS with every valid value from data in place of the default, and its address callouts."""
     out = dict(DEFAULT_SETTINGS)
     out[CALLOUTS] = clean_callouts(data.get(CALLOUTS) if isinstance(data, dict) else None)
+    family = data.get(PANEL_FAMILY_KEY) if isinstance(data, dict) else None
+    out[PANEL_FAMILY_KEY] = (family or "").strip() or DEFAULT_PANEL_FAMILY
     for key, default in DEFAULT_SETTINGS.items():
         try:
             value = data.get(key)
