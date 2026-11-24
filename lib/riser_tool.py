@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v28
+# riser_tool module - version v29
 # Change log (last change first):
+#   v29 - NAC Riser v26: the circuit label drawn on the one-line goes through the kind's tag_text (if it has one).
 #   v28 - SLC Riser v57 / NAC Riser v25: the gap kept between circuits is the Gap between circuits setting (inches in
 #         the view, 1" default) instead of 1/8" on the sheet (a foot at 1/8"); an overlap names the two elements
 #         in the output window. Only nested Detail Items count as power supplies (a nested Generic Annotation with
@@ -12,10 +13,6 @@
 #         groups named for it (and its '(2)', '(3)' copies) are deleted first (remove_previous_groups).
 #   v25 - SLC Riser v54 / NAC Riser v22: the circuit label's offset from the start of the one-line and the end of
 #         line (text, or a Generic Annotation) come from Riser - Config.
-#   v24 - NAC Riser v21: power supplies nested in the panel detail - when the placed panel has nested instances with
-#         a Power Supply # parameter, circuit N#-C goes on reference line C of the nested instance whose Power
-#         Supply # is N# (nested_exit_points), and is locked to it; a circuit whose power supply isn't in the panel
-#         is skipped. Overlaps there can only be redrawn or kept (the nested lines have fixed spacing).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -2899,7 +2896,11 @@ def draw_riser(update=None):
             if update is None:
                 # Drawn again: the circuit's previous one-line is replaced, not kept as '... (2)'.
                 replaced[0] += remove_previous_groups(run_name(panel_name, row, i))
-            plan = rl.layout([row], root_id, info, returns, row_cfg)
+            drawn_row = row
+            if hasattr(KIND, "tag_text") and row.get("label"):
+                drawn_row = dict(row)
+                drawn_row["label"] = KIND.tag_text(row["label"])     # e.g. N12 on the drawing for N1-2
+            plan = rl.layout([drawn_row], root_id, info, returns, row_cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)

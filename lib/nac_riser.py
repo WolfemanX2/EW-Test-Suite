@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v10
+# nac_riser module - version v11
 # Change log (last change first):
+#   v11 - NAC Riser v26: CircuitKind.tag_text - the circuit label on the one-line has no hyphen (N1-2 -> N12).
 #   v10 - NAC Riser v20: CircuitKind.redraw_on_overlap - an overlapping circuit can be redrawn with another wrap length.
 #   v9 - NAC Riser v19: CircuitKind.level_labels and candela_line - NAC address text is level and centred under
 #        the symbol, with the candela on the line below (N1-1.2 / 30CD).
 #   v8 - NAC Riser v18: CircuitKind.supply_of(circuit) - the power supply number (N#) of a circuit, for the list.
 #   v7 - NAC Riser v17: CircuitKind.location_name_only (Location = room / space name) and panel_number_params
 #        (Power Supply #1-3: the number in the panel's text, written to the panel detail as an integer).
-#   v6 - NAC Riser v15: CircuitKind.select_runs - the first-device prompt offers 'Trace Selected Circuits'.
 """NAC Riser: what the riser engine (lib/riser_tool.py) needs to know about NAC circuits.
 
 The head end is a power supply (FACU, NAC panel, booster ...). Each circuit leaving it is one row, labeled with the
@@ -142,6 +142,11 @@ class CircuitKind(object):
         for source, circuit, number in self._parsed(addresses):
             return (0, source, circuit, number)
         return (1, 0, 0, 0)
+
+    def tag_text(self, label):
+        """The circuit label as drawn on the one-line: without the hyphen (N1-2 -> N12). Group and view names keep
+        the hyphen."""
+        return (label or "").replace("-", "")
 
     def supply_of(self, group):
         """The power supply number (N#) of a circuit (KIND.groups), e.g. 1 for N1-3."""
