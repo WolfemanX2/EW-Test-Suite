@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# auto_circuit module - version v2
+# auto_circuit module - version v3
 # Change log (last change first):
+#   v3 - Auto Circuit - SLC v3 / NAC v4 / Voice v4: the next device picked sets the session's prefer, so at a
+#        split the run goes down its side first.
 #   v2 - Auto Circuit - SLC / NAC / Voice v2: Automatically asks for the next device on the circuit (or its tag)
 #        instead of the conduit, and finds the conduit leaving the first device towards it.
 #   v1 - Auto Circuit - SLC / NAC / Voice v1: the three tools' start (Readdress, Route Conduit, Reroute and
@@ -106,10 +108,13 @@ class _Preset(object):
                 return None
             picked = module.doc.GetElement(ref.ElementId)
             if isinstance(picked, Conduit):
+                self.prefer = ()
                 return picked
             device = ec.resolve_device(picked)
             conduit = None if device is None else _conduit_towards(module.doc, self.anchor, device)
             if conduit is not None:
+                # At a split the run goes down the next device's side first (not the tee rule's order).
+                self.prefer = (ec.eid_int(device.Id),)
                 return conduit
             ec.alert("That device is not connected by conduit downstream of element %d.\n\nSelect the next device "
                      "on the circuit, or press Esc to pick devices manually." % ec.eid_int(self.anchor.Id),

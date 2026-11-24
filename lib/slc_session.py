@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_session module - version v4
+# slc_session module - version v5
 # Change log (last change first):
+#   v5 - Auto Circuit - SLC v3: a run follows the side of a split holding the next device (prefer) and, to an
+#        end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v4 - Auto Circuit - SLC v1: hooks for the Auto Circuit tools: settings_line() (the settings named in the
 #        report); main() sets TITLE (Auto Circuit - SLC changes it for its run).
 #   v3 - Address SLC v12: follows conduit with conduit_trace.follow (it had its own copy of the same steps); the
@@ -73,6 +75,8 @@ def end_group(group, keep):
 class Session(aui.SlcCountRules):
     """One Address SLC run. How many addresses each device gets (and the questions about it) comes from
     addressing_ui.SlcCountRules, shared with Auto-Circuit."""
+    prefer = ()     # element ids of devices the user chose ahead of a run (Auto Circuit's next device)
+
     def __init__(self):
         self.init_count_rules()     # last_choice, undefined_seen, count_prompted, option_prompted
         self.reader = slc.AddressParamReader()
@@ -270,7 +274,8 @@ class Session(aui.SlcCountRules):
         type_name = slc.element_type_name(doc, conduit) or "the picked"
         anchor_id = slc.eid_int(self.anchor.Id)
         # Only conduit of the picked type is followed; fittings, boxes and devices are passed through.
-        order, problem = ct.follow(doc, self.anchor, conduit, slc.is_device)
+        order, problem = ct.follow(doc, self.anchor, conduit, slc.is_device, prefer=self.prefer)
+        self.run_conduit = conduit
         if problem:
             forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
                         "Pick a conduit on the run leaving the last device addressed, or pick a device."
@@ -378,7 +383,8 @@ class Session(aui.SlcCountRules):
             el = resolve_device(doc.GetElement(ref.ElementId))
             n = index.get(slc.eid_int(el.Id)) if el is not None else None
             if n is not None:
-                return todo[:n + 1]
+                return ct.end_on_its_side(doc, todo, lambda d: slc.eid_int(d.Id), self.anchor, self.run_conduit,
+                                          slc.is_device, self.prefer, slc.eid_int(el.Id))
             forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that will be "
                         "addressed. Pick another, or press Esc to go back." % (len(todo), type_name), title=TITLE)
 

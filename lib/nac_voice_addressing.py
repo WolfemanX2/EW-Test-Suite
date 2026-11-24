@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v10
+# nac_voice_addressing module - version v11
 # Change log (last change first):
+#   v11 - Auto Circuit - NAC v4 / Voice v4: a run follows the side of a split holding the next device (prefer)
+#        and, to an end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v10 - Auto Circuit - NAC v3 / Auto Circuit - Voice v3: max current counts only the devices already on the
 #        circuit numbered before the next address (up to the starting device), not ones after it.
 #   v9 - Auto Circuit - NAC v1 / Auto Circuit - Voice v1: hooks for the Auto Circuit tools: Session.load_table(),
@@ -11,8 +13,6 @@
 #        device instead of the EOL device's Comments; messages titled with the tool's name.
 #   v7 - Address NAC v5 / Address Voice v5: saving the addresses and the EOL through ew_common.commit (the same
 #        steps, one shared copy).
-#   v6 - Code consolidation step 5 (no tool change): the New Circuit window, choose, the start choices and the
-#        preselected device come from addressing_ui; the device scans from nac_voice_types.
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -257,6 +257,8 @@ class Session(object):
         """The settings this run used, for the report."""
         return "Lookup table: `%s`" % nv.table_path()
 
+    prefer = ()     # element ids of devices the user chose ahead of a run (Auto Circuit's next device)
+
     def __init__(self, kind):
         self.kind = kind
         self.finished = False       # the user chose Finish after an automatic run
@@ -478,7 +480,8 @@ class Session(object):
             el = resolve_device(doc.GetElement(ref.ElementId))
             n = index.get(nv.eid_int(el.Id)) if el is not None else None
             if n is not None:
-                return candidates[:n + 1]
+                return ct.end_on_its_side(doc, candidates, lambda c: c["id"], self.anchor, self.run_conduit,
+                                          nv.is_device, self.prefer, nv.eid_int(el.Id))
             forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that take a %s "
                         "address. Pick another, or press Esc to go back."
                         % (len(candidates), type_name, nv.KIND_NAMES[kind]), title=TITLE)
@@ -517,7 +520,8 @@ class Session(object):
         kind = self.kind
         name = nv.KIND_NAMES[kind]
 
-        found, problem = ct.follow(doc, self.anchor, conduit, nv.is_device)
+        found, problem = ct.follow(doc, self.anchor, conduit, nv.is_device, prefer=self.prefer)
+        self.run_conduit = conduit
         if problem:
             forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
                         "Pick a conduit on the run leaving the last device addressed, or pick a device."

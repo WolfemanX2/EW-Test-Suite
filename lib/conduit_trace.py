@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# conduit_trace module - version v6
+# conduit_trace module - version v7
 # Change log (last change first):
+#   v7 - Auto Circuit - SLC v3 / NAC v4 / Voice v4: follow / trace_downstream take prefer (devices the user
+#        chose): at a split their side comes first, ahead of the tee rule; end_on_its_side for a run to an end device.
 #   v6 - VESDA Pipe Swap v1: conduit_connectors, connected_elements and walk take an optional domain (default
 #        conduit, so nothing changes for the conduit tools); VESDA Pipe Swap walks pipe runs with Domain.DomainPiping.
 #   v5 - Code consolidation step 3 (no tool change): eid_int comes from ew_common.
@@ -9,7 +11,6 @@
 #        SLC Riser's tee rule (riser_layout.tee_order: the side with the most devices is the main run, taken
 #        last); _Graph, follow and conduits_between take an optional set of conduit types to follow.
 #   v3 - Address NAC / Voice v7: conduit_length and walk, for the EOL voltage estimate.
-#   v2 - Address NAC / Voice v4: _Graph and conduits_between, for Notification Circuit on the run's conduit.
 """Follows conduit from one device to the devices downstream of it, in order of connection.
 
 The one copy of the conduit tracing: used by Address NAC / Voice, Address SLC (through slc_addressing),
@@ -102,7 +103,7 @@ def element_type_name(doc, el):
         return ""
 
 
-def trace_downstream(conduit, anchor, ports, allowed, is_device, sort_key=None):
+def trace_downstream(conduit, anchor, ports, allowed, is_device, sort_key=None, prefer=None):
     """Devices reached by following conduit away from the anchor device, in order of connection.
 
     conduit     id of the conduit that was picked: it gives the direction (and, through `allowed`, the type)
@@ -118,6 +119,9 @@ def trace_downstream(conduit, anchor, ports, allowed, is_device, sort_key=None):
     the side with the most devices beyond the split is the main run and comes last; the other sides (the tee'd
     branches) come first, each in full, in connector order (or sort_key order). On a tie for the most devices
     the side that comes later is the main run.
+    prefer      -> optional ids of devices the user chose (the next device, the last device): at a split, the
+                   side holding one of them comes first, ahead of the tee rule, so a run up to them stays on
+                   their side of the split.
     Returns (ordered device ids, None), or (None, reason) when the conduit does not lead back to the anchor."""
     def step(i, blocked):
         return [n for group in ports(i) for n in group if n not in blocked and allowed(n)]
@@ -146,6 +150,7 @@ def trace_downstream(conduit, anchor, ports, allowed, is_device, sort_key=None):
 
     visited = set([conduit, anchor])
     visited.update(ends[best[1]])
+    wanted = set(prefer or ())
 
     def side_key(sides):
         """Sort value of each side at a split: its connector order, or sort_key of its first device."""
@@ -174,7 +179,12 @@ def trace_downstream(conduit, anchor, ports, allowed, is_device, sort_key=None):
                 if n not in visited:
                     sides.append(collect(n))
             # The tee rule shared with SLC Riser: the tee'd branches first, the main run (most devices) last.
-            for k in tee_order(range(len(sides)), lambda k: len(sides[k]), side_key(sides)):
+            ks = tee_order(range(len(sides)), lambda k: len(sides[k]), side_key(sides))
+            if wanted:
+                # A side holding a device the user chose goes first (the rest keep the tee rule's order).
+                ks = [k for k in ks if wanted.intersection(sides[k])] + \
+                     [k for k in ks if not wanted.intersection(sides[k])]
+            for k in ks:
                 order.extend(sides[k])
             return order
 
@@ -216,17 +226,32 @@ class _Graph(object):
         return not isinstance(el, Conduit) or _type_number(el.GetTypeId()) in self.type_ids
 
 
-def follow(doc, anchor, conduit, is_device, conduit_types=None, sort_key=None):
+def follow(doc, anchor, conduit, is_device, conduit_types=None, sort_key=None, prefer=None):
     """Devices downstream of the anchor device, in order, along conduit of the chosen types (None = the picked
-    conduit's type). sort_key(element) optionally orders tee'd branches by their first device.
+    conduit's type). sort_key(element) optionally orders tee'd branches by their first device. prefer: element
+    ids of devices the user chose - at a split their side comes first (see trace_downstream).
     Returns ([elements], None), or (None, reason)."""
     g = _Graph(conduit, conduit_types)
     key = None if sort_key is None else (lambda i: sort_key(g.elements[i]))
     order, problem = trace_downstream(g.remember(conduit), g.remember(anchor), g.ports, g.allowed,
-                                      lambda i: is_device(g.elements[i]), key)
+                                      lambda i: is_device(g.elements[i]), key, prefer)
     if problem:
         return None, problem
     return [g.elements[i] for i in order], None
+
+
+def end_on_its_side(doc, items, item_id, anchor, conduit, is_device, prefer, end_id):
+    """items (devices of a run, in any order; item_id(item) -> element id) up to and including the end device,
+    in order of connection with the end device's side of every split first (and the prefer devices' side), so the
+    run stays on the way to the end device instead of taking a branch the tee rule puts first."""
+    order, problem = follow(doc, anchor, conduit, is_device, prefer=set(prefer or ()) | set([end_id]))
+    if not problem:
+        place = dict((eid_int(el.Id), n) for n, el in enumerate(order))
+        items = sorted(items, key=lambda it: place.get(item_id(it), len(place)))
+    for n, it in enumerate(items):
+        if item_id(it) == end_id:
+            return items[:n + 1]
+    return items
 
 
 def conduits_between(anchor, conduit, devices, conduit_types=None):

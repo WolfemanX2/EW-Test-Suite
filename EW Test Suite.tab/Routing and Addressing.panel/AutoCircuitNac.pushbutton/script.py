@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto Circuit - NAC script - version v3
-__title__ = "Auto Circuit\nNAC v3"
+# Auto Circuit - NAC script - version v4
+__title__ = "Auto Circuit\nNAC v4"
 __doc__ = ("NAC addresses and circuits (N#-#.# / N#-#), and the conduit between the devices.\n\n"
            "Choose what to do:\n"
            "- Readdress: Manually (in order of selection) or Automatically (in order of conduit connection).\n"
