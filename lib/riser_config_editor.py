@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v9
+# riser_config_editor module - version v10
 # Change log (last change first):
+#   v10 - Riser - Config v16: the Line end choices are made before the saved settings are shown (the window failed
+#         to open with "'RiserTab' object has no attribute 'end_choices'" once a Generic Annotation was saved as
+#         the line end).
 #   v9 - Riser - Config v15: Gap between circuits (in) box.
 #   v8 - Riser - Config v14: the Address text below line tooltip says negative values move the text up.
 #   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
 #   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
 #        head end (picked from the loaded Detail Item families, or typed).
-#   v5 - Riser - Config v11: the Address Callouts help says where callouts now go (a band below the address text,
-#        joined to the device by detail lines) and that their origin should be the top of the callout.
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -408,6 +409,9 @@ class RiserTab(object):
                 self.cfg = None
 
         self.c("scale_box").ItemsSource = [label for label, _ in store.SCALES]
+        # Line end choices first: _show_settings adds a saved one that isn't loaded in this project to them.
+        self.end_choices = [END_TEXT] + generic_annotation_types()
+        self.c("end_box").ItemsSource = self.end_choices
         self._show_settings(settings)
 
         # Symbols loaded now, plus any saved ones that aren't loaded in this project (so they aren't lost).
@@ -434,8 +438,6 @@ class RiserTab(object):
 
         # Events (wired here, so each tab's controls call their own tab).
         self.c("panel_family_box").ItemsSource = detail_families()
-        self.end_choices = [END_TEXT] + generic_annotation_types()
-        self.c("end_box").ItemsSource = self.end_choices
         self.c("end_box").SelectionChanged += self.setting_changed
         self.c("label_x_box").TextChanged += self.setting_changed
         self.c("gap_box").TextChanged += self.setting_changed
