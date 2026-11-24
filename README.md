@@ -208,9 +208,9 @@ share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
-| Auto Circuit - SLC | v1 |
-| Auto Circuit - NAC | v1 |
-| Auto Circuit - Voice | v1 |
+| Auto Circuit - SLC | v2 |
+| Auto Circuit - NAC | v2 |
+| Auto Circuit - Voice | v2 |
 | lib/auto_circuit.py | v1 |
 | lib/circuit_rules.py | v1 |
 | lib/ew_common.py | v6 |

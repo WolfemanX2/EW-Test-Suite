@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# auto_circuit module - version v1
+# auto_circuit module - version v2
 # Change log (last change first):
+#   v2 - Auto Circuit - SLC / NAC / Voice v2: Automatically asks for the next device on the circuit (or its tag)
+#        instead of the conduit, and finds the conduit leaving the first device towards it.
 #   v1 - Auto Circuit - SLC / NAC / Voice v1: the three tools' start (Readdress, Route Conduit, Reroute and
 #        Readdress) and Readdress, Manually or Automatically, with Family Defaults Config.
 """Auto Circuit - SLC, Auto Circuit - NAC and Auto Circuit - Voice: one tool per kind of circuit, each running
@@ -16,6 +18,7 @@ with Family Defaults Config (lib/circuit_rules.py) instead of their old tables, 
 at the start instead of after the first device."""
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
+from Autodesk.Revit.DB.Electrical import Conduit
 from pyrevit import revit, forms, script
 
 import circuit_config as cc
@@ -25,6 +28,7 @@ import slc_session
 import slc_addressing as slc
 import nac_voice_addressing as nva
 import ew_common as ec        # shared helpers (lib/ew_common.py)
+import conduit_trace as ct    # following conduit from a device (lib/conduit_trace.py)
 
 TITLES = {"SLC": "Auto Circuit - SLC", "N": "Auto Circuit - NAC", "V": "Auto Circuit - Voice"}
 CONFIG_NAME = "Family Defaults Config"
@@ -37,10 +41,8 @@ AUTOMATIC = "Readdress Automatically (in order of conduit connection)"
 NEW_ROUTE = "New Conduit Route"
 ADD_TO_CIRCUIT = "Add to Existing Circuit"
 
-AUTOMATIC_EXPLAINED = ("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you "
-                       "want to address. Devices are found by following that conduit (and only that conduit type) "
-                       "away from the device.\n\nPress Esc while selecting to pick devices one at a time instead.")
-CONDUIT_PROMPT = "Select the conduit leaving the device in the direction to address - Esc to pick devices manually"
+NEXT_DEVICE_EXPLAINED = "Please select Next device to be added to Circuit"
+NEXT_DEVICE_PROMPT = "Please select Next device to be added to Circuit (or its tag) - Esc to pick devices manually"
 
 
 def main(kind, shift_clicked=False):
@@ -90,16 +92,51 @@ class _Preset(object):
         self.manual = not automatic
 
     def _pick_conduit(self, module):
-        """The conduit the user picks leaving the anchor device, or None (Esc: Manual from now on)."""
+        """Asks for the next device on the circuit (or its tag; a conduit is also accepted) and returns the conduit
+        leaving the anchor device towards it, or None (Esc: Manual from now on)."""
         if not self.explained:
-            forms.alert(AUTOMATIC_EXPLAINED % ec.eid_int(self.anchor.Id), title=module.TITLE)
+            ec.alert(NEXT_DEVICE_EXPLAINED, title=module.TITLE)
             self.explained = True
-        try:
-            ref = module.uidoc.Selection.PickObject(ObjectType.Element, ec.ConduitFilter(), CONDUIT_PROMPT)
-        except OperationCanceledException:
-            self.manual = True
-            return None
-        return module.doc.GetElement(ref.ElementId)
+        while True:
+            try:
+                ref = module.uidoc.Selection.PickObject(ObjectType.Element, ec.DeviceOrTagFilter(conduit=True),
+                                                        NEXT_DEVICE_PROMPT)
+            except OperationCanceledException:
+                self.manual = True
+                return None
+            picked = module.doc.GetElement(ref.ElementId)
+            if isinstance(picked, Conduit):
+                return picked
+            device = ec.resolve_device(picked)
+            conduit = None if device is None else _conduit_towards(module.doc, self.anchor, device)
+            if conduit is not None:
+                return conduit
+            ec.alert("That device is not connected by conduit downstream of element %d.\n\nSelect the next device "
+                     "on the circuit, or press Esc to pick devices manually." % ec.eid_int(self.anchor.Id),
+                     title=module.TITLE)
+
+
+def _conduit_towards(doc, anchor, device):
+    """The conduit leaving the anchor device whose downstream run reaches the device, or None."""
+    anchor_id, target = ec.eid_int(anchor.Id), ec.eid_int(device.Id)
+    if anchor_id == target:
+        return None
+    candidates, seen = [], set()
+    for group in ct.connected_elements(anchor):
+        for el in group:
+            # Conduit joined to the device, or joined through a fitting / box on its connector.
+            near = [el] if isinstance(el, Conduit) else [n for g in ct.connected_elements(el) for n in g
+                                                        if isinstance(n, Conduit)]
+            for c in near:
+                i = ec.eid_int(c.Id)
+                if i not in seen:
+                    seen.add(i)
+                    candidates.append(c)
+    for c in candidates:
+        found, problem = ct.follow(doc, anchor, c, ec.is_device)
+        if not problem and any(ec.eid_int(f.Id) == target for f in found):
+            return c
+    return None
 
 
 class SlcReaddress(_Preset, slc_session.Session):
