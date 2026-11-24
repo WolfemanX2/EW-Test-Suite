@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v25
+# riser_tool module - version v26
 # Change log (last change first):
+#   v26 - SLC Riser v55 / NAC Riser v23: drawing a circuit again replaces its previous one-line - the detail
+#         groups named for it (and its '(2)', '(3)' copies) are deleted first (remove_previous_groups).
 #   v25 - SLC Riser v54 / NAC Riser v22: the circuit label's offset from the start of the one-line and the end of
 #         line (text, or a Generic Annotation) come from Riser - Config.
 #   v24 - NAC Riser v21: power supplies nested in the panel detail - when the placed panel has nested instances with
@@ -12,8 +14,6 @@
 #         (circuit_overlap, draw_circuit).
 #   v22 - NAC Riser v19: a kind with level_labels gets level address text centred under each symbol, and with
 #         candela_line a second line with the device's candela (Candela parameter, else the type name: 30CD).
-#   v21 - NAC Riser v18: Trace Selected Circuits only lists circuits of the selected panel's power supplies (the
-#         numbers in its panel_number_params, matched by the kind's supply_of); all circuits if it has none.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -2034,6 +2034,27 @@ def remove_group(group):
         pass
 
 
+def remove_previous_groups(name):
+    """Delete every one-line group named name (or 'name (2)', 'name (3)' ... from earlier runs) and their group
+    types, so a circuit drawn again replaces its previous one-line. Returns how many groups were deleted."""
+    pattern = re.compile(r"^%s(?: \(\d+\))?$" % re.escape(name))
+    removed = 0
+    for gtype in list(FilteredElementCollector(doc).OfClass(GroupType).ToElements()):
+        try:
+            if not pattern.match(gtype.Name):
+                continue
+            for g in list(gtype.Groups):
+                doc.Delete(g.Id)
+                removed += 1
+            if gtype.IsValidObject:
+                doc.Delete(gtype.Id)
+        except Exception:
+            pass
+    if removed:
+        doc.Regenerate()
+    return removed
+
+
 def group_origin(members):
     """Where a one-line starts: the left end of its topmost horizontal line, or None."""
     best = None
@@ -2731,9 +2752,14 @@ def draw_riser(update=None):
         if end_sym is not None:
             cfg["end_symbol_ext"] = end_ext
 
+        replaced = [0]
+
         def draw_circuit(row, origin, i, row_cfg):
             """Draw one circuit's one-line at origin and group it. (group or None, [(start, end, curve)], items that
             could not be drawn)."""
+            if update is None:
+                # Drawn again: the circuit's previous one-line is replaced, not kept as '... (2)'.
+                replaced[0] += remove_previous_groups(run_name(panel_name, row, i))
             plan = rl.layout([row], root_id, info, returns, row_cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
@@ -2880,6 +2906,8 @@ def draw_riser(update=None):
     else:
         msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
                                                         view.Name, count, len(rows))
+    if replaced[0]:
+        msg += "\n\nReplaced %d earlier one-line group(s) of the same circuit(s)." % replaced[0]
     if groups:
         msg += "\n\nGroup(s): " + ", ".join(groups)
     if target is not None and panel_inst is None:
