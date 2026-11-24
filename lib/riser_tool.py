@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v29
+# riser_tool module - version v30
 # Change log (last change first):
+#   v30 - SLC Riser v58 / NAC Riser v27: Update Panel in the drafting view options - every one-line of a panel in
+#         the view is traced again and redrawn, lowest loop / circuit first, as one undo step with one summary;
+#         each question (devices with no conduit path, a type with no symbol, which panel detail) is asked once
+#         for all of them (update_panel, PanelBatch, stop_with).
 #   v29 - NAC Riser v26: the circuit label drawn on the one-line goes through the kind's tag_text (if it has one).
 #   v28 - SLC Riser v57 / NAC Riser v25: the gap kept between circuits is the Gap between circuits setting (inches in
 #         the view, 1" default) instead of 1/8" on the sheet (a foot at 1/8"); an overlap names the two elements
@@ -11,8 +15,6 @@
 #         shapes_clash, raise_needed).
 #   v26 - SLC Riser v55 / NAC Riser v23: drawing a circuit again replaces its previous one-line - the detail
 #         groups named for it (and its '(2)', '(3)' copies) are deleted first (remove_previous_groups).
-#   v25 - SLC Riser v54 / NAC Riser v22: the circuit label's offset from the start of the one-line and the end of
-#         line (text, or a Generic Annotation) come from Riser - Config.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -30,7 +32,8 @@ run(kind) draws a riser for one circuit kind. The kind supplies (see nac_riser.C
   load_table, save_table, table_path, load_settings, save_settings, settings_path, DEFAULT_SETTINGS, SETTING_LIMITS
 
 Run from a drafting view, it offers Update Selected One-Line instead: the picked one-line group's circuit is traced
-again from what the group remembers (or, for older groups, from its name and address text) and redrawn in place.
+again from what the group remembers (or, for older groups, from its name and address text) and redrawn in place -
+and Update Panel, which does that for every one-line of one panel in the view.
 
 Used by SLC Riser (slc_riser.LoopKind) and NAC Riser (nac_riser.CircuitKind)."""
 from Autodesk.Revit.DB import (
@@ -38,7 +41,7 @@ from Autodesk.Revit.DB import (
     ViewFamily, TextNote, StorageType, TextNoteType, TextNoteOptions, HorizontalTextAlignment, ElementTypeGroup,
     ElementId, BuiltInParameter, ElementTransformUtils, GroupType, SketchPlane, Plane,
     ReferencePlane, Options, GeometryInstance, SubTransaction, FamilyInstanceReferenceType, Reference,
-    Outline, BoundingBoxIntersectsFilter, Group
+    Outline, BoundingBoxIntersectsFilter, Group, TransactionGroup
 )
 from System.Collections.Generic import List
 try:
@@ -70,6 +73,7 @@ output = script.get_output()
 
 KIND = None         # the circuit kind being drawn, set by run()
 TITLE = "Riser"     # the kind's title, set by run()
+BATCH = None        # a PanelBatch while Update Panel redraws a panel's one-lines (see update_panel)
 
 # ---------------- Settings ----------------
 # These come from the kind's tab in Riser - Config; the values here are replaced in run().
@@ -113,6 +117,7 @@ HEAD_FROM_LIST = "Select from List"
 HEAD_IN_MODEL = "Select in Model"
 HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
 UPDATE_ONELINE = "Update Selected One-Line"
+UPDATE_PANEL = "Update Panel"       # every one-line of one panel in the drafting view
 ONELINE_SCHEMA_GUID = "6f3f0a52-6c1e-4b5e-9a57-2f1d8c4e7b31"    # extensible storage on each one-line group
 PANEL_MODEL_PARAM = "Panel Model"   # the panel detail's field, filled from the panel's Model
 NEW_VIEW = "Generate New Drafting View"
@@ -749,12 +754,18 @@ def add_unconnected(rows, net):
         return {"added": [], "left_off": [], "how": None}
     labels = sorted(set(KIND.row_label([net.addresses.get(n) for n in row["nodes"]]) for row, _i in found) - set([""]))
     where = (" on %s %s" % (KIND.run_word, ", ".join(labels))) if labels else ""
-    how = forms.CommandSwitchWindow.show(
-        [UNCONNECTED_BY_ADDRESS, UNCONNECTED_AT_END, UNCONNECTED_LEAVE_OFF],
-        message="%d device(s)%s have %s but no conduit path from the panel. Add them to the riser?"
-                % (len(found), where, KIND.address_phrase))
-    if not how:
-        return None
+    if BATCH is not None and BATCH.unconnected:
+        how = BATCH.unconnected     # Update Panel: answered for an earlier one-line of the panel
+    else:
+        how = forms.CommandSwitchWindow.show(
+            [UNCONNECTED_BY_ADDRESS, UNCONNECTED_AT_END, UNCONNECTED_LEAVE_OFF],
+            message="%d device(s)%s have %s but no conduit path from the panel. Add them to the riser?%s"
+                    % (len(found), where, KIND.address_phrase,
+                       (" (Used for every one-line of %s.)" % BATCH.panel) if BATCH is not None else ""))
+        if not how:
+            return None
+        if BATCH is not None:
+            BATCH.unconnected = how
     if how == UNCONNECTED_LEAVE_OFF:
         return {"added": [], "left_off": [i for _row, i in found], "how": how}
     for row, i in found:
@@ -2279,10 +2290,17 @@ def panel_by_number(number):
     return picked if picked not in (None, "model") else None
 
 
-def work_out_update(group, view):
-    """An Update for a one-line drawn before the circuit was stored on its group: the panel from the group name's
-    Panel # (FACU-01 - Loop A), the loop from the addresses written in it, and its lowest-address device on that
-    loop as the first device. None if it can't be worked out or the user cancelled."""
+def group_panel_number(group):
+    """The Panel # at the start of a one-line group's name ('FACU-01' in 'FACU-01 - Loop A'), or ''."""
+    name = group.GroupType.Name
+    return name.rsplit(" - ", 1)[0].strip() if " - " in name else ""
+
+
+def work_out_update(group, view, root=None):
+    """An Update for a one-line drawn before the circuit was stored on its group: the panel (root, else the one
+    whose Panel # starts the group name - FACU-01 - Loop A), the loop from the addresses written in it, and its
+    lowest-address device on that loop as the first device. None if it can't be worked out or the user
+    cancelled."""
     members = [doc.GetElement(i) for i in group.GetMemberIds()]
     texts = group_addresses(members)
     loops = KIND.groups(texts)
@@ -2290,8 +2308,8 @@ def work_out_update(group, view):
         ec.alert("No %s was found in the text of '%s', so its circuit can't be worked out. (Is it a %s "
                  "one-line?)" % (KIND.address_label, group.GroupType.Name, KIND.title), title=TITLE)
         return None
-    name = group.GroupType.Name
-    root = panel_by_number(name.rsplit(" - ", 1)[0] if " - " in name else "")
+    if root is None:
+        root = panel_by_number(group_panel_number(group))
     if root is None:
         return None
     devices = KIND.devices_on_groups(doc, loops)
@@ -2309,18 +2327,28 @@ def prepare_update(view):
     group = pick_oneline_group(view)
     if group is None:
         return None
-    data = read_oneline_data(group)
+    return update_for_group(group, view)
+
+
+def update_for_group(group, view, data=None, root=None):
+    """An Update for a one-line group: from what the group remembers (data, read from it when not given), else
+    worked out from its name and text. root: its panel, when already known (Update Panel). None if it can't be
+    updated or the user cancelled."""
     if data is None:
-        return work_out_update(group, view)
+        data = read_oneline_data(group)
+    if data is None:
+        return work_out_update(group, view, root)
     if data.get("kind") and data.get("kind") != KIND.title:
         ec.alert("'%s' was drawn by %s. Run %s to update it." % (group.GroupType.Name, data["kind"], data["kind"]),
                  title=TITLE)
         return None
-    root = doc.GetElement(data.get("root") or "")
-    if root is None:
-        output.print_md("**%s:** the panel of '%s' is no longer in the model; working it out from the group name."
-                        % (TITLE, group.GroupType.Name))
-        return work_out_update(group, view)
+    stored = doc.GetElement(data.get("root") or "")
+    if stored is None:
+        if root is None:
+            output.print_md("**%s:** the panel of '%s' is no longer in the model; working it out from the group "
+                            "name." % (TITLE, group.GroupType.Name))
+        return work_out_update(group, view, root)
+    root = stored
     firsts = [el for el in (doc.GetElement(u) for u in data.get("firsts") or []) if el is not None]
     allowed = set()
     for u in data.get("conduit_types") or []:
@@ -2354,6 +2382,203 @@ def update_rows(rows, addresses, update):
         if row["nodes"] and row["nodes"][0] in first_ids:
             return [row]
     return []
+
+
+# ---------- Update Panel (drafting views) ----------
+class PanelBatch(object):
+    """Update Panel in progress: a panel's one-lines are redrawn one after another, as one undo step with one
+    summary at the end, and each question is asked once for all of them."""
+    def __init__(self, panel):
+        self.panel = panel              # its Panel #, for the questions and the summary
+        self.current = ""               # the one-line being redrawn
+        self.done = []                  # [(group name, device count, [notes])]
+        self.failed = []                # ["group name: why it wasn't updated"]
+        self.unconnected = None         # the answer about devices with no conduit path (add_unconnected)
+        self.boxed = set()              # Family : Types drawn as a box (no symbol chosen)
+        self.not_loaded = set()         # symbols set in Riser - Config but not loaded in the project
+        self.unaddressed = set()        # devices without an address already listed
+        self.panel_inst = None          # the panel detail used, once chosen (find_view_panel)
+        self.panel_asked = False
+
+
+def stop_with(msg):
+    """Tell the user why the riser / one-line wasn't drawn - during Update Panel it is kept for the summary and the
+    other one-lines carry on. Returns False."""
+    if BATCH is not None:
+        BATCH.failed.append(msg if not BATCH.current or BATCH.current in msg else "%s: %s" % (BATCH.current, msg))
+    else:
+        ec.alert(msg, title=TITLE)
+    return False
+
+
+def view_onelines(view):
+    """([(group, what it remembers or None)] for this riser's one-line groups in the view, {titles of the risers
+    that drew the others})."""
+    mine, others = [], set()
+    for g in FilteredElementCollector(doc, view.Id).OfClass(Group).ToElements():
+        data = read_oneline_data(g)
+        if data is not None:
+            if data.get("kind") and data.get("kind") != KIND.title:
+                others.add(data["kind"])
+            else:
+                mine.append((g, data))
+            continue
+        try:
+            members = [doc.GetElement(i) for i in g.GetMemberIds()]
+        except Exception:
+            continue
+        if KIND.groups(group_addresses(members)):      # drawn before the circuit was stored on its group
+            mine.append((g, None))
+    return mine, others
+
+
+def choose_view_panel(view):
+    """The panel whose one-lines are updated: (its Panel #, the panel - None when only known by the Panel # in the
+    group names - , [(group, data)]). The only panel with one-lines in the view, else the user's choice. None if
+    there are none or the user cancelled."""
+    mine, others = view_onelines(view)
+    panels, order = {}, []
+
+    def add(key, number, root, item):
+        if key not in panels:
+            panels[key] = [number, root, []]
+            order.append(key)
+        panels[key][2].append(item)
+
+    by_name = []
+    for g, data in mine:
+        root = doc.GetElement(data.get("root") or "") if data is not None else None
+        if root is None:
+            by_name.append((g, data))
+        else:
+            add(root.UniqueId, (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip(), root, (g, data))
+    for g, data in by_name:
+        # Older one-lines (or a panel no longer in the model): the Panel # in the group name.
+        number = group_panel_number(g)
+        key = None
+        for k in order:
+            if panels[k][0].upper() == number.upper():
+                key = k
+                break
+        if key is None:
+            add("#" + number.upper(), number, None, (g, data))
+        else:
+            panels[key][2].append((g, data))
+    if not order:
+        msg = "There are no %s one-lines in '%s' to update." % (TITLE, view.Name)
+        if others:
+            msg += " The one-lines here were drawn by %s - run %s to update them." % (
+                " / ".join(sorted(others)), " / ".join(sorted(others)))
+        ec.alert(msg, title=TITLE)
+        return None
+    if len(order) == 1:
+        return tuple(panels[order[0]])
+    by_label = {}
+    for k in order:
+        number, root, items = panels[k]
+        label = "%s  (%d one-line%s)" % (number or "no Panel #", len(items), "" if len(items) == 1 else "s")
+        if label in by_label and root is not None:
+            label += "  [id %d]" % sr.eid_int(root.Id)     # two panels with the same Panel #
+        by_label[label] = k
+    picked = forms.SelectFromList.show(sorted(by_label), title="%s - Update which panel's one-lines?" % TITLE,
+                                       button_name=UPDATE_PANEL, multiselect=False)
+    if not picked:
+        return None
+    return tuple(panels[by_label[picked]])
+
+
+def update_order(update):
+    """Lowest loop / circuit first (N1L1, N1L2 ... / N1-1, N1-2 ... N2-1) - a one-line that grows only raises the
+    ones above it - then by name."""
+    circuits = sorted(update.circuits or [])
+    return (circuits[0] if circuits else (999, 999), update.loop if update.loop is not None else 999, update.name)
+
+
+def panel_summary(batch, view):
+    """The message shown when Update Panel is done."""
+    total = sum(n for _name, n, _notes in batch.done)
+    parts = ["Updated %d of %d one-line(s) of %s in '%s': %d device(s)."
+             % (len(batch.done), len(batch.done) + len(batch.failed), batch.panel, view.Name, total)]
+    if batch.done:
+        parts.append("\n".join("%s: %d device(s)" % (name, n) for name, n, _notes in batch.done))
+    # A note made for every one-line is shown once; the others name their one-lines.
+    notes, note_order = {}, []
+    for name, _n, items in batch.done:
+        for note in items:
+            if note not in notes:
+                notes[note] = []
+                note_order.append(note)
+            notes[note].append(name)
+    for note in note_order:
+        names = notes[note]
+        if (len(names) > 1 and len(names) == len(batch.done)) or (len(names) == 1 and names[0] in note):
+            parts.append(note)      # made for every one-line, or it already names its one-line
+        else:
+            parts.append("%s: %s" % (", ".join(names), note))
+    if batch.failed:
+        parts.append("Not updated:\n" + "\n".join(batch.failed))
+    if batch.not_loaded:
+        parts.append("These riser symbols are set in %s but are not loaded in this project, so they were left "
+                     "out:\n%s" % (KIND.config_name, "\n".join(sorted(batch.not_loaded))))
+    return "\n\n".join(parts)
+
+
+def update_panel(view):
+    """Update Panel: every one-line of one panel in the drafting view is traced again in the model and redrawn in
+    place (as Update Selected One-Line does for one), lowest loop / circuit first, as one undo step. Cancelling
+    any question leaves the view as it was."""
+    global BATCH
+    picked = choose_view_panel(view)
+    if picked is None:
+        return
+    number, root, items = picked
+    if root is None:
+        root = panel_by_number(number)
+        if root is None:
+            return
+    updates = []
+    for group, data in items:
+        update = update_for_group(group, view, data, root)
+        if update is not None:
+            updates.append(update)
+    if not updates:
+        return
+    updates.sort(key=update_order)
+    number = number or element_name(root)
+    BATCH = PanelBatch(number)
+    tg = TransactionGroup(doc, "%s - %s" % (UPDATE_PANEL, TITLE))
+    finished = False
+    try:
+        tg.Start()
+        for update in updates:
+            if not update.group.IsValidObject:
+                continue
+            try:
+                # Where it starts now: making room for an earlier one-line may have moved it.
+                update.origin = group_origin([doc.GetElement(i) for i in update.group.GetMemberIds()]) or update.origin
+            except Exception:
+                pass
+            BATCH.current = update.name
+            if draw_riser(update) is None:
+                break       # cancelled
+        else:
+            finished = True
+        if finished:
+            tg.Assimilate()
+        else:
+            tg.RollBack()
+    except Exception as ex:
+        if tg.HasStarted() and not tg.HasEnded():
+            tg.RollBack()
+        BATCH = None
+        ec.alert("The one-lines of %s could not be updated, so nothing was changed:\n%s" % (number, ex),
+                 title=TITLE)
+        return
+    batch, BATCH = BATCH, None
+    if not finished:
+        ec.alert("%s was cancelled, so nothing was changed." % UPDATE_PANEL, title=TITLE)
+        return
+    ec.alert(panel_summary(batch, view), title=TITLE)
 
 
 # ---------- Main ----------
@@ -2534,18 +2759,22 @@ def main():
     view = uidoc.ActiveView
     if isinstance(view, ViewDrafting):
         # In a drafting view: work on the one-lines already drawn there.
-        choice = forms.CommandSwitchWindow.show([UPDATE_ONELINE], message="%s - drafting view options" % TITLE)
-        if choice != UPDATE_ONELINE:
-            return
-        update = prepare_update(view)
-        if update is not None:
-            draw_riser(update)
+        choice = forms.CommandSwitchWindow.show([UPDATE_ONELINE, UPDATE_PANEL],
+                                                message="%s - drafting view options" % TITLE)
+        if choice == UPDATE_ONELINE:
+            update = prepare_update(view)
+            if update is not None:
+                draw_riser(update)
+        elif choice == UPDATE_PANEL:
+            update_panel(view)
         return
     draw_riser()
 
 
 def draw_riser(update=None):
-    """Create a riser (update None), or redraw the one-line group in update (an Update from prepare_update)."""
+    """Create a riser (update None), or redraw the one-line group in update (an Update from prepare_update).
+    Returns True when drawn, False when it couldn't be (the user was told why - see stop_with), None when the user
+    cancelled."""
     if update is None:
         root = starting_element()
         if root is None:
@@ -2570,10 +2799,9 @@ def draw_riser(update=None):
     if update is not None and rows:
         rows = update_rows(rows, addresses, update)
         if not rows:
-            ec.alert("The circuit of '%s' could not be found from its panel any more (no traced %s matches it). "
-                     "Check the conduit, or draw it again from a plan view." % (update.name, KIND.run_word.lower()),
-                     title=TITLE)
-            return
+            return stop_with("The circuit of '%s' could not be found from its panel any more (no traced %s matches "
+                             "it). Check the conduit, or draw it again from a plan view."
+                             % (update.name, KIND.run_word.lower()))
         on_row = set(rows[0]["nodes"])
         unconnected["added"] = [n for n in unconnected["added"] if n in on_row]
     root_id = sr.eid_int(root.Id)
@@ -2582,14 +2810,12 @@ def draw_riser(update=None):
                "chosen type(s)." % KIND.address_phrase)
         if unaddressed:
             msg += ("\n\n%d Fire Alarm Device(s) on that conduit %s." % (len(unaddressed), KIND.no_address_hint))
-        ec.alert(msg, title=TITLE)
-        return
+        return stop_with(msg)
 
     try:
         table = KIND.load_table()
     except Exception as ex:
-        ec.alert("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, KIND.table_path()), title=TITLE)
-        return
+        return stop_with("Could not read the symbol table:\n%s\n\nPath: %s" % (ex, KIND.table_path()))
     available = sr.available_symbols(doc)
 
     # The panel is the NEX2-DETAIL-RISER detail item; the devices use the symbols from the table.
@@ -2610,9 +2836,13 @@ def draw_riser(update=None):
             missing.append(key)
     # Address callouts (SLC): by the device's Address Group subgroup; the others keep the 45 degree text.
     device_callout, no_subgroup = device_callouts(drawn, keys, addresses, available, not_loaded)
-    if not_loaded:
+    if not_loaded and BATCH is not None:
+        BATCH.not_loaded |= not_loaded      # Update Panel: named once, in its summary
+    elif not_loaded:
         ec.alert("These riser symbols are set in %s but are not loaded in this project, so they "
                     "are left out:\n\n%s" % (KIND.config_name, "\n".join(sorted(not_loaded))), title=TITLE)
+    if missing and BATCH is not None:
+        missing = [key for key in missing if key not in BATCH.boxed]    # a box for an earlier one-line of the panel
     if missing:
         names = sorted(available.keys())
         if not names:
@@ -2621,6 +2851,8 @@ def draw_riser(update=None):
                                 "with its type name?", title=TITLE, yes=True, no=True)
             if not go_on:
                 return
+            if BATCH is not None:
+                BATCH.boxed.update(missing)
         else:
             picked_any = False
             for i, key in enumerate(missing, start=1):
@@ -2642,6 +2874,8 @@ def draw_riser(update=None):
                                     title=TITLE, yes=True, no=True)
                 if not go_on:
                     break
+                if BATCH is not None:
+                    BATCH.boxed.add(key)
             else:
                 go_on = True
             if picked_any:      # remembered for next time, even if this run was stopped
@@ -2701,8 +2935,7 @@ def draw_riser(update=None):
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
-        ec.alert("The riser could not be created:\n%s" % ex, title=TITLE)
-        return
+        return stop_with("The riser could not be created:\n%s" % ex)
 
     def undo_view():
         if created_view:
@@ -2715,7 +2948,12 @@ def draw_riser(update=None):
                 t2.RollBack()
 
     if target is not None:
-        panel_inst = find_view_panel(view, root)
+        if BATCH is not None and BATCH.panel_asked and (BATCH.panel_inst is None or BATCH.panel_inst.IsValidObject):
+            panel_inst = BATCH.panel_inst       # Update Panel: chosen for an earlier one-line of the panel
+        else:
+            panel_inst = find_view_panel(view, root)
+            if BATCH is not None:
+                BATCH.panel_inst, BATCH.panel_asked = panel_inst, True
     exit_x, panel_top, placed_refs = panel_exit_points(view, panel_inst, panel_refs)
     # Power supplies nested in the panel detail, each with its own numbered lines (NAC).
     nested = nested_exit_points(view, panel_inst) if hasattr(KIND, "supply_of") else []
@@ -2807,8 +3045,7 @@ def draw_riser(update=None):
         lock_refs = [lock_refs[k] for k in keep]
         if not rows:
             undo_view()
-            ec.alert("Nothing was drawn:\n\n" + "\n".join(skipped_circuits), title=TITLE)
-            return
+            return stop_with("Nothing was drawn:\n\n" + "\n".join(skipped_circuits))
 
     # 3. Draw each circuit and group it.
     failed = 0
@@ -3032,11 +3269,11 @@ def draw_riser(update=None):
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
         undo_view()
-        ec.alert("The riser could not be created:\n%s" % ex, title=TITLE)
-        return
+        return stop_with("The riser could not be created:\n%s" % ex)
 
     try:
-        uidoc.ActiveView = view
+        if uidoc.ActiveView is None or uidoc.ActiveView.Id != view.Id:
+            uidoc.ActiveView = view
     except Exception:
         pass
 
@@ -3046,53 +3283,64 @@ def draw_riser(update=None):
     else:
         msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
                                                         view.Name, count, len(rows))
+    notes = []      # each its own paragraph under msg
     if replaced[0]:
-        msg += "\n\nReplaced %d earlier one-line group(s) of the same circuit(s)." % replaced[0]
-    if groups:
-        msg += "\n\nGroup(s): " + ", ".join(groups)
+        notes.append("Replaced %d earlier one-line group(s) of the same circuit(s)." % replaced[0])
+    if groups and BATCH is None:
+        notes.append("Group(s): " + ", ".join(groups))
     if target is not None and panel_inst is None:
-        msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
+        notes.append("No %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY)
     if failed:
-        msg += "\n\n%d item(s) could not be drawn." % failed
+        notes.append("%d item(s) could not be drawn." % failed)
     if skipped_circuits:
-        msg += "\n\nNot drawn:\n" + "\n".join(skipped_circuits)
+        notes.append("Not drawn:\n" + "\n".join(skipped_circuits))
     if end_symbol_missing:
-        msg += ("\n\nThe end-of-line symbol '%s' set in Riser - Config is not loaded in this project, so the end "
-                "text was used." % END_SYMBOL)
+        notes.append("The end-of-line symbol '%s' set in Riser - Config is not loaded in this project, so the end "
+                     "text was used." % END_SYMBOL)
     if missing_circuits:
-        msg += ("\n\nNo device of %s could be reached by conduit from the panel, so %s not drawn."
-                % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),
-                   "it was" if len(missing_circuits) == 1 else "they were"))
+        notes.append("No device of %s could be reached by conduit from the panel, so %s not drawn."
+                     % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),
+                        "it was" if len(missing_circuits) == 1 else "they were"))
     if spacing_changes:
-        msg += "\n\nMore room was made between circuits:\n" + "\n".join(
+        notes.append("More room was made between circuits:\n" + "\n".join(
             "Loop Spacing %d: %s -> %s%s" % (n, feet_text(old), feet_text(new),
                                             " (type parameter - other panels of this type change too)"
                                             if where == "type" else "")
-            for n, old, new, where in spacing_changes)
+            for n, old, new, where in spacing_changes))
     if not_locked:
-        msg += "\n\nNot locked to the reference line:\n" + "\n".join(not_locked)
+        notes.append("Not locked to the reference line:\n" + "\n".join(not_locked))
     if panel_skipped:
-        msg += ("\n\nThe %s detail item has no editable parameter named %s, so it was left as is."
-                % (PANEL_FAMILY, " / ".join(panel_skipped)))
+        notes.append("The %s detail item has no editable parameter named %s, so it was left as is."
+                     % (PANEL_FAMILY, " / ".join(panel_skipped)))
     if no_subgroup:
-        msg += ("\n\n%d type(s) have an Address Group but no subgroup with their number of addresses, so they have "
-                "the 45 degree address text; they are listed in the output window." % len(no_subgroup))
+        notes.append("%d type(s) have an Address Group but no subgroup with their number of addresses, so they have "
+                     "the 45 degree address text; they are listed in the output window." % len(no_subgroup))
+    which = (" - %s" % update.name) if update is not None else ""     # the one-line, in the output window
     no_path = unconnected["added"] or unconnected["left_off"]
     if no_path:
         done = {UNCONNECTED_BY_ADDRESS: "were added in address order",
                 UNCONNECTED_AT_END: "were added at the end of the line",
                 UNCONNECTED_LEAVE_OFF: "were left off"}.get(unconnected["how"], "")
-        msg += ("\n\n%d device(s) on this %s have no conduit path from the panel and %s; they are listed in the "
-                "output window." % (len(no_path), KIND.run_word.lower(), done))
-        output.print_md("### %s - devices with no conduit path (%s)" % (TITLE, done))
+        notes.append("%d device(s) on this %s have no conduit path from the panel and %s; they are listed in the "
+                     "output window." % (len(no_path), KIND.run_word.lower(), done))
+        output.print_md("### %s%s - devices with no conduit path (%s)" % (TITLE, which, done))
         for i in no_path:
             output.print_md("- %s %s - %s" % (output.linkify(elements[i].Id), sr.family_key(doc, elements[i]),
                                               ", ".join(addresses.get(i) or [])))
+    if unaddressed and BATCH is not None:
+        # Update Panel: each one-line's trace passes the same devices - list each once.
+        unaddressed = [el for el in unaddressed if sr.eid_int(el.Id) not in BATCH.unaddressed]
+        BATCH.unaddressed.update(sr.eid_int(el.Id) for el in unaddressed)
     if unaddressed:
-        msg += ("\n\n%d Fire Alarm Device(s) on the conduit have no %s and were left off. "
-                "They are listed in the output window." % (len(unaddressed), KIND.address_label))
-        output.print_md("### %s - devices on the conduit without %s" % (TITLE, KIND.address_phrase))
+        notes.append("%d Fire Alarm Device(s) on the conduit have no %s and were left off. "
+                     "They are listed in the output window." % (len(unaddressed), KIND.address_label))
+        output.print_md("### %s%s - devices on the conduit without %s" % (TITLE, which, KIND.address_phrase))
         for el in unaddressed:
             output.print_md("- %s %s" % (output.linkify(el.Id), sr.family_key(doc, el)))
-    ec.alert(msg, title=TITLE)
+    if BATCH is not None:
+        # Update Panel: one summary for all of the panel's one-lines (panel_summary).
+        BATCH.done.append((groups[0] if groups else update.name, count, notes))
+        return True
+    ec.alert("\n\n".join([msg] + notes), title=TITLE)
+    return True
 

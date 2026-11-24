@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v57
-__title__ = "SLC\nRiser v57"
+# SLC Riser script - version v58
+__title__ = "SLC\nRiser v58"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "
@@ -16,6 +16,7 @@ __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "settings; the panel detail's Panel #, Location and Panel Model are refreshed too. Hand edits inside "
            "the group are replaced. One-lines drawn before v47 are worked out from their group name (Panel #) and "
            "the addresses written in them.\n\n"
+           "Update Panel - every one-line of one panel in the view (the only panel there, else chosen from a list) is updated the same way, lowest loop first, as one undo step with one summary at the end; a question (devices with no conduit path, a type without a symbol) is asked once for all of them, and cancelling one leaves the view as it was. Circuits of the panel that aren't drawn in the view yet are not added.\n\n"
            "Steps: choose the head end panel (FACU, NCP, APS ...) from a list - panels with FACU / FACP / FAP / FAC "
            "in the family name that are also set to Head End in Family Defaults Config or have a Panel # parameter - "
            "or select it in the model, then the first device in the circuit "
