@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v23
+# riser_tool module - version v24
 # Change log (last change first):
+#   v24 - NAC Riser v21: power supplies nested in the panel detail - when the placed panel has nested instances with
+#         a Power Supply # parameter, circuit N#-C goes on reference line C of the nested instance whose Power
+#         Supply # is N# (nested_exit_points), and is locked to it; a circuit whose power supply isn't in the panel
+#         is skipped. Overlaps there can only be redrawn or kept (the nested lines have fixed spacing).
 #   v23 - NAC Riser v20: a kind with redraw_on_overlap asks, when a circuit would overlap the one below or above it,
 #         whether to redraw it with a different wrap length, make room (raise Loop Spacing) or keep it as drawn
 #         (circuit_overlap, draw_circuit).
@@ -11,8 +15,6 @@
 #   v20 - NAC Riser v17: the panel detail is filled by fill_panel - Panel #, Panel Model, Location (the room, or
 #         MEP space, the panel is in; name only for a kind with location_name_only) and, for a kind with
 #         panel_number_params, Power Supply #1-3 as integers taken from the panel's text (NACP-01 -> 1).
-#   v19 - SLC Riser v52 / NAC Riser v16: the head end detail family comes from the riser's drawing settings
-#         (Riser - Config) instead of always NEX2-DETAIL-RISER.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -1427,6 +1429,88 @@ def circuit_groups(view, panel, cands, exclude_id=None):
     return found
 
 
+NESTED_SUPPLY_PARAM = "Power Supply #"     # on the power supplies nested in the panel detail
+
+
+def nested_exit_points(view, panel):
+    """The reference lines of the power supplies nested in the panel detail: [(candidate, y in the view)], each
+    candidate with "supply" (the nested instance's Power Supply #), "loop" (the line's number = the circuit) and
+    "inst" (the nested instance). Empty when the panel detail has no such nested instances. Opens each nested
+    family to read its lines, so it must run outside a transaction."""
+    if panel is None:
+        return []
+    try:
+        sub_ids = list(panel.GetSubComponentIds())
+    except Exception:
+        sub_ids = []
+    saved = dict(PANEL_FAMILY_INFO)
+    refs_of = {}
+    placed = []
+    try:
+        for sid in sub_ids:
+            sub = doc.GetElement(sid)
+            if not isinstance(sub, FamilyInstance):
+                continue
+            supply = number_in(named_value(sub, NESTED_SUPPLY_PARAM))
+            if supply is None:
+                continue
+            fid = sr.eid_int(sub.Symbol.Family.Id)
+            if fid not in refs_of:
+                refs_of[fid] = panel_reference_lines(sub.Symbol)
+            cands = [dict(c) for c in refs_of[fid] if c["loop"] is not None and c["kind"] != "Line"]
+            PANEL_FAMILY_INFO.update({"spacing": {}, "bottom": None, "x": None})   # fixed lines: no Loop Spacing
+            _, _, sub_placed = panel_exit_points(view, sub, cands)
+            for c, y in sub_placed:
+                c["supply"] = supply
+                c["inst"] = sub
+                placed.append((c, y))
+    finally:
+        PANEL_FAMILY_INFO.clear()
+        PANEL_FAMILY_INFO.update(saved)
+    return placed
+
+
+def nested_overlap(view, placed, group, line_y):
+    """Which neighbours (circuits on the nested power supplies' lines, below or above this one's line at line_y)
+    the circuit just drawn would overlap: a list with "below" and / or "above"."""
+    doc.Regenerate()
+    bb = group.get_BoundingBox(view)
+    if bb is None:
+        return []
+    starts = [(c.get("vx"), y) for c, y in placed if c.get("vx") is not None]
+    clear = paper(LOOP_CLEARANCE)
+    below, above = [], []
+    for g in FilteredElementCollector(doc, view.Id).OfClass(Group).ToElements():
+        if g.Id == group.Id:
+            continue
+        g_line = None
+        for mid in g.GetMemberIds():
+            el = doc.GetElement(mid)
+            if not isinstance(el, CurveElement):
+                continue
+            try:
+                p0, p1 = el.GeometryCurve.GetEndPoint(0), el.GeometryCurve.GetEndPoint(1)
+            except Exception:
+                continue
+            if abs(p0.Y - p1.Y) > 1e-6:
+                continue
+            if any(abs(p0.Y - y) < 0.01 and abs(min(p0.X, p1.X) - x) < 0.01 for x, y in starts):
+                g_line = p0.Y
+                break
+        if g_line is None or abs(g_line - line_y) < 0.01:
+            continue
+        gbb = g.get_BoundingBox(view)
+        if gbb is None:
+            continue
+        (below if g_line < line_y else above).append(gbb)
+    found = []
+    if below and max(b.Max.Y for b in below) + clear > bb.Min.Y + 1e-6:
+        found.append("below")
+    if above and bb.Max.Y + clear > min(b.Min.Y for b in above) + 1e-6:
+        found.append("above")
+    return found
+
+
 OVERLAP_REDRAW = "Redraw With Different Wrap Length"
 OVERLAP_ROOM = "Make Room (Raise Loop Spacing)"
 OVERLAP_KEEP = "Keep As Drawn"
@@ -2465,13 +2549,42 @@ def draw_riser(update=None):
     if target is not None:
         panel_inst = find_view_panel(view, root)
     exit_x, panel_top, placed_refs = panel_exit_points(view, panel_inst, panel_refs)
+    # Power supplies nested in the panel detail, each with its own numbered lines (NAC).
+    nested = nested_exit_points(view, panel_inst) if hasattr(KIND, "supply_of") else []
 
     # 2. Where each circuit's one-line starts, and the reference line it is locked to.
-    origins, lock_refs, reported = [], [], False
+    origins, lock_refs, reported, skipped_circuits = [], [], False, []
     for i, row in enumerate(rows, start=1):
         name = run_name(panel_name, row, i)
         loop = row_loop(addresses, row["nodes"])
         match = None
+        if nested:
+            circuits = row_circuits(addresses, row["nodes"])
+            if len(circuits) == 1:
+                circuit = list(circuits)[0]
+                for c, y in nested:
+                    if c["supply"] == KIND.supply_of(circuit) and c["loop"] == loop:
+                        match = (c, y)
+                        break
+            if match is None and update is not None and update.origin is not None:
+                origins.append(update.origin)
+                lock_refs.append(None)
+                continue
+            if match is None:
+                supplies = sorted(set(c["supply"] for c, _y in nested))
+                skipped_circuits.append("%s (%s)" % (
+                    row.get("label") or name,
+                    "its power supply is not in the panel detail - it has power supplies %s"
+                    % ", ".join(str(n) for n in supplies)
+                    if len(circuits) == 1 and KIND.supply_of(list(circuits)[0]) not in supplies else
+                    "no reference line %s on its power supply" % loop if loop is not None else
+                    "its circuit could not be read"))
+                origins.append(None)
+                lock_refs.append(None)
+                continue
+            origins.append((match[0].get("vx", exit_x), match[1]))
+            lock_refs.append(match)
+            continue
         if exit_x is not None and loop is not None:
             for c, y in placed_refs:
                 if c["loop"] == loop:
@@ -2512,6 +2625,22 @@ def draw_riser(update=None):
             return
         origins.append(point)
         lock_refs.append(None)
+
+    if skipped_circuits:
+        output.print_md("### %s - reference lines of the nested power supplies" % TITLE)
+        by_supply = {}
+        for c, _y in nested:
+            by_supply.setdefault(c["supply"], set()).add(c["loop"])
+        for supply in sorted(by_supply):
+            output.print_md("- Power Supply # %d: lines %s" % (supply, ", ".join(str(n) for n in sorted(by_supply[supply]))))
+        keep = [k for k, o in enumerate(origins) if o is not None]
+        rows = [rows[k] for k in keep]
+        origins = [origins[k] for k in keep]
+        lock_refs = [lock_refs[k] for k in keep]
+        if not rows:
+            undo_view()
+            ec.alert("Nothing was drawn:\n\n" + "\n".join(skipped_circuits), title=TITLE)
+            return
 
     # 3. Draw each circuit and group it.
     failed = 0
@@ -2641,10 +2770,14 @@ def draw_riser(update=None):
                 row_cfg = dict(cfg)
                 name = run_name(panel_name, row, i)
                 while True:
-                    sides = circuit_overlap(view, panel_inst, panel_refs, lock[0]["loop"], group)
+                    if lock[0].get("inst") is not None:
+                        sides = nested_overlap(view, nested, group, lock[1])
+                    else:
+                        sides = circuit_overlap(view, panel_inst, panel_refs, lock[0]["loop"], group)
                     if not sides:
                         break
                     choice = forms.CommandSwitchWindow.show(
+                        [OVERLAP_REDRAW, OVERLAP_KEEP] if lock[0].get("inst") is not None else
                         [OVERLAP_REDRAW, OVERLAP_ROOM, OVERLAP_KEEP],
                         message="%s overlaps the circuit %s it (wrapping after %d devices)."
                                 % (name, " and ".join(sides), row_cfg["per_line"]))
@@ -2671,7 +2804,7 @@ def draw_riser(update=None):
                         first = curve
                         break
                 # Room for it between the circuits below and above (its text and callouts included).
-                if group is not None and lock[0]["loop"] is not None and make_room:
+                if group is not None and lock[0]["loop"] is not None and make_room and lock[0].get("inst") is None:
                     changed = fit_circuit(view, panel_inst, panel_refs, lock[0]["loop"], group)
                     if changed:
                         spacing_changes.extend(changed)
@@ -2683,7 +2816,8 @@ def draw_riser(update=None):
                 if first is None:
                     not_locked.append("%s: its first line could not be found" % gname)
                 else:
-                    why = lock_to_reference(view, references_in_instance(panel_inst, view, lock[0], lock[1]),
+                    why = lock_to_reference(view, references_in_instance(lock[0].get("inst") or panel_inst, view,
+                                                                         lock[0], lock[1]),
                                             first)
                     if why:
                         cand = lock[0]
@@ -2725,6 +2859,8 @@ def draw_riser(update=None):
         msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if skipped_circuits:
+        msg += "\n\nNot drawn:\n" + "\n".join(skipped_circuits)
     if missing_circuits:
         msg += ("\n\nNo device of %s could be reached by conduit from the panel, so %s not drawn."
                 % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),

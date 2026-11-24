@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v20
-__title__ = "NAC\nRiser v20"
+# NAC Riser script - version v21
+__title__ = "NAC\nRiser v21"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
+           "The circuits go on the power supplies nested in the panel detail: circuit N#-C on reference line C of the "
+           "nested power supply whose Power Supply # is N# (locked to it); a circuit whose power supply isn't in the "
+           "panel is skipped and named at the end.\n\n"
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops, except that each "
            "device's NAC Address is level text centred under its symbol, with its candela on the line below (N1-1.2 / "
            "30CD - from the Candela parameter, else the end of the type name). When a circuit would overlap the "
