@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v5
+# nac_riser module - version v6
 # Change log (last change first):
+#   v6 - NAC Riser v15: CircuitKind.select_runs - the first-device prompt offers 'Trace Selected Circuits'.
 #   v5 - NAC Riser v10: CircuitKind.return_text - every NAC one-line ends with 'NAC RETURN'.
 #   v4 - NAC Riser v9 (code check): the unused type_key / available_symbols / new_entry aliases removed.
 #   v3 - NAC Riser v8 / Riser - Config v9: the symbol rules are gone (new_rule / RULE_OPS removed); NAC devices have
 #        no Address Group callouts (ADDRESS_CALLOUTS = False hides that table on the NAC tab).
 #   v2 - NAC Riser v4: the head end list needs NAC / NCP / NACP in the family name, plus Head End in Family Defaults
 #        Config or a Panel # parameter (head_list_keywords, head_list_keywords_required, head_list_min_matches).
-#   v1 - NAC Riser v1 / Riser - Config v8: the NAC circuit kind for the riser engine (lib/riser_tool.py), and
-#        NAC Riser's own symbol table and drawing settings (the NAC tab of Riser - Config).
 """NAC Riser: what the riser engine (lib/riser_tool.py) needs to know about NAC circuits.
 
 The head end is a power supply (FACU, NAC panel, booster ...). Each circuit leaving it is one row, labeled with the
@@ -102,6 +101,9 @@ class CircuitKind(object):
         self.head_list_keywords = ["NAC", "NCP", "NACP"] if kind == "N" else None
         self.head_list_keywords_required = True
         self.head_list_min_matches = 2
+        # The first-device prompt offers "Trace Selected Circuits" (a list of every circuit in the project) instead of
+        # "Trace Every Run From Panel" (riser_tool.first_devices).
+        self.select_runs = True
 
     # ---- Addresses ----
     def new_reader(self):

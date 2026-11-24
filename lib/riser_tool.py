@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v17
+# riser_tool module - version v18
 # Change log (last change first):
+#   v18 - NAC Riser v15: a kind with select_runs offers 'Trace Selected Circuits' instead of 'Trace Every Run From
+#         Panel' - a list of every circuit in the project (N1-2 (5 devices)); the chosen ones are traced from the
+#         panel, one one-line each (choose_circuits, split_rows_by_circuit).
 #   v17 - VESDA Pipe Swap v3 (no riser change): named_value now calls the shared copy in ew_common.
 #   v16 - SLC Riser v51 / NAC Riser v14: devices on a circuit that no conduit reaches are no longer marked NOT
 #         CONNECTED; the user chooses to add them in address order, add them at the end, or leave them off.
@@ -11,10 +14,6 @@
 #         lines, and they were then moved again. Now each circuit is only moved by what it hasn't moved already.
 #   v14 - SLC Riser v49 / NAC Riser v12: the automatic Loop Spacing adjustment never leaves Loop Spacing 1 below
 #         10' (MIN_LOOP_SPACING_1_FT); it is raised first, and the circuits move up with it.
-#   v13 - SLC Riser v48 / NAC Riser v11: a trace from chosen first devices (and every update) only draws devices of
-#         their circuits - devices of other loops on shared conduit are passed through (Network.wanted); an Update
-#         of Loop 3 had picked up Loop 1 devices. Older one-lines start from the first device drawn on them (their
-#         top-left address) instead of the loop's lowest address, and each one-line also stores its circuits.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -106,6 +105,8 @@ GUTTER_NAME = "GUTTERBOX"      # family names like GUTTER-BOX / Gutter Box come 
 GUTTER_ABOVE_FT = (0.0, 3.0)   # ... and, among those, one this far above the top of the panel (typically 1-2 ft)
 FIRST_PICK = "Select First Device"
 FIRST_ALL_RUNS = "Trace Every Run From Panel"
+FIRST_SELECTED = "Trace Selected Circuits"      # instead of FIRST_ALL_RUNS for a kind with select_runs (NAC)
+CIRCUIT_LABELS = {}     # circuit (KIND.groups) -> 'N1-2', filled by choose_circuits()
 ORIGIN_PICK = "Pick Start Point"
 HEAD_FROM_LIST = "Select from List"
 HEAD_IN_MODEL = "Select in Model"
@@ -327,16 +328,78 @@ def starting_element():
     return resolve(doc.GetElement(ref.ElementId), is_head_candidate)
 
 
+def choose_circuits():
+    """The circuits (KIND.groups) chosen from a list of every circuit in the project, shown as 'N1-2 (5 devices)'.
+    None when cancelled or there are none."""
+    counts, labels = {}, {}
+    reader = KIND.new_reader()
+    for el in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_FireAlarmDevices)
+               .WhereElementIsNotElementType().ToElements()):
+        try:
+            addresses = KIND.addresses(el, reader)
+        except Exception:
+            continue
+        seen = set()
+        for text in addresses or []:
+            for g in KIND.groups([text]):
+                if g not in labels:
+                    labels[g] = KIND.row_label([[text]]) or str(g)
+                seen.add(g)
+        for g in seen:
+            counts[g] = counts.get(g, 0) + 1
+    if not counts:
+        ec.alert("No devices in this project have %s." % KIND.address_phrase, title=TITLE)
+        return None
+    CIRCUIT_LABELS.clear()
+    CIRCUIT_LABELS.update(labels)
+    by_label = {}
+    for g in sorted(counts):
+        by_label["%s (%d device%s)" % (labels[g], counts[g], "" if counts[g] == 1 else "s")] = g
+    picked = forms.SelectFromList.show([k for k in sorted(by_label, key=lambda k: by_label[k])],
+                                       title="%s - %s" % (TITLE, FIRST_SELECTED), button_name="Trace",
+                                       multiselect=True)
+    if not picked:
+        return None
+    return set(by_label[k] for k in picked)
+
+
+def split_rows_by_circuit(rows, addresses, circuits):
+    """One row per chosen circuit, its devices in the order they were traced (across every run that reached them).
+    Returns (rows, [circuits no device of which was reached])."""
+    order = sorted(circuits)
+    by = dict((c, []) for c in order)
+    for row in rows:
+        for n in row["nodes"]:
+            for c in sorted(KIND.groups(addresses.get(n))):
+                if c in by:
+                    by[c].append(n)
+                    break
+    out = []
+    for c in order:
+        if by[c]:
+            new_row = {"nodes": by[c], "source": None}
+            new_row["label"] = KIND.row_label([addresses.get(n) for n in by[c]])
+            out.append(new_row)
+    return out, [c for c in order if not by[c]]
+
+
 def first_devices(root):
-    """[the device picked (directly or by its tag) as the first in the circuit], or [] if the user pressed
-    Esc to follow every run from the panel. None = cancelled."""
+    """([the device picked (directly or by its tag) as the first in the circuit], None), ([], None) if the user
+    pressed Esc to follow every run from the panel, or ([], {circuits}) for Trace Selected Circuits.
+    None = cancelled."""
+    other = FIRST_SELECTED if getattr(KIND, "select_runs", False) else FIRST_ALL_RUNS
     choice = forms.CommandSwitchWindow.show(
-        [FIRST_PICK, FIRST_ALL_RUNS],
+        [FIRST_PICK, other],
         message="Select first Device in Circuit (or its tag). Esc while picking = trace every run from the panel.")
     if not choice:
         return None
     if choice == FIRST_ALL_RUNS:
-        return []
+        return [], None
+    if choice == FIRST_SELECTED:
+        circuits = choose_circuits()
+        if circuits is None:
+            return None
+        return [], circuits
     flt = ElementOrTagFilter(is_addressed_device)
     while True:
         try:
@@ -344,10 +407,10 @@ def first_devices(root):
                                              "Select first Device in Circuit (or its tag) - Esc = every run "
                                              "from the panel")
         except OperationCanceledException:
-            return []
+            return [], None
         el = resolve(doc.GetElement(ref.ElementId), is_addressed_device)
         if el is not None and sr.eid_int(el.Id) != sr.eid_int(root.Id):
-            return [el]
+            return [el], None
 
 
 def named_value(el, name):
@@ -2086,10 +2149,11 @@ def draw_riser(update=None):
         root = starting_element()
         if root is None:
             return
-        firsts = first_devices(root)
-        if firsts is None:
+        picked = first_devices(root)
+        if picked is None:
             return
-        allowed, circuits = None, None
+        firsts, circuits = picked
+        allowed = None
     else:
         root, firsts, allowed, circuits = update.root, update.firsts, update.allowed, update.circuits
     entry = conduit_entry(root)     # the panel, or its gutter box when the conduit lands there
@@ -2097,6 +2161,10 @@ def draw_riser(update=None):
     if traced is None:
         return
     rows, returns, elements, addresses, unaddressed, unconnected, type_uids = traced
+    missing_circuits = []
+    if update is None and circuits:
+        # Trace Selected Circuits: one one-line per chosen circuit.
+        rows, missing_circuits = split_rows_by_circuit(rows, addresses, circuits)
     first_uids = [el.UniqueId for el in firsts]
     if update is not None and rows:
         rows = update_rows(rows, addresses, update)
@@ -2446,6 +2514,10 @@ def draw_riser(update=None):
         msg += "\n\nNo %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY
     if failed:
         msg += "\n\n%d item(s) could not be drawn." % failed
+    if missing_circuits:
+        msg += ("\n\nNo device of %s could be reached by conduit from the panel, so %s not drawn."
+                % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),
+                   "it was" if len(missing_circuits) == 1 else "they were"))
     if spacing_changes:
         msg += "\n\nMore room was made between circuits:\n" + "\n".join(
             "Loop Spacing %d: %s -> %s%s" % (n, feet_text(old), feet_text(new),

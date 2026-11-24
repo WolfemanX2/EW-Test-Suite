@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v14
-__title__ = "NAC\nRiser v14"
+# NAC Riser script - version v15
+__title__ = "NAC\nRiser v15"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"
@@ -20,7 +20,8 @@ __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "Steps: choose the NAC power supply (FACU, NAC panel, booster ...) from a list - panels with NAC / NCP / NACP "
            "in the family name that are also set to Head End in Family Defaults Config or have a Panel # parameter - "
            "or select it in the model, then the first device in the circuit "
-           "(either can be picked by its tag), choose the conduit types to trace, check the device count and "
+           "(either can be picked by its tag) - or Trace Selected Circuits: choose circuits from a list of every NAC "
+           "circuit in the project (N#-# (X devices)), each traced from the power supply as its own one-line - choose the conduit types to trace, check the device count and "
            "adjust spacing / wrapping, then generate a new drafting view (with the panel detail) or add the "
            "circuit to an existing one (joined to the panel detail already there). Press Esc instead of picking "
            "a first device to follow every conduit run leaving the power supply.\n\n"
