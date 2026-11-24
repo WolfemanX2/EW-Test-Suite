@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# SLC Riser script - version v55
-__title__ = "SLC\nRiser v55"
+# SLC Riser script - version v56
+__title__ = "SLC\nRiser v56"
 __doc__ = ("Draws a one-line SLC riser diagram in a new drafting view named "
            "<LEVEL> - SLC RISER - <PANEL #> (the panel's level and its Panel # parameter, in capitals).\n\n"
            "If a new circuit (its text and callouts included) would overlap the circuit below or above it, the "

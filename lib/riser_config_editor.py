@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v7
+# riser_config_editor module - version v8
 # Change log (last change first):
+#   v8 - Riser - Config v14: the Address text below line tooltip says negative values move the text up.
 #   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
 #   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
 #        head end (picked from the loaded Detail Item families, or typed).
@@ -8,10 +9,6 @@
 #        joined to the device by detail lines) and that their origin should be the top of the callout.
 #   v4 - Riser - Config v10: fixed 'Cannot import name Visibility' when the window opened (the WPF assembly is now
 #        loaded here instead of relying on pyRevit having loaded it first); messages use ew_common.alert.
-#   v3 - Riser - Config v9: the Rules column and its window are gone (a type is always drawn with its own symbols);
-#        the SLC tab shows each type's Address Group (Family Defaults Config) and an Address Callouts table - a
-#        callout symbol per Address Group subgroup, used on the riser instead of the 45 degree address text.
-#        Messages use pyRevit option bars / plain boxes instead of the warning popup.
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -256,7 +253,8 @@ TAB_XAML = """
                             <TextBox x:Name="PFX_spacing_box" Grid.Row="0" Grid.Column="4" Margin="0,0,0,6"/>
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Devices before wrapping:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBox x:Name="PFX_per_line_box" Grid.Row="1" Grid.Column="1" Margin="0,0,0,6"/>
-                            <TextBlock Grid.Row="1" Grid.Column="3" Text="Address text below line (in):" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBlock Grid.Row="1" Grid.Column="3" Text="Address text below line (in):" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTip="How far below the riser line (inches in the view) the address text starts. Negative values move it closer, or above the line."/>
                             <TextBox x:Name="PFX_offset_box" Grid.Row="1" Grid.Column="4" Margin="0,0,0,6"/>
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Wrap rounding (devices):" VerticalAlignment="Center" Margin="0,0,8,0"
                                        ToolTip="A line only wraps when it would have more than Devices before wrapping + this many devices. 40 and 5: 41 to 45 devices stay on one line."/>

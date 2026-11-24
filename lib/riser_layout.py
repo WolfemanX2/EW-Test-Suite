@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v27
+# riser_layout module - version v28
 # Change log (last change first):
+#   v28 - SLC Riser v56 / NAC Riser v24: the first device is one device spacing right of the circuit label (with
+#         label_offset_x); label_offset may be negative (text closer to / above the line) and level text uses it too;
+#         text above the line gets room above the row (label_up).
 #   v27 - Riser - Config v13 / SLC Riser v54 / NAC Riser v22: cfg "label_offset_x" - how far right of the start of
 #         the one-line its circuit label sits; cfg "end_symbol_ext" - a Generic Annotation at the end of the line
 #         (out["end_marks"]) instead of the end text.
@@ -12,8 +15,6 @@
 #         device by orthogonal detail lines (down from the symbol, across, down into the callout); callouts that
 #         would overlap are moved right (callout_band). The line below makes room for the band. A callout is inserted
 #         at its top (the callout families' origin).
-#   v23 - SLC Riser v44 / NAC Riser v9 (code check, no change to the drawings): assign_symbols' unused repeat
-#         option removed.
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -255,9 +256,18 @@ def layout(rows, root, info, returns, cfg):
     def label_drop(n):
         """How far a device's turned label reaches below the riser line (a callout's is in callout_band)."""
         length, height = label_size(n)
-        if info[n].get("level"):        # level text centred under the symbol
-            return info[n]["ext"][3] + text_gap + height if length else 0.0
+        if info[n].get("level"):        # level text centred under the symbol, label_offset lower (or higher)
+            return info[n]["ext"][3] + text_gap + offset + height if length else 0.0
         return (length + height) * diag + offset if length else 0.0
+
+    def label_up(n):
+        """How far a device's label reaches above the riser line (a negative label_offset can lift it there)."""
+        length, height = label_size(n)
+        if not length or info[n].get("callout"):
+            return 0.0
+        if info[n].get("level"):
+            return max(0.0, -(info[n]["ext"][3] + text_gap + offset))
+        return max(0.0, -offset)        # the turned text's top corner
 
     def label_reach(n):
         """How far a device's turned label (or its callout) reaches left of the device centreline."""
@@ -290,8 +300,10 @@ def layout(rows, root, info, returns, cfg):
         if not info[n]["lines"]:
             return
         text = "\n".join(info[n]["lines"])
-        if n == root or info[n].get("level"):
+        if n == root:
             out["texts"].append((x, y - d - text_gap, text, "C"))
+        elif info[n].get("level"):
+            out["texts"].append((x, y - d - text_gap - offset, text, "C"))
         else:
             out["texts"].append((x, y - offset, text, "D"))
 
@@ -334,7 +346,11 @@ def layout(rows, root, info, returns, cfg):
     reach = max(label_reach(n) for n in devices) if devices else 0.0
     root_r = info[root]["ext"][1]
     back_gap = max(sp * 0.5, reach + pad)   # a wrapped line comes back clear of the first label
-    x_first = root_r + max(sp, back_gap + pad)      # first device of every line
+    if cfg.get("label_offset_x") is not None:
+        # The circuit label sits label_offset_x right of the start; the first device one device spacing after it.
+        x_first = root_r + cfg["label_offset_x"] + sp
+    else:
+        x_first = root_r + max(sp, back_gap + pad)  # first device of every line
     x_back = x_first - back_gap     # where a wrapped line turns at the left
     cursor = None                   # bottom of what has been drawn so far
     panel_bottom = None             # bottom of the panel once it is placed
@@ -367,7 +383,7 @@ def layout(rows, root, info, returns, cfg):
             last_chunk = ci == len(chunks) - 1
             forward = ci % 2 == 0
             xs = xs_all[ci]
-            up = max(above_up(n) for n in chunk)
+            up = max(max(above_up(n), label_up(n)) for n in chunk)
             below = max(max(info[n]["ext"][3], label_drop(n)) for n in chunk)
             band_depth, band = callout_band(chunk, xs, below)
             below = max(below, band_depth)

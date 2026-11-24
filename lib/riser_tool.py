@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v26
+# riser_tool module - version v27
 # Change log (last change first):
+#   v27 - SLC Riser v56 / NAC Riser v24: overlaps between circuits are found from what is drawn in the groups
+#         (lines, symbols, text as its real - turned - outline), not the groups' boxes (group_shapes,
+#         shapes_clash, raise_needed).
 #   v26 - SLC Riser v55 / NAC Riser v23: drawing a circuit again replaces its previous one-line - the detail
 #         groups named for it (and its '(2)', '(3)' copies) are deleted first (remove_previous_groups).
 #   v25 - SLC Riser v54 / NAC Riser v22: the circuit label's offset from the start of the one-line and the end of
@@ -12,8 +15,6 @@
 #   v23 - NAC Riser v20: a kind with redraw_on_overlap asks, when a circuit would overlap the one below or above it,
 #         whether to redraw it with a different wrap length, make room (raise Loop Spacing) or keep it as drawn
 #         (circuit_overlap, draw_circuit).
-#   v22 - NAC Riser v19: a kind with level_labels gets level address text centred under each symbol, and with
-#         candela_line a second line with the device's candela (Candela parameter, else the type name: 30CD).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -1430,6 +1431,114 @@ def circuit_groups(view, panel, cands, exclude_id=None):
     return found
 
 
+# ---------- What a circuit's group actually covers ----------
+def _rect(bb):
+    return [(bb.Min.X, bb.Min.Y), (bb.Max.X, bb.Min.Y), (bb.Max.X, bb.Max.Y), (bb.Min.X, bb.Max.Y)]
+
+
+def _text_outline(note, view):
+    """The four corners of a text note's box as drawn (turned with the text), or None."""
+    try:
+        scale = view.Scale
+        w = note.Width * scale
+        h = note.Height * scale
+        o = note.Coord
+        bd = note.BaseDirection
+        ud = note.UpDirection
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    try:
+        align = str(note.HorizontalAlignment)
+    except Exception:
+        align = "Left"
+    x0, x1 = (-w, 0.0) if align == "Right" else (-w / 2.0, w / 2.0) if align == "Center" else (0.0, w)
+    try:
+        valign = str(note.VerticalAlignment)
+    except Exception:
+        valign = "Top"
+    y0, y1 = (0.0, h) if valign == "Bottom" else (-h / 2.0, h / 2.0) if valign == "Middle" else (-h, 0.0)
+    out = []
+    for a, b in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        out.append((o.X + bd.X * a + ud.X * b, o.Y + bd.Y * a + ud.Y * b))
+    return out
+
+
+def group_shapes(group, view):
+    """What the group's members cover: a list of outlines (corner lists) - a text note's turned box, a line's two
+    ends, and the box of anything else."""
+    shapes = []
+    for mid in group.GetMemberIds():
+        el = doc.GetElement(mid)
+        if el is None:
+            continue
+        if isinstance(el, TextNote):
+            outline = _text_outline(el, view)
+            if outline:
+                shapes.append(outline)
+                continue
+        if isinstance(el, CurveElement):
+            try:
+                c = el.GeometryCurve
+                p0, p1 = c.GetEndPoint(0), c.GetEndPoint(1)
+                shapes.append([(p0.X, p0.Y), (p1.X, p1.Y)])
+                continue
+            except Exception:
+                pass
+        try:
+            bb = el.get_BoundingBox(view)
+        except Exception:
+            bb = None
+        if bb is not None:
+            shapes.append(_rect(bb))
+    return shapes
+
+
+def _axes(poly):
+    out = []
+    n = len(poly)
+    for i in range(n if n > 2 else 1):
+        (x0, y0), (x1, y1) = poly[i], poly[(i + 1) % n]
+        dx, dy = x1 - x0, y1 - y0
+        length = (dx * dx + dy * dy) ** 0.5
+        if length > 1e-9:
+            out.append((-dy / length, dx / length))
+            if n == 2:
+                out.append((dx / length, dy / length))
+    return out
+
+
+def _clash(a, b, clear):
+    """True when outline a comes within clear of outline b (separating axis test on convex outlines)."""
+    for ax, ay in _axes(a) + _axes(b) + [(1.0, 0.0), (0.0, 1.0)]:
+        pa = [x * ax + y * ay for x, y in a]
+        pb = [x * ax + y * ay for x, y in b]
+        if min(pb) > max(pa) + clear or min(pa) > max(pb) + clear:
+            return False
+    return True
+
+
+def shapes_clash(shapes_a, shapes_b, clear):
+    """True when anything in one set of outlines comes within clear of anything in the other."""
+    for a in shapes_a:
+        for b in shapes_b:
+            if _clash(a, b, clear):
+                return True
+    return False
+
+
+def raise_needed(lower, upper, clear):
+    """How far the upper outlines must move up to clear the lower ones where they meet: for each pair that comes
+    within clear, the top of the lower one + clear - the bottom of the upper one. 0 when nothing meets."""
+    need = 0.0
+    for a in lower:
+        for b in upper:
+            if _clash(a, b, clear):
+                need = max(need, max(y for _x, y in a) + clear - min(y for _x, y in b))
+    return need
+
+
 NESTED_SUPPLY_PARAM = "Power Supply #"     # on the power supplies nested in the panel detail
 
 
@@ -1475,8 +1584,8 @@ def nested_overlap(view, placed, group, line_y):
     """Which neighbours (circuits on the nested power supplies' lines, below or above this one's line at line_y)
     the circuit just drawn would overlap: a list with "below" and / or "above"."""
     doc.Regenerate()
-    bb = group.get_BoundingBox(view)
-    if bb is None:
+    mine = group_shapes(group, view)
+    if not mine:
         return []
     starts = [(c.get("vx"), y) for c, y in placed if c.get("vx") is not None]
     clear = paper(LOOP_CLEARANCE)
@@ -1500,14 +1609,11 @@ def nested_overlap(view, placed, group, line_y):
                 break
         if g_line is None or abs(g_line - line_y) < 0.01:
             continue
-        gbb = g.get_BoundingBox(view)
-        if gbb is None:
-            continue
-        (below if g_line < line_y else above).append(gbb)
+        (below if g_line < line_y else above).extend(group_shapes(g, view))
     found = []
-    if below and max(b.Max.Y for b in below) + clear > bb.Min.Y + 1e-6:
+    if below and shapes_clash(mine, below, clear):
         found.append("below")
-    if above and bb.Max.Y + clear > min(b.Min.Y for b in above) + 1e-6:
+    if above and shapes_clash(mine, above, clear):
         found.append("above")
     return found
 
@@ -1521,17 +1627,17 @@ def circuit_overlap(view, panel, cands, loop, group):
     """Which neighbours the circuit just drawn (group, on loop `loop`) would overlap, text and callouts included:
     a list with "below" and / or "above" (empty when it fits)."""
     doc.Regenerate()
-    bb = group.get_BoundingBox(view)
-    if bb is None:
+    mine = group_shapes(group, view)
+    if not mine:
         return []
     others = circuit_groups(view, panel, cands, group.Id)
     clear = paper(LOOP_CLEARANCE)
     found = []
-    below = [t for k, items in others.items() if k < loop for _, _, t in items]
-    if below and max(below) + clear > bb.Min.Y + 1e-6:
+    below = [sh for k, items in others.items() if k < loop for g, _, _ in items for sh in group_shapes(g, view)]
+    if below and shapes_clash(mine, below, clear):
         found.append("below")
-    above = [b for k, items in others.items() if k > loop for _, b, _ in items]
-    if above and bb.Max.Y + clear > min(above) + 1e-6:
+    above = [sh for k, items in others.items() if k > loop for g, _, _ in items for sh in group_shapes(g, view)]
+    if above and shapes_clash(mine, above, clear):
         found.append("above")
     return found
 
@@ -1563,10 +1669,8 @@ def fit_circuit(view, panel, cands, loop, group):
     the Loop Spacing values changed."""
     changes = []
     doc.Regenerate()
-    bb = group.get_BoundingBox(view)
-    if bb is None:
+    if not group_shapes(group, view):
         return changes
-    bottom, top = bb.Min.Y, bb.Max.Y
     others = circuit_groups(view, panel, cands, group.Id)
     clear = paper(LOOP_CLEARANCE)
 
@@ -1603,20 +1707,20 @@ def fit_circuit(view, panel, cands, loop, group):
         return True
 
     first = loop_spacing_values(panel).get(1)
-    if first is not None and first < MIN_LOOP_SPACING_1_FT - 1e-6 and raise_spacing(1, MIN_LOOP_SPACING_1_FT - first):
-        bottom += MIN_LOOP_SPACING_1_FT - first     # every loop sits on Loop Spacing 1, this one included
-        top += MIN_LOOP_SPACING_1_FT - first
-    below = [t for k, items in others.items() if k < loop for _, _, t in items]
-    if below:
-        need = max(below) + clear - bottom
-        if need > 1e-6 and raise_spacing(loop, need):
-            bottom += need
-            top += need
-    above = [b for k, items in others.items() if k > loop for _, b, _ in items]
-    if above:
-        need = top + clear - min(above)
-        if need > 1e-6:
-            raise_spacing(loop + 1, need)
+    if first is not None and first < MIN_LOOP_SPACING_1_FT - 1e-6:
+        raise_spacing(1, MIN_LOOP_SPACING_1_FT - first)     # every loop sits on Loop Spacing 1, this one included
+
+    def shapes_of(which):
+        doc.Regenerate()
+        return [sh for k, items in others.items() if which(k) for g, _, _ in items for sh in group_shapes(g, view)]
+
+    # Only where something in this circuit actually meets something in a neighbour (not the groups' boxes).
+    need = raise_needed(shapes_of(lambda k: k < loop), group_shapes(group, view), clear)
+    if need > 1e-6:
+        raise_spacing(loop, need)
+    need = raise_needed(group_shapes(group, view), shapes_of(lambda k: k > loop), clear)
+    if need > 1e-6:
+        raise_spacing(loop + 1, need)
     if changes:
         doc.Regenerate()
     return changes
