@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v8
+# riser_config_editor module - version v9
 # Change log (last change first):
+#   v9 - Riser - Config v15: Gap between circuits (in) box.
 #   v8 - Riser - Config v14: the Address text below line tooltip says negative values move the text up.
 #   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
 #   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
 #        head end (picked from the loaded Detail Item families, or typed).
 #   v5 - Riser - Config v11: the Address Callouts help says where callouts now go (a band below the address text,
 #        joined to the device by detail lines) and that their origin should be the top of the callout.
-#   v4 - Riser - Config v10: fixed 'Cannot import name Visibility' when the window opened (the WPF assembly is now
-#        loaded here instead of relying on pyRevit having loaded it first); messages use ew_common.alert.
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -234,7 +233,11 @@ TAB_XAML = """
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Gap between circuits (in):" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="The least gap (inches in the view) kept between what is drawn for two circuits - lines, symbols and text, not the groups' boxes. Closer than this counts as an overlap."/>
+                            <TextBox x:Name="PFX_gap_box" Grid.Row="5" Grid.Column="1" Margin="0,6,0,0"/>
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Circuit label offset (ft):" VerticalAlignment="Center" Margin="0,6,8,0"
                                        ToolTip="How far right of the start of the one-line the circuit label (A, N1-2) and its line down sit, in feet in the view."/>
                             <TextBox x:Name="PFX_label_x_box" Grid.Row="4" Grid.Column="1" Margin="0,6,0,0"/>
@@ -435,6 +438,7 @@ class RiserTab(object):
         self.c("end_box").ItemsSource = self.end_choices
         self.c("end_box").SelectionChanged += self.setting_changed
         self.c("label_x_box").TextChanged += self.setting_changed
+        self.c("gap_box").TextChanged += self.setting_changed
         self.c("panel_family_box").AddHandler(TextBoxBase.TextChangedEvent,
                                               TextChangedEventHandler(self.setting_changed))
         self.c("panel_family_box").SelectionChanged += self.setting_changed
@@ -451,7 +455,7 @@ class RiserTab(object):
         self.c("callout_text_btn").Click += self.callout_text_click
         if self.failed:
             for name in ("grid", "defaults_btn", "add_btn", "set_btn", "delete_btn", "scale_box", "spacing_box",
-                         "per_line_box", "offset_box", "rounding_box", "panel_family_box", "label_x_box",
+                         "per_line_box", "offset_box", "rounding_box", "panel_family_box", "label_x_box", "gap_box",
                          "end_box", "callout_grid",
                          "callout_set_btn",
                          "callout_text_btn"):
@@ -483,6 +487,7 @@ class RiserTab(object):
         self.c("panel_family_box").Text = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
         self.c("label_x_box").Text = number_text(settings.get("label_offset_x_ft",
                                                              sr.DEFAULT_SETTINGS["label_offset_x_ft"]))
+        self.c("gap_box").Text = number_text(settings.get("circuit_gap_in", sr.DEFAULT_SETTINGS["circuit_gap_in"]))
         end = settings.get(sr.END_SYMBOL_KEY) or ""
         if end and end not in self.end_choices:     # saved, but not loaded in this project: keep it
             self.end_choices = self.end_choices + [end]
@@ -515,7 +520,8 @@ class RiserTab(object):
                                       ("devices_per_line", "per_line_box", "Devices before wrapping", int),
                                       ("wrap_rounding", "rounding_box", "Wrap rounding", int),
                                       ("label_offset_in", "offset_box", "Address text below line", float),
-                                      ("label_offset_x_ft", "label_x_box", "Circuit label offset", float)]:
+                                      ("label_offset_x_ft", "label_x_box", "Circuit label offset", float),
+                                      ("circuit_gap_in", "gap_box", "Gap between circuits", float)]:
             lo, hi = self.store.SETTING_LIMITS[key]
             text = (self.c(name).Text or "").strip()
             try:

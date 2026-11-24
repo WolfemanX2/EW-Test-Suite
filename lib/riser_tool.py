@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v27
+# riser_tool module - version v28
 # Change log (last change first):
+#   v28 - SLC Riser v57 / NAC Riser v25: the gap kept between circuits is the Gap between circuits setting (inches in
+#         the view, 1" default) instead of 1/8" on the sheet (a foot at 1/8"); an overlap names the two elements
+#         in the output window. Only nested Detail Items count as power supplies (a nested Generic Annotation with
+#         a Power Supply # had its lines used, so circuits started at its end).
 #   v27 - SLC Riser v56 / NAC Riser v24: overlaps between circuits are found from what is drawn in the groups
 #         (lines, symbols, text as its real - turned - outline), not the groups' boxes (group_shapes,
 #         shapes_clash, raise_needed).
@@ -12,9 +16,6 @@
 #         a Power Supply # parameter, circuit N#-C goes on reference line C of the nested instance whose Power
 #         Supply # is N# (nested_exit_points), and is locked to it; a circuit whose power supply isn't in the panel
 #         is skipped. Overlaps there can only be redrawn or kept (the nested lines have fixed spacing).
-#   v23 - NAC Riser v20: a kind with redraw_on_overlap asks, when a circuit would overlap the one below or above it,
-#         whether to redraw it with a different wrap length, make room (raise Loop Spacing) or keep it as drawn
-#         (circuit_overlap, draw_circuit).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -88,7 +89,7 @@ ABOVE_TEXT_TYPE_NAME = 'Riser 5/64"'    # made from the default text type if no 
                                         # to '<title> 5/64"'
 # Sizes on the printed sheet, in inches:
 ROW_GAP = 0.5           # extra space between rows
-LOOP_CLEARANCE = 0.125  # least space between two circuits on the panel detail; more Loop Spacing is added to keep it
+CIRCUIT_GAP_FT = 1.0 / 12.0    # least gap between what is drawn for two circuits (set from Gap between circuits)
 MIN_LOOP_SPACING_1_FT = 10.0    # the automatic adjustment never leaves Loop Spacing 1 smaller than this
 PAD = 0.125             # space above and below each line of devices
 TEXT_GAP = 0.06         # between a symbol and the addresses under it
@@ -1465,6 +1466,30 @@ def _text_outline(note, view):
     return out
 
 
+class ShapeOutline(list):
+    """A list of corners that also remembers the element it was taken from (to name it in an overlap)."""
+    el = None
+
+
+def report_clash(pair, view, name):
+    """Name the two elements that came too close, in the output window."""
+    try:
+        a, b = pair
+        def describe(o):
+            el = o.el
+            if el is None:
+                return "?"
+            text = ""
+            if isinstance(el, TextNote):
+                text = " '%s'" % (el.Text or "").strip().replace("\r", " ").replace("\n", " ")
+            cat = el.Category.Name if el.Category is not None else el.GetType().Name
+            return "%s %s%s" % (output.linkify(el.Id), cat, text)
+        output.print_md("%s: %s - %s comes within %s of %s." % (TITLE, name, describe(a),
+                                                               feet_text(CIRCUIT_GAP_FT), describe(b)))
+    except Exception:
+        pass
+
+
 def group_shapes(group, view):
     """What the group's members cover: a list of outlines (corner lists) - a text note's turned box, a line's two
     ends, and the box of anything else."""
@@ -1473,25 +1498,27 @@ def group_shapes(group, view):
         el = doc.GetElement(mid)
         if el is None:
             continue
+        outline = None
         if isinstance(el, TextNote):
             outline = _text_outline(el, view)
-            if outline:
-                shapes.append(outline)
-                continue
-        if isinstance(el, CurveElement):
+        if outline is None and isinstance(el, CurveElement):
             try:
                 c = el.GeometryCurve
                 p0, p1 = c.GetEndPoint(0), c.GetEndPoint(1)
-                shapes.append([(p0.X, p0.Y), (p1.X, p1.Y)])
-                continue
+                outline = [(p0.X, p0.Y), (p1.X, p1.Y)]
             except Exception:
-                pass
-        try:
-            bb = el.get_BoundingBox(view)
-        except Exception:
-            bb = None
-        if bb is not None:
-            shapes.append(_rect(bb))
+                outline = None
+        if outline is None:
+            try:
+                bb = el.get_BoundingBox(view)
+            except Exception:
+                bb = None
+            if bb is not None:
+                outline = _rect(bb)
+        if outline:
+            o = ShapeOutline(outline)
+            o.el = el
+            shapes.append(o)
     return shapes
 
 
@@ -1520,12 +1547,12 @@ def _clash(a, b, clear):
 
 
 def shapes_clash(shapes_a, shapes_b, clear):
-    """True when anything in one set of outlines comes within clear of anything in the other."""
+    """The first (outline a, outline b) that come within clear of each other, or None."""
     for a in shapes_a:
         for b in shapes_b:
             if _clash(a, b, clear):
-                return True
-    return False
+                return (a, b)
+    return None
 
 
 def raise_needed(lower, upper, clear):
@@ -1561,6 +1588,11 @@ def nested_exit_points(view, panel):
             sub = doc.GetElement(sid)
             if not isinstance(sub, FamilyInstance):
                 continue
+            try:    # only nested Detail Items are power supplies (not a Generic Annotation with the same parameter)
+                if sr.eid_int(sub.Category.Id) != int(BuiltInCategory.OST_DetailComponents):
+                    continue
+            except Exception:
+                continue
             supply = number_in(named_value(sub, NESTED_SUPPLY_PARAM))
             if supply is None:
                 continue
@@ -1588,7 +1620,7 @@ def nested_overlap(view, placed, group, line_y):
     if not mine:
         return []
     starts = [(c.get("vx"), y) for c, y in placed if c.get("vx") is not None]
-    clear = paper(LOOP_CLEARANCE)
+    clear = CIRCUIT_GAP_FT
     below, above = [], []
     for g in FilteredElementCollector(doc, view.Id).OfClass(Group).ToElements():
         if g.Id == group.Id:
@@ -1611,10 +1643,11 @@ def nested_overlap(view, placed, group, line_y):
             continue
         (below if g_line < line_y else above).extend(group_shapes(g, view))
     found = []
-    if below and shapes_clash(mine, below, clear):
-        found.append("below")
-    if above and shapes_clash(mine, above, clear):
-        found.append("above")
+    for side, shapes in (("below", below), ("above", above)):
+        pair = shapes_clash(mine, shapes, clear) if shapes else None
+        if pair:
+            found.append(side)
+            report_clash(pair, view, "the circuit %s" % side)
     return found
 
 
@@ -1631,14 +1664,15 @@ def circuit_overlap(view, panel, cands, loop, group):
     if not mine:
         return []
     others = circuit_groups(view, panel, cands, group.Id)
-    clear = paper(LOOP_CLEARANCE)
+    clear = CIRCUIT_GAP_FT
     found = []
     below = [sh for k, items in others.items() if k < loop for g, _, _ in items for sh in group_shapes(g, view)]
-    if below and shapes_clash(mine, below, clear):
-        found.append("below")
     above = [sh for k, items in others.items() if k > loop for g, _, _ in items for sh in group_shapes(g, view)]
-    if above and shapes_clash(mine, above, clear):
-        found.append("above")
+    for side, shapes in (("below", below), ("above", above)):
+        pair = shapes_clash(mine, shapes, clear) if shapes else None
+        if pair:
+            found.append(side)
+            report_clash(pair, view, "the circuit %s" % side)
     return found
 
 
@@ -1672,7 +1706,7 @@ def fit_circuit(view, panel, cands, loop, group):
     if not group_shapes(group, view):
         return changes
     others = circuit_groups(view, panel, cands, group.Id)
-    clear = paper(LOOP_CLEARANCE)
+    clear = CIRCUIT_GAP_FT
 
     def low_point(g):
         try:
@@ -2466,7 +2500,7 @@ def apply_settings():
     """Use the drawing settings saved in the kind's tab of Riser - Config. False if the file can't be read and the user
     chose to stop."""
     global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS, PANEL_FAMILY
-    global LABEL_OFFSET_X_FT, END_SYMBOL
+    global LABEL_OFFSET_X_FT, END_SYMBOL, CIRCUIT_GAP_FT
     try:
         settings = KIND.load_settings()
     except Exception as ex:
@@ -2483,6 +2517,7 @@ def apply_settings():
     ADDRESS_CALLOUTS = settings.get(sr.CALLOUTS) or {}
     PANEL_FAMILY = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
     LABEL_OFFSET_X_FT = settings.get("label_offset_x_ft", sr.DEFAULT_SETTINGS["label_offset_x_ft"])
+    CIRCUIT_GAP_FT = settings.get("circuit_gap_in", sr.DEFAULT_SETTINGS["circuit_gap_in"]) / 12.0
     END_SYMBOL = settings.get(sr.END_SYMBOL_KEY) or ""
     return True
 

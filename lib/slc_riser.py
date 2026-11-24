@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v22
+# slc_riser module - version v23
 # Change log (last change first):
+#   v23 - Riser - Config v15: drawing setting "circuit_gap_in" - the least gap kept between two circuits.
 #   v22 - SLC Riser v56 / NAC Riser v24: Address text below line (label_offset_in) may be negative, down to -120".
 #   v21 - Riser - Config v13: drawing settings "label_offset_x_ft" (circuit label offset from the start of the
 #         one-line) and "end_symbol" (a Generic Annotation at the end of the line; '' = the end text).
 #   v20 - Riser - Config v12 / SLC Riser v52 / NAC Riser v16: the drawing settings keep "panel_family", the detail
 #         family drawn for the head end (PANEL_FAMILY_KEY, DEFAULT_PANEL_FAMILY), set per riser in Riser - Config.
 #   v19 - SLC Riser v47: LoopKind.return_text - every SLC one-line ends with 'SLC RETURN'.
-#   v18 - SLC Riser v43 / NAC Riser v8 / Riser - Config v9: the symbol rules by number of addresses are gone (a type
-#         is always drawn with its own symbols; old saved rules are ignored). Address callouts: the drawing settings
-#         keep "address_callouts" {Address Group: {subgroup: callout symbol}} and callout_for finds a device's
-#         subgroup (its Family Defaults Address Group, by its number of addresses) and callout.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -69,6 +66,7 @@ DEFAULT_SETTINGS = {
     "wrap_rounding": 0,         # a line only wraps when it would have more than devices_per_line + this
     "label_offset_in": 1.0,     # address text starts this many inches (in the view) below the riser line
     "label_offset_x_ft": 1.125,  # the circuit label (A, N1-2) sits this far right of the start of the one-line
+    "circuit_gap_in": 1.0,      # least gap (inches in the view) between what is drawn for two circuits
 }
 SETTING_LIMITS = {              # (smallest, largest) allowed
     "view_scale": (1, 1000),
@@ -77,6 +75,7 @@ SETTING_LIMITS = {              # (smallest, largest) allowed
     "wrap_rounding": (0, 200),
     "label_offset_in": (-120.0, 120.0),    # negative: closer to, or above, the riser line
     "label_offset_x_ft": (0.0, 100.0),
+    "circuit_gap_in": (0.0, 120.0),
 }
 
 
