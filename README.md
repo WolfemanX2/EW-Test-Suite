@@ -67,7 +67,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
   parameters
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/Riser.panel/NacRiser.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Riser - Configurable
-- Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the panel detail (the family set on the NAC Riser tab of Riser - Config).
+- Draws a one-line NAC riser diagram the same way as SLC Riser: pick the power supply and the first device, and each NAC circuit leaving the power supply is drawn as one row in order of connection, labeled with its circuit (N1-2) and each device with its NAC Address. Circuit N lines up with reference line N of the panel detail (the family set on the NAC Riser tab of Riser - Config), filled in with the power supply's Panel #, Panel Model, Location (room or space name) and Power Supply #1-3 (the number in each, e.g. NACP-01 -> 1).
 - The power supply is chosen from a list (NAC / NCP / NACP in the family name, plus Head End in Family Defaults Config or a Panel # parameter) or selected in the model.
 - **Riser - Config (NAC Riser tab):** its own drawing settings (including its own panel detail family) and symbols, kept apart from SLC Riser's
 
@@ -238,13 +238,13 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v52 |
-| NAC Riser | v16 |
+| SLC Riser | v53 |
+| NAC Riser | v17 |
 | Riser - Config (was SLC Riser - Config) | v11 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v20 |
-| lib/riser_tool.py | v19 |
-| lib/nac_riser.py | v6 |
+| lib/riser_tool.py | v20 |
+| lib/nac_riser.py | v7 |
 | lib/riser_config_editor.py | v6 |
 | lib/riser_layout.py | v25 |
 | Line Nuke | v4 |

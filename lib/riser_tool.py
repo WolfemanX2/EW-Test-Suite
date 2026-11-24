@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v19
+# riser_tool module - version v20
 # Change log (last change first):
+#   v20 - NAC Riser v17: the panel detail is filled by fill_panel - Panel #, Panel Model, Location (the room, or
+#         MEP space, the panel is in; name only for a kind with location_name_only) and, for a kind with
+#         panel_number_params, Power Supply #1-3 as integers taken from the panel's text (NACP-01 -> 1).
 #   v19 - SLC Riser v52 / NAC Riser v16: the head end detail family comes from the riser's drawing settings
 #         (Riser - Config) instead of always NEX2-DETAIL-RISER.
 #   v18 - NAC Riser v15: a kind with select_runs offers 'Trace Selected Circuits' instead of 'Trace Every Run From
@@ -11,9 +14,6 @@
 #         CONNECTED; the user chooses to add them in address order, add them at the end, or leave them off.
 #         Callouts are measured filled in from their device and without the symbol size cap, so callouts side by
 #         side no longer overlap.
-#   v15 - SLC Riser v50 / NAC Riser v13: fix - adding a circuit below one already locked to the panel (Loop 1 after
-#         Loop 3) broke the lock: raising a Loop Spacing moves the locked circuits above with their reference
-#         lines, and they were then moved again. Now each circuit is only moved by what it hasn't moved already.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -777,26 +777,78 @@ def panel_family_symbol():
     return found[0] if found else None
 
 
-def room_text(el):
-    """'ROOM NAME NUMBER' of the room the element is in, or NO_ROOM_TEXT."""
+def room_text(el, name_only=False):
+    """'ROOM NAME NUMBER' (or just the name) of the room the element is in - or, with no room, of its MEP space -
+    or NO_ROOM_TEXT."""
     room = None
-    try:
-        room = el.Room
-    except Exception:
-        room = None
-    if room is None:
+    for get in (lambda: el.Room, lambda: doc.GetRoomAtPoint(el.Location.Point),
+                lambda: el.Space, lambda: doc.GetSpaceAtPoint(el.Location.Point)):
         try:
-            room = doc.GetRoomAtPoint(el.Location.Point)
+            room = get()
         except Exception:
             room = None
+        if room is not None:
+            break
     if room is None:
         return NO_ROOM_TEXT
     try:
         name = (room.get_Parameter(BuiltInParameter.ROOM_NAME).AsString() or "").strip()
     except Exception:
         name = ""
+    if not name:
+        try:
+            name = (room.Name or "").strip()
+        except Exception:
+            name = ""
+    if name_only:
+        return name or NO_ROOM_TEXT
     number = (getattr(room, "Number", "") or "").strip()
+    if number and name.endswith(" " + number):      # Room.Name / Space.Name already end with the number
+        name = name[:-len(number) - 1].strip()
     return " ".join(p for p in (name, number) if p) or NO_ROOM_TEXT
+
+
+def number_in(text):
+    """The last whole number in the text (NACP-01 -> 1, 'PS 2' -> 2), or None."""
+    found = re.findall(r"\d+", text or "")
+    return int(found[-1]) if found else None
+
+
+def set_number_param(inst, name, number):
+    """Set a number parameter (integer, or a number / text one) on the instance. False if missing or read-only."""
+    p = inst.LookupParameter(name)
+    if p is None or p.IsReadOnly:
+        return False
+    try:
+        if p.StorageType == StorageType.Integer:
+            return bool(p.Set(int(number)))
+        if p.StorageType == StorageType.Double:
+            return bool(p.Set(float(number)))
+        return bool(p.Set(str(number)))
+    except Exception:
+        return False
+
+
+def fill_panel(inst, root, only_with_value=False):
+    """Fill the panel detail from the panel: Panel #, Location (its room / space), Panel Model and the kind's
+    panel_number_params (the number in each, as an integer). Returns the detail parameters that couldn't be set.
+    only_with_value: leave a field alone when the panel has no value for it (Update)."""
+    skipped = []
+    texts = [(PANEL_NUMBER_PARAM, named_value(root, PANEL_NUMBER_PARAM)),
+             ("Location", room_text(root, getattr(KIND, "location_name_only", False))),
+             (PANEL_MODEL_PARAM, panel_model(root))]
+    for name, value in texts:
+        if only_with_value and not value:
+            continue
+        if not set_text_param(inst, name, value):
+            skipped.append(name)
+    for name in getattr(KIND, "panel_number_params", None) or []:
+        number = number_in(named_value(root, name))
+        if number is None:
+            continue        # nothing to take from the panel: the detail keeps its own value
+        if not set_number_param(inst, name, number):
+            skipped.append(name)
+    return skipped
 
 
 def panel_model(root):
@@ -822,11 +874,8 @@ def panel_model(root):
 
 
 def refresh_panel(inst, root):
-    """Fill the panel detail's Panel #, Location and Panel Model from the panel again (Update Selected One-Line)."""
-    for name, value in ((PANEL_NUMBER_PARAM, named_value(root, PANEL_NUMBER_PARAM)), ("Location", room_text(root)),
-                        (PANEL_MODEL_PARAM, panel_model(root))):
-        if value:
-            set_text_param(inst, name, value)
+    """Fill the panel detail from the panel again (Update Selected One-Line); see fill_panel."""
+    fill_panel(inst, root, only_with_value=True)
 
 
 def set_text_param(inst, name, value):
@@ -1020,13 +1069,7 @@ def place_panel(view, sym, root):
         sym.Activate()
         doc.Regenerate()
     inst = doc.Create.NewFamilyInstance(XYZ(0, 0, 0), sym, view)
-    skipped = []
-    if not set_text_param(inst, PANEL_NUMBER_PARAM, named_value(root, PANEL_NUMBER_PARAM)):
-        skipped.append(PANEL_NUMBER_PARAM)
-    if not set_text_param(inst, "Location", room_text(root)):
-        skipped.append("Location")
-    if not set_text_param(inst, PANEL_MODEL_PARAM, panel_model(root)):
-        skipped.append(PANEL_MODEL_PARAM)
+    skipped = fill_panel(inst, root)
     doc.Regenerate()
     bb = inst.get_BoundingBox(view)
     if bb is None:

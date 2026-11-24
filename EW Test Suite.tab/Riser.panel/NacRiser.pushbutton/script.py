@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v16
-__title__ = "NAC\nRiser v16"
+# NAC Riser script - version v17
+__title__ = "NAC\nRiser v17"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "It works the same way as SLC Riser, following NAC circuits instead of SLC loops.\n\n"
@@ -29,7 +29,8 @@ __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "circuit, with its address under it (45 degrees, right justified, hanging below the riser line). "
            "Each row is labeled with its circuit (N1-2) and made into a detail group named "
            "<PANEL #> - Circuit N1-2. The power supply is drawn with the panel detail family set on the NAC Riser tab of Riser - Config (NEX2-DETAIL-RISER by "
-           "default); circuit N "
+           "default), filled in from the power supply: Panel #, Panel Model (its Model), Location (the name of the room "
+           "or space it is in) and Power Supply #1 / #2 / #3 as numbers (NACP-01 -> 1); circuit N "
            "leaves it in line with the reference line numbered N (1, L1, Loop 1, Circuit 1 ...) at the height of "
            "its Loop Spacing N (each Loop Spacing measured from the line below it, so circuit N is Loop Spacing 1 + "
            "... + N above the bottom of the panel), and the first line is locked to that reference line.\n\n"
