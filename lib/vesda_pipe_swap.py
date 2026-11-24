@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# vesda_pipe_swap module - version v2
+# vesda_pipe_swap module - version v3
 # Change log (last change first):
+#   v3 - VESDA Pipe Swap v3: a swapped pipe's ADDRESS is written in full as "<Panel #>: PORT <n>", Panel # read
+#        from the Fire Alarm Device (detector) the run connects to; "ASD-##" when it has none or none is found.
 #   v2 - VESDA Pipe Swap v2: ADDRESS follows the new pipe type's number - "...PORT #" on the swapped pipes and
 #        the P# of "P#:S#:H#" on the sampling points joined to them (S# and H# are left as they are).
 #   v1 - VESDA Pipe Swap v1 / VESDA Pipe Swap - Config v1: new. Sampling point families (the config), collecting a
@@ -16,7 +18,8 @@ replaces the sampling point tees and can break the run. This instead:
   - never touches a fitting or accessory whose family is listed as a sampling point in VESDA Pipe Swap - Config,
   - checks every connection afterwards, rejoins any that came apart, and reports what it couldn't,
   - renumbers the ADDRESS parameter to the new type's number (port_number: the last number in the type name):
-    pipes "ASD-17: PORT 4" -> "ASD-17: PORT 1"; sampling points joined to a swapped pipe "P4:S0:H3" -> "P1:S0:H3".
+    pipes are written "<Panel #>: PORT 1" from the detector (Fire Alarm Device) the run connects to, or
+    "ASD-##: PORT 1" when it has no Panel #; sampling points joined to a swapped pipe "P4:S0:H3" -> "P1:S0:H3".
 
 Config        sampling_families() / save_sampling_families(names) / config_path()
 Run           is_run_part, is_sampling, collect_run(starts, follow_run)
@@ -39,7 +42,8 @@ SAMPLING_CATEGORIES = (BuiltInCategory.OST_PipeFitting, BuiltInCategory.OST_Pipe
 REJOIN_TOLERANCE = 0.05         # feet (about 5/8"): how far apart two open connectors may be and still be rejoined
 SIZE_TOLERANCE = 0.0005         # feet
 ADDRESS_PARAM = "ADDRESS"
-PIPE_PORT = re.compile(r"(PORT\s*)(\d+)(\s*)$", re.IGNORECASE)      # "ASD-17: PORT 4"
+PANEL_PARAM = "Panel #"
+NO_PANEL = "ASD-##"             # pipe address prefix when the detector has no Panel # (or no detector is found)
 SAMPLING_PIPE = re.compile(r"^(\s*P)(\d+)(?=\s*:)", re.IGNORECASE)    # "P4:S0:H3"
 
 # Fitting kind -> the Routing Preferences group its replacement comes from
@@ -267,10 +271,47 @@ def readdress(el, pattern, number):
     text = p.AsString() or ""
     if not pattern.search(text):
         return "skipped"
-    new = pattern.sub(lambda m: m.group(1) + str(number) + (m.group(3) if m.lastindex >= 3 else ""), text, 1)
+    new = pattern.sub(lambda m: m.group(1) + str(number) + "", text, 1)
     if new == text:
         return "same"
     p.Set(new)
+    return "changed"
+
+
+def detectors(pipes):
+    """{pipe id: the Fire Alarm Device (detector) its run connects to, or None}. Each run is walked once."""
+    out = {}
+    for p in pipes:
+        if ec.eid(p) in out:
+            continue
+        parent, elements, order = ct.walk(p, is_run_part, domain=ct.PIPING)
+        found = None
+        for el in elements.values():
+            for group in ct.connected_elements(el, ct.PIPING):
+                for n in group:
+                    if found is None and ec.is_device(n):
+                        found = n
+            if found is not None:
+                break
+        for i in elements:
+            out[i] = found
+    return out
+
+
+def pipe_address(detector, port):
+    """'<Panel #>: PORT <port>', or 'ASD-##: PORT <port>' when there's no detector or it has no Panel #."""
+    panel = ec.named_value(detector, PANEL_PARAM) if detector is not None else ""
+    return "%s: PORT %d" % (panel or NO_PANEL, port)
+
+
+def set_address(el, text):
+    """Set el's ADDRESS. Returns "changed", "same" or "skipped" (no ADDRESS parameter, or read-only)."""
+    p = el.LookupParameter(ADDRESS_PARAM)
+    if p is None or p.IsReadOnly:
+        return "skipped"
+    if (p.AsString() or "") == text:
+        return "same"
+    p.Set(text)
     return "changed"
 
 
@@ -319,6 +360,7 @@ class Plan(object):
         self.port = None                # the number put in ADDRESS (None: the type name has no number)
         self.addr_changed = {"pipe": 0, "sampling": 0}
         self.addr_skipped = {"pipe": 0, "sampling": 0}
+        self.no_panel = 0               # pipes given ASD-## (no detector found, or it has no Panel #)
 
     def _watch(self):
         """{id: element} whose connections are checked afterwards: everything changed, the sampling points, and
@@ -395,16 +437,18 @@ class Plan(object):
         # 4. ADDRESS: port / P# number of the new type.
         self.port = port_number(target_type)
         if self.port is not None:
-            for kind, els, pattern in (("pipe", self.pipes, PIPE_PORT),
-                                       ("sampling", self.sampling_on_pipes, SAMPLING_PIPE)):
-                for el in els:
-                    if not _alive(el):
-                        continue
-                    result = readdress(el, pattern, self.port)
-                    if result == "changed":
-                        self.addr_changed[kind] += 1
-                    elif result == "skipped":
-                        self.addr_skipped[kind] += 1
+            found = detectors(self.pipes)
+            for el in self.pipes:
+                if not _alive(el):
+                    continue
+                det = found.get(ec.eid(el))
+                text = pipe_address(det, self.port)
+                if text.startswith(NO_PANEL + ":"):
+                    self.no_panel += 1
+                self._count("pipe", set_address(el, text))
+            for el in self.sampling_on_pipes:
+                if _alive(el):
+                    self._count("sampling", readdress(el, SAMPLING_PIPE, self.port))
 
         # 5. Connections: rejoin anything that came apart.
         doc.Regenerate()
@@ -413,6 +457,12 @@ class Plan(object):
             if not _rejoin(watch.get(a), watch.get(b)):
                 self.broken.append((a, b))
         doc.Regenerate()
+
+    def _count(self, kind, result):
+        if result == "changed":
+            self.addr_changed[kind] += 1
+        elif result == "skipped":
+            self.addr_skipped[kind] += 1
 
     def summary(self, target_name):
         lines = ["Swapped to %s:" % target_name,
@@ -424,10 +474,14 @@ class Plan(object):
         else:
             lines.append("  ADDRESS set to PORT %d on %d pipe(s) and P%d on %d sampling point(s)"
                          % (self.port, self.addr_changed["pipe"], self.port, self.addr_changed["sampling"]))
-            skipped = self.addr_skipped["pipe"] + self.addr_skipped["sampling"]
-            if skipped:
-                lines.append("  %d ADDRESS value(s) left as they were: blank or not in the 'PORT #' / 'P#:S#:H#' "
-                             "format" % skipped)
+            if self.no_panel:
+                lines.append("  %d pipe(s) addressed %s: PORT %d - no detector with a Panel # found on the run"
+                             % (self.no_panel, NO_PANEL, self.port))
+            if self.addr_skipped["pipe"]:
+                lines.append("  %d pipe(s) have no editable ADDRESS parameter" % self.addr_skipped["pipe"])
+            if self.addr_skipped["sampling"]:
+                lines.append("  %d sampling point ADDRESS value(s) left as they were: blank or not 'P#:S#:H#'"
+                             % self.addr_skipped["sampling"])
         if self.kept_by_other_pipe:
             lines.append("  %d fitting(s) left as they were: they also join a pipe that isn't being swapped"
                          % len(self.kept_by_other_pipe))

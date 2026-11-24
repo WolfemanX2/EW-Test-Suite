@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v16
+# riser_tool module - version v17
 # Change log (last change first):
+#   v17 - VESDA Pipe Swap v3 (no riser change): named_value now calls the shared copy in ew_common.
 #   v16 - SLC Riser v51 / NAC Riser v14: devices on a circuit that no conduit reaches are no longer marked NOT
 #         CONNECTED; the user chooses to add them in address order, add them at the end, or leave them off.
 #         Callouts are measured filled in from their device and without the symbol size cap, so callouts side by
@@ -14,11 +15,6 @@
 #         their circuits - devices of other loops on shared conduit are passed through (Network.wanted); an Update
 #         of Loop 3 had picked up Loop 1 devices. Older one-lines start from the first device drawn on them (their
 #         top-left address) instead of the loop's lowest address, and each one-line also stores its circuits.
-#   v12 - SLC Riser v47 / NAC Riser v10: run from a drafting view = Update Selected One-Line (pick a one-line group;
-#         its circuit is traced again and redrawn in place with the current symbols, callouts and settings). Each
-#         one-line group now remembers its panel, first device, conduit types, loop and start (extensible storage);
-#         older groups are worked out from their name and address text. Every one-line ends with the kind's
-#         return_text (SLC RETURN / NAC RETURN). The panel detail's Panel Model comes from the panel's Model.
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -355,27 +351,8 @@ def first_devices(root):
 
 
 def named_value(el, name):
-    """Text of the parameter with that name (case ignored) on the element or its type, or ''."""
-    wanted = name.strip().lower()
-    holders = [el]
-    try:
-        holders.append(doc.GetElement(el.GetTypeId()))
-    except Exception:
-        pass
-    for holder in holders:
-        if holder is None:
-            continue
-        for p in holder.Parameters:
-            try:
-                if p.Definition.Name.strip().lower() != wanted or not p.HasValue:
-                    continue
-                text = p.AsString() if p.StorageType == StorageType.String else p.AsValueString()
-            except Exception:
-                continue
-            text = (text or "").strip()
-            if text:
-                return text
-    return ""
+    """Text of the parameter with that name (case ignored) on the element or its type, or '' (ew_common)."""
+    return ec.named_value(el, name)
 
 
 def element_name(el):

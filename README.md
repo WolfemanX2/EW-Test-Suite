@@ -75,7 +75,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - Changes the pipe type of a VESDA run without Revit's Change Type rebuilding it: pipes get the new type and keep their size, and elbows / tees (plus crosses, transitions, unions, caps) are swapped for the parts in the new type's Routing Preferences, in place and still connected.
 - Sampling point families are never changed. Pick a pipe, fitting or tag and choose Whole connected run (stops at equipment such as the detector) or Selected only. If the run has several pipe types you choose which to change.
 - Every connection is checked afterwards; any that came apart are rejoined, or listed and left selected with the choice to keep or undo the swap.
-- ADDRESS follows the new type's number (the last number in the type name): pipes `ASD-17: PORT 4` → `ASD-17: PORT 1`, and sampling points on a swapped pipe `P4:S0:H3` → `P1:S0:H3` (S# and H# are not changed).
+- ADDRESS follows the new type's number (the last number in the type name): swapped pipes are set to `<Panel #>: PORT 1` from the Panel # of the detector (Fire Alarm Device) the run connects to, or `ASD-##: PORT 1` if it has none, and sampling points on a swapped pipe `P4:S0:H3` → `P1:S0:H3` (S# and H# are not changed).
 - **VESDA Pipe Swap - Config:** tick which Pipe Fitting / Pipe Accessory families are sampling points (saved per user by family name)
 
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable

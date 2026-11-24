@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v6
+# ew_common module - version v7
 # Change log (last change first):
+#   v7 - VESDA Pipe Swap v3: named_value (text of a parameter by name, on the element or its type), moved here from
+#        riser_tool so VESDA Pipe Swap can read a detector's Panel #; riser_tool now uses this copy.
 #   v6 - SLC Riser v45: copy_matching_params matches names with case ignored and takes the type's value when the
 #        element's own is blank - the same rules as the riser's Panel # text, so a callout's Panel # always matches it.
 #   v5 - SLC Riser v44 / NAC Riser v9 / Riser - Config v10: alert - pyRevit's message box without the warning icon
@@ -10,9 +12,6 @@
 #   v3 - Auto-Circuit v11 / Address SLC v12 / Address NAC v5 / Address Voice v5: commit (run a change in a
 #        transaction and check Revit kept it), moved here from Auto-Circuit; Address SLC and Address NAC / Voice
 #        had copies of it.
-#   v2 - Code consolidation step 4 (Auto Conduit v6, Auto-Circuit v7, Address SLC v7, SLC Riser v33, Link Clash
-#        v13): picking a device or a tag hosted to it (tagged_hosts, resolve_pick, PickFilter, resolve_device,
-#        DeviceOrTagFilter, ConduitFilter, shift_down) and pick highlighting (make_highlight, highlight).
 """Small helpers shared by the EW Test Suite tools. Check here before writing a new one.
 
 eid_int / eid        the number of an ElementId in any Revit version (.Value on 2024+, .IntegerValue before)
@@ -32,6 +31,7 @@ make_highlight / highlight                           colour picked elements in t
 Changing the model:
 commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't
 copy_matching_params fill an element's own parameters from the same-named ones of another element and its type
+named_value          text of the parameter with a given name (case ignored) on an element or its type, or ''
 
 Messages:
 alert                pyRevit's message box (forms.alert, same arguments) without the warning icon and sound"""
@@ -332,6 +332,31 @@ def copy_matching_params(src, dst):
         except Exception:
             continue
     return count
+
+
+# ---------- Reading a parameter by name ----------
+def named_value(el, name):
+    """Text of the parameter with that name (case ignored) on the element or its type, or ''."""
+    wanted = name.strip().lower()
+    holders = [el]
+    try:
+        holders.append(el.Document.GetElement(el.GetTypeId()))
+    except Exception:
+        pass
+    for holder in holders:
+        if holder is None:
+            continue
+        for p in holder.Parameters:
+            try:
+                if p.Definition.Name.strip().lower() != wanted or not p.HasValue:
+                    continue
+                text = p.AsString() if p.StorageType == StorageType.String else p.AsValueString()
+            except Exception:
+                continue
+            text = (text or "").strip()
+            if text:
+                return text
+    return ""
 
 
 # ---------- Messages ----------
