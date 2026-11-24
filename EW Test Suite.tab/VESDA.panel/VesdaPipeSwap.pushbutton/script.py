@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
-# VESDA Pipe Swap script - version v1
+# VESDA Pipe Swap script - version v2
+# v2 - ADDRESS renumbered to the new pipe type's number: 'PORT #' on pipes, P# of 'P#:S#:H#' on sampling points
 # v1 - new: swap a VESDA run's pipe type and its elbows / tees without touching the sampling point families
-__title__ = "VESDA\nPipe Swap v1"
+__title__ = "VESDA\nPipe Swap v2"
 __doc__ = ("Changes the pipe type of a VESDA pipe run without breaking it, unlike Revit's Change Type. Pipes get "
            "the new type and keep their size; elbows, tees (and crosses, transitions, unions, caps) are swapped for "
            "the parts set in the new type's Routing Preferences, kept in place and connected. Fittings and "
            "accessories whose family is listed in VESDA Pipe Swap - Config as a sampling point are never changed.\n\n"
            "Select pipes, fittings or their tags first, or pick when asked. Choose 'Whole connected run' to follow "
            "the pipe from what you picked (it stops at equipment such as the detector) or 'Selected only'. "
-           "Afterwards every connection is checked; any that came apart are rejoined, or left selected and listed.")
+           "Afterwards every connection is checked; any that came apart are rejoined, or left selected and listed.\n\n"
+           "ADDRESS is renumbered to the new type's number (the last number in its name, e.g. 'VESDA Pipe 1' = 1): "
+           "pipes 'ASD-17: PORT 4' become 'ASD-17: PORT 1', and sampling points on a swapped pipe 'P4:S0:H3' become "
+           "'P1:S0:H3' (S# and H# are not changed).")
 
 from pyrevit import revit, forms
 from Autodesk.Revit.DB import FilteredElementCollector, Transaction, ElementId

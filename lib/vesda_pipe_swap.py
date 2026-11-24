@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# vesda_pipe_swap module - version v1
+# vesda_pipe_swap module - version v2
 # Change log (last change first):
+#   v2 - VESDA Pipe Swap v2: ADDRESS follows the new pipe type's number - "...PORT #" on the swapped pipes and
+#        the P# of "P#:S#:H#" on the sampling points joined to them (S# and H# are left as they are).
 #   v1 - VESDA Pipe Swap v1 / VESDA Pipe Swap - Config v1: new. Sampling point families (the config), collecting a
 #        pipe run, and swapping pipe type plus elbows / tees from the new type's Routing Preferences while leaving
 #        the sampling point families untouched.
@@ -12,7 +14,9 @@ replaces the sampling point tees and can break the run. This instead:
   - swaps each ordinary fitting (elbow, tee, cross, transition, union, cap) for the part the new type's Routing
     Preferences gives for that fitting's kind and size, keeping it in place and connected,
   - never touches a fitting or accessory whose family is listed as a sampling point in VESDA Pipe Swap - Config,
-  - checks every connection afterwards, rejoins any that came apart, and reports what it couldn't.
+  - checks every connection afterwards, rejoins any that came apart, and reports what it couldn't,
+  - renumbers the ADDRESS parameter to the new type's number (port_number: the last number in the type name):
+    pipes "ASD-17: PORT 4" -> "ASD-17: PORT 1"; sampling points joined to a swapped pipe "P4:S0:H3" -> "P1:S0:H3".
 
 Config        sampling_families() / save_sampling_families(names) / config_path()
 Run           is_run_part, is_sampling, collect_run(starts, follow_run)
@@ -20,6 +24,8 @@ Swap          plan(...) -> Plan, Plan.apply(doc, target_type)  (call inside a tr
 from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, ConnectorType, FamilyInstance,
                                PartType, RoutingPreferenceRuleGroupType, PrimarySizeCriterion)
 from Autodesk.Revit.DB.Plumbing import Pipe
+
+import re
 
 import ew_common as ec          # shared helpers (lib/ew_common.py)
 import conduit_trace as ct      # connector walk (lib/conduit_trace.py), used here with the piping domain
@@ -32,6 +38,9 @@ RUN_CATEGORIES = (BuiltInCategory.OST_PipeCurves, BuiltInCategory.OST_PipeFittin
 SAMPLING_CATEGORIES = (BuiltInCategory.OST_PipeFitting, BuiltInCategory.OST_PipeAccessory)
 REJOIN_TOLERANCE = 0.05         # feet (about 5/8"): how far apart two open connectors may be and still be rejoined
 SIZE_TOLERANCE = 0.0005         # feet
+ADDRESS_PARAM = "ADDRESS"
+PIPE_PORT = re.compile(r"(PORT\s*)(\d+)(\s*)$", re.IGNORECASE)      # "ASD-17: PORT 4"
+SAMPLING_PIPE = re.compile(r"^(\s*P)(\d+)(?=\s*:)", re.IGNORECASE)    # "P4:S0:H3"
 
 # Fitting kind -> the Routing Preferences group its replacement comes from
 GROUPS = {
@@ -242,6 +251,29 @@ def replacement(doc, pipe_type, kind, size, sampling_lower):
     return any_kind[0] if any_kind else None
 
 
+# ---------------- ADDRESS ----------------
+def port_number(pipe_type):
+    """The pipe type's number: the last whole number in its name ("VESDA Pipe 1" -> 1), or None."""
+    found = re.findall(r"\d+", ec.type_name(pipe_type) or "")
+    return int(found[-1]) if found else None
+
+
+def readdress(el, pattern, number):
+    """Put number in el's ADDRESS where pattern's 2nd group is. Returns "changed", "same", or "skipped" (no
+    ADDRESS, read-only, or not in the expected format)."""
+    p = el.LookupParameter(ADDRESS_PARAM)
+    if p is None or p.IsReadOnly:
+        return "skipped"
+    text = p.AsString() or ""
+    if not pattern.search(text):
+        return "skipped"
+    new = pattern.sub(lambda m: m.group(1) + str(number) + (m.group(3) if m.lastindex >= 3 else ""), text, 1)
+    if new == text:
+        return "same"
+    p.Set(new)
+    return "changed"
+
+
 # ---------------- The swap ----------------
 class Plan(object):
     """What a swap will change. Built from the collected elements and the current pipe types to swap."""
@@ -250,6 +282,16 @@ class Plan(object):
         self.pipes = [e for e in elements if is_pipe(e) and ec.eid_int(e.GetTypeId()) in swap_type_ids]
         self.sampling = [e for e in elements if is_sampling(e, sampling_lower)]
         pipe_ids = set(ec.eid(p) for p in self.pipes)
+        # Sampling points to renumber: those joined to a swapped pipe (picked or not).
+        joined = {}
+        for p in self.pipes:
+            for group in ct.connected_elements(p, ct.PIPING):
+                for n in group:
+                    if is_sampling(n, sampling_lower):
+                        joined[ec.eid(n)] = n
+        self.sampling_on_pipes = list(joined.values())
+        known = set(ec.eid(e) for e in self.sampling)
+        self.sampling += [e for i, e in joined.items() if i not in known]     # protect them too
         self.fittings, self.kept_by_other_pipe = [], []
         for e in elements:
             if not is_fitting(e) or is_sampling(e, sampling_lower):
@@ -274,6 +316,9 @@ class Plan(object):
         self.other_kind = 0             # fittings of a kind with no Routing Preferences group (left as they were)
         self.broken = []                # (id, id) connections that came apart and couldn't be rejoined
         self.sampling_changed = []      # sampling points Revit changed or removed (the swap is undone)
+        self.port = None                # the number put in ADDRESS (None: the type name has no number)
+        self.addr_changed = {"pipe": 0, "sampling": 0}
+        self.addr_skipped = {"pipe": 0, "sampling": 0}
 
     def _watch(self):
         """{id: element} whose connections are checked afterwards: everything changed, the sampling points, and
@@ -347,7 +392,21 @@ class Plan(object):
                 except Exception:
                     self.sampling_changed.append(sid)
 
-        # 4. Connections: rejoin anything that came apart.
+        # 4. ADDRESS: port / P# number of the new type.
+        self.port = port_number(target_type)
+        if self.port is not None:
+            for kind, els, pattern in (("pipe", self.pipes, PIPE_PORT),
+                                       ("sampling", self.sampling_on_pipes, SAMPLING_PIPE)):
+                for el in els:
+                    if not _alive(el):
+                        continue
+                    result = readdress(el, pattern, self.port)
+                    if result == "changed":
+                        self.addr_changed[kind] += 1
+                    elif result == "skipped":
+                        self.addr_skipped[kind] += 1
+
+        # 5. Connections: rejoin anything that came apart.
         doc.Regenerate()
         after = self._all_links(watch)
         for a, b in sorted(before - after):
@@ -360,6 +419,15 @@ class Plan(object):
                  "  %d pipe(s) changed" % self.pipes_changed,
                  "  %d fitting(s) changed" % self.fittings_changed,
                  "  %d sampling point(s) left as they were" % len(self.sampling)]
+        if self.port is None:
+            lines.append("  ADDRESS not renumbered: '%s' has no number in its name" % target_name)
+        else:
+            lines.append("  ADDRESS set to PORT %d on %d pipe(s) and P%d on %d sampling point(s)"
+                         % (self.port, self.addr_changed["pipe"], self.port, self.addr_changed["sampling"]))
+            skipped = self.addr_skipped["pipe"] + self.addr_skipped["sampling"]
+            if skipped:
+                lines.append("  %d ADDRESS value(s) left as they were: blank or not in the 'PORT #' / 'P#:S#:H#' "
+                             "format" % skipped)
         if self.kept_by_other_pipe:
             lines.append("  %d fitting(s) left as they were: they also join a pipe that isn't being swapped"
                          % len(self.kept_by_other_pipe))
