@@ -71,6 +71,12 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - The power supply is chosen from a list (NAC / NCP / NACP in the family name, plus Head End in Family Defaults Config or a Panel # parameter) or selected in the model.
 - **Riser - Config (NAC Riser tab):** its own drawing settings and symbols, kept apart from SLC Riser's
 
+### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Test%20Suite.tab/VESDA.panel/VesdaPipeSwap.pushbutton/icon.dark.png"><img src="EW%20Test%20Suite.tab/VESDA.panel/VesdaPipeSwap.pushbutton/icon.png" width="32" height="32" alt=""></picture> VESDA Pipe Swap - Configurable
+- Changes the pipe type of a VESDA run without Revit's Change Type rebuilding it: pipes get the new type and keep their size, and elbows / tees (plus crosses, transitions, unions, caps) are swapped for the parts in the new type's Routing Preferences, in place and still connected.
+- Sampling point families are never changed. Pick a pipe, fitting or tag and choose Whole connected run (stops at equipment such as the detector) or Selected only. If the run has several pipe types you choose which to change.
+- Every connection is checked afterwards; any that came apart are rejoined, or listed and left selected with the choice to keep or undo the swap.
+- **VESDA Pipe Swap - Config:** tick which Pipe Fitting / Pipe Accessory families are sampling points (saved per user by family name)
+
 ### <picture><source media="(prefers-color-scheme: dark)" srcset="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.dark.png"><img src="EW%20Production%20Suite.tab/Obsolete.panel/Old%20Tools.pulldown/NACCoverageChecker.pushbutton/icon.png" width="32" height="32" alt=""></picture> NAC Coverage Checker - Configurable
 - Shows strobe coverage on a floor plan, for the whole view or one room, based on each device's candela. Points that a strobe can't see because something in the model or a loaded link is in the way are shown as blocked.
 - Reads the old settings files (its config window has been removed; Family Defaults Config replaces it)

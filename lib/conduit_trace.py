@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# conduit_trace module - version v5
+# conduit_trace module - version v6
 # Change log (last change first):
+#   v6 - VESDA Pipe Swap v1: conduit_connectors, connected_elements and walk take an optional domain (default
+#        conduit, so nothing changes for the conduit tools); VESDA Pipe Swap walks pipe runs with Domain.DomainPiping.
 #   v5 - Code consolidation step 3 (no tool change): eid_int comes from ew_common.
 #   v4 - Code consolidation step 2 (Address SLC v6, Address NAC v3, Address Voice v3, Auto-Circuit v6): the only
 #        copy of the conduit tracing (slc_addressing and slc_riser now use these functions); a split follows
@@ -8,7 +10,6 @@
 #        last); _Graph, follow and conduits_between take an optional set of conduit types to follow.
 #   v3 - Address NAC / Voice v7: conduit_length and walk, for the EOL voltage estimate.
 #   v2 - Address NAC / Voice v4: _Graph and conduits_between, for Notification Circuit on the run's conduit.
-#   v1 - Address NAC / Voice v3: follow conduit downstream (the same method as Address SLC v2).
 """Follows conduit from one device to the devices downstream of it, in order of connection.
 
 The one copy of the conduit tracing: used by Address NAC / Voice, Address SLC (through slc_addressing),
@@ -25,8 +26,12 @@ import ew_common as ec        # shared helpers (lib/ew_common.py)
 eid_int = ec.eid_int            # from ew_common
 
 
-def conduit_connectors(el):
-    """Conduit connectors of a conduit, fitting or family instance."""
+CONDUIT = Domain.DomainCableTrayConduit
+PIPING = Domain.DomainPiping
+
+
+def conduit_connectors(el, domain=CONDUIT):
+    """Conduit connectors of a conduit, fitting or family instance (or, with domain=PIPING, its pipe connectors)."""
     cm = None
     try:
         cm = el.ConnectorManager                # conduit
@@ -42,7 +47,7 @@ def conduit_connectors(el):
     out = []
     for c in cm.Connectors:
         try:
-            if c.Domain == Domain.DomainCableTrayConduit:
+            if c.Domain == domain:
                 out.append(c)
         except Exception:
             pass
@@ -53,11 +58,12 @@ def conduit_connectors(el):
     return out
 
 
-def connected_elements(el):
-    """One list per conduit connector of el: the elements physically joined to that connector."""
+def connected_elements(el, domain=CONDUIT):
+    """One list per conduit connector (or connector of the given domain) of el: the elements physically joined
+    to that connector."""
     groups = []
     own = eid_int(el.Id)
-    for c in conduit_connectors(el):
+    for c in conduit_connectors(el, domain):
         group = []
         try:
             if c.IsConnected:
@@ -269,8 +275,8 @@ def conduit_length(el):
         return 0.0
 
 
-def walk(start, can_enter, limit=5000):
-    """Breadth-first walk over physically joined elements from start.
+def walk(start, can_enter, limit=5000, domain=CONDUIT):
+    """Breadth-first walk over physically joined elements from start (joined through connectors of the domain).
     can_enter(element) -> False keeps the walk out of an element (it is not passed through).
     Returns (parent {id: parent id}, elements {id: element}, ids in the order reached)."""
     root = eid_int(start.Id)
@@ -280,7 +286,7 @@ def walk(start, can_enter, limit=5000):
         following = []
         for el in frontier:
             i = eid_int(el.Id)
-            for group in connected_elements(el):
+            for group in connected_elements(el, domain):
                 for n in group:
                     j = eid_int(n.Id)
                     if j in parent:
