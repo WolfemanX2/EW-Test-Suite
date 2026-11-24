@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v26
+# riser_layout module - version v27
 # Change log (last change first):
+#   v27 - Riser - Config v13 / SLC Riser v54 / NAC Riser v22: cfg "label_offset_x" - how far right of the start of
+#         the one-line its circuit label sits; cfg "end_symbol_ext" - a Generic Annotation at the end of the line
+#         (out["end_marks"]) instead of the end text.
 #   v26 - NAC Riser v19: a device's info may carry "level" - its address text is level and centred under the
 #         symbol instead of at 45 degrees (label_drop / label_reach / place).
 #   v25 - SLC Riser v47 / NAC Riser v10: cfg "end_text" ('SLC RETURN', 'NAC RETURN') is written after the last device
@@ -11,9 +14,6 @@
 #         at its top (the callout families' origin).
 #   v23 - SLC Riser v44 / NAC Riser v9 (code check, no change to the drawings): assign_symbols' unused repeat
 #         option removed.
-#   v22 - SLC Riser v43 / NAC Riser v8: address callouts - a device's info may carry "callout" (the extents of its
-#         Address Group callout symbol), drawn where its 45 degree text would go (out["callouts"]) and given the
-#         same room; the symbol rules (rule_matches, pick_rule) are removed.
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -239,7 +239,9 @@ def layout(rows, root, info, returns, cfg):
         text = info[n].get("above")
         return u + text_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
-    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": [], "callouts": []}
+    out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": [], "callouts": [],
+           "end_marks": []}
+    end_ext = cfg.get("end_symbol_ext")     # (left, right, up, down) of the end-of-line symbol, or None for text
     label_raise = cfg.get("loop_label_raise", 0.0)
     custom_panel = bool(info[root].get("panel"))
 
@@ -384,7 +386,9 @@ def layout(rows, root, info, returns, cfg):
                     below = max(below, root_depth())
             end_text = cfg.get("end_text") or ("RETURNS TO PANEL" if nodes[-1] in returns else None)
             if last_chunk and end_text:
-                up = max(up, lh)
+                up = max(up, end_ext[2] if end_ext else lh)
+                if end_ext:
+                    below = max(below, end_ext[3])
             up += pad
             below += pad
 
@@ -412,7 +416,7 @@ def layout(rows, root, info, returns, cfg):
                     out["lines"].append(((bus_x, exit_y), (bus_x, y)))
                     start = bus_x
                 if row.get("label"):
-                    lx = root_r + sp * 0.25
+                    lx = root_r + cfg.get("label_offset_x", sp * 0.25)
                     out["leader_texts"].append((lx, y + lh * 1.25 + label_raise, row["label"], lx, y))
             else:
                 start = turn_x(ci - 1)
@@ -428,10 +432,16 @@ def layout(rows, root, info, returns, cfg):
                 ext = info[chunk[-1]]["ext"]
                 if forward:
                     end = xs[-1] + ext[1] + sp * 0.4
-                    out["texts"].append((end + sp * 0.05, y + lh * 0.6, end_text, "L"))
+                    if end_ext:     # the symbol's left edge on the end of the line
+                        out["end_marks"].append((end + end_ext[0], y))
+                    else:
+                        out["texts"].append((end + sp * 0.05, y + lh * 0.6, end_text, "L"))
                 else:
                     end = xs[-1] - ext[0] - sp * 0.4
-                    out["texts"].append((end - sp * 0.05, y + lh * 0.6, end_text, "R"))
+                    if end_ext:     # its right edge on the end of the line
+                        out["end_marks"].append((end - end_ext[1], y))
+                    else:
+                        out["texts"].append((end - sp * 0.05, y + lh * 0.6, end_text, "R"))
             out["lines"].append(((min(start, end), y), (max(start, end), y)))   # one unbroken line
             prev_y = y
             cursor = y - below

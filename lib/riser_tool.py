@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v24
+# riser_tool module - version v25
 # Change log (last change first):
+#   v25 - SLC Riser v54 / NAC Riser v22: the circuit label's offset from the start of the one-line and the end of
+#         line (text, or a Generic Annotation) come from Riser - Config.
 #   v24 - NAC Riser v21: power supplies nested in the panel detail - when the placed panel has nested instances with
 #         a Power Supply # parameter, circuit N#-C goes on reference line C of the nested instance whose Power
 #         Supply # is N# (nested_exit_points), and is locked to it; a circuit whose power supply isn't in the panel
@@ -12,9 +14,6 @@
 #         candela_line a second line with the device's candela (Candela parameter, else the type name: 30CD).
 #   v21 - NAC Riser v18: Trace Selected Circuits only lists circuits of the selected panel's power supplies (the
 #         numbers in its panel_number_params, matched by the kind's supply_of); all circuits if it has none.
-#   v20 - NAC Riser v17: the panel detail is filled by fill_panel - Panel #, Panel Model, Location (the room, or
-#         MEP space, the panel is in; name only for a kind with location_name_only) and, for a kind with
-#         panel_number_params, Power Supply #1-3 as integers taken from the panel's text (NACP-01 -> 1).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -99,6 +98,8 @@ UNCONNECTED_BY_ADDRESS = "Add Them in Address Order"     # devices on the circui
 UNCONNECTED_AT_END = "Add Them at the End of the Line"
 UNCONNECTED_LEAVE_OFF = "Leave Them Off"
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
+LABEL_OFFSET_X_FT = 1.125   # circuit label offset from the start of the one-line (set from the settings)
+END_SYMBOL = ""             # Generic Annotation at the end of the line ('' = end text; set from the settings)
 PANEL_FAMILY = sr.DEFAULT_PANEL_FAMILY   # detail item drawn for the head end panel; set from the riser's settings
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 HEAD_SEARCH_RADIUS_FT = 5.0    # a head end with no conduit: look this far around it for an element with conduit
@@ -1834,7 +1835,8 @@ def shift_plan(plan, dx, dy):
            "texts": [(x + dx, y + dy, t, how) for x, y, t, how in plan["texts"]],
            "leader_texts": [(x + dx, y + dy, t, ex + dx, ey + dy)
                             for x, y, t, ex, ey in plan.get("leader_texts", [])],
-           "callouts": [(x + dx, y + dy, n) for x, y, n in plan.get("callouts", [])]}
+           "callouts": [(x + dx, y + dy, n) for x, y, n in plan.get("callouts", [])],
+           "end_marks": [(x + dx, y + dy) for x, y in plan.get("end_marks", [])]}
     return out
 
 
@@ -1871,7 +1873,7 @@ def measure_symbols(view, symbols, fill_from=None, capped=True):
 
 
 def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None, node_callout=None,
-         elements=None):
+         elements=None, end_symbol=None):
     """Create everything in the layout. Returns the number of things that could not be created.
     created: a list that gets (start, end, detail curve) for every line drawn.
     node_callout / elements: {id: callout FamilySymbol} and {id: device}; each callout's parameters are filled from
@@ -1894,6 +1896,12 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
             doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view)
         except Exception:
             failed[0] += 1
+    if end_symbol is not None:
+        for x, y in plan.get("end_marks", []):
+            try:
+                doc.Create.NewFamilyInstance(XYZ(x, y, 0), end_symbol, view)
+            except Exception:
+                failed[0] += 1
     for x, y, n in plan.get("callouts", []):
         try:
             inst = doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_callout[n], view)
@@ -2333,6 +2341,7 @@ def apply_settings():
     """Use the drawing settings saved in the kind's tab of Riser - Config. False if the file can't be read and the user
     chose to stop."""
     global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS, PANEL_FAMILY
+    global LABEL_OFFSET_X_FT, END_SYMBOL
     try:
         settings = KIND.load_settings()
     except Exception as ex:
@@ -2348,6 +2357,8 @@ def apply_settings():
     LABEL_OFFSET_IN = settings["label_offset_in"]
     ADDRESS_CALLOUTS = settings.get(sr.CALLOUTS) or {}
     PANEL_FAMILY = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
+    LABEL_OFFSET_X_FT = settings.get("label_offset_x_ft", sr.DEFAULT_SETTINGS["label_offset_x_ft"])
+    END_SYMBOL = settings.get(sr.END_SYMBOL_KEY) or ""
     return True
 
 
@@ -2644,6 +2655,7 @@ def draw_riser(update=None):
 
     # 3. Draw each circuit and group it.
     failed = 0
+    end_symbol_missing = False
     groups, not_locked, spacing_changes = [], [], []
     t = Transaction(doc, ("Update one-line - %s" % TITLE) if update is not None else
                     ("Create %s" if target is None else "Add circuit to %s") % TITLE)
@@ -2668,6 +2680,18 @@ def draw_riser(update=None):
                 sym.Activate()
         doc.Regenerate()
         sizes = measure_symbols(view, used)
+        # The end of each line: the riser's end text, or the Generic Annotation set in Riser - Config.
+        end_sym, end_ext = None, None
+        if END_SYMBOL:
+            end_sym = sr.available_symbols(doc).get(END_SYMBOL)
+            if end_sym is None:
+                end_symbol_missing = True
+            else:
+                if not end_sym.IsActive:
+                    end_sym.Activate()
+                    doc.Regenerate()
+                end_ext = measure_symbols(view, {sr.eid_int(end_sym.Id): end_sym},
+                                          capped=False)[sr.eid_int(end_sym.Id)]
         # Callouts: filled in from a device first (their labels change their size), and not capped in size.
         callout_sizes = measure_symbols(view, callouts_used, fill_from, capped=False)
 
@@ -2703,7 +2727,9 @@ def draw_riser(update=None):
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "loop_label_raise": LOOP_LABEL_RAISE_IN / 12.0,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP),
-               "end_text": getattr(KIND, "return_text", None)}
+               "end_text": getattr(KIND, "return_text", None), "label_offset_x": LABEL_OFFSET_X_FT}
+        if end_sym is not None:
+            cfg["end_symbol_ext"] = end_ext
 
         def draw_circuit(row, origin, i, row_cfg):
             """Draw one circuit's one-line at origin and group it. (group or None, [(start, end, curve)], items that
@@ -2713,7 +2739,8 @@ def draw_riser(update=None):
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             before = view_element_ids(view)
             curves = []
-            n_failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements)
+            n_failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements,
+                            end_sym)
             doc.Regenerate()
             new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
             group = None
@@ -2861,6 +2888,9 @@ def draw_riser(update=None):
         msg += "\n\n%d item(s) could not be drawn." % failed
     if skipped_circuits:
         msg += "\n\nNot drawn:\n" + "\n".join(skipped_circuits)
+    if end_symbol_missing:
+        msg += ("\n\nThe end-of-line symbol '%s' set in Riser - Config is not loaded in this project, so the end "
+                "text was used." % END_SYMBOL)
     if missing_circuits:
         msg += ("\n\nNo device of %s could be reached by conduit from the panel, so %s not drawn."
                 % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),

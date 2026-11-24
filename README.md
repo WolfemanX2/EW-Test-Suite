@@ -60,7 +60,7 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - **Update Selected One-Line:** run SLC Riser or NAC Riser from a drafting view, pick a one-line group, and its
   circuit is traced again and redrawn in place with the current symbols, callouts and settings. Each one-line ends
   with SLC RETURN / NAC RETURN; the panel detail's Panel Model comes from the panel's Model.
-- **Riser - Config (SLC Riser tab):** sets the drawing settings (including the panel detail family drawn for the head end) and the symbols used for each device type, and an
+- **Riser - Config (SLC Riser tab):** sets the drawing settings (including the panel detail family drawn for the head end, the circuit label's offset from the start of the one-line, and the line end: text or a Generic Annotation) and the symbols used for each device type, and an
   optional address callout symbol per Address Group subgroup (Family Defaults Config) used instead of the 45 degree
   address text, placed in a band below the line's address text with detail lines to the device (build callouts as
   Generic Annotations with their origin at the top); the callout's parameters are filled from the device's same-named
@@ -238,15 +238,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
-| SLC Riser | v53 |
-| NAC Riser | v21 |
+| SLC Riser | v54 |
+| NAC Riser | v22 |
 | Riser - Config (was SLC Riser - Config) | v11 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v20 |
-| lib/riser_tool.py | v24 |
+| lib/slc_riser.py | v21 |
+| lib/riser_tool.py | v25 |
 | lib/nac_riser.py | v10 |
-| lib/riser_config_editor.py | v6 |
-| lib/riser_layout.py | v26 |
+| lib/riser_config_editor.py | v7 |
+| lib/riser_layout.py | v27 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |

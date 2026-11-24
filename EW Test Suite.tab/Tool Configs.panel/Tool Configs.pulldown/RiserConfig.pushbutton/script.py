@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-# Riser - Config script - version v12 (was SLC Riser - Config v7)
-__title__ = "Riser - Config v12"
+# Riser - Config script - version v13 (was SLC Riser - Config v7)
+__title__ = "Riser - Config v13"
 __doc__ = ("Settings for the riser tools, one tab per riser, laid out like Family Defaults Config: SLC Riser and "
            "NAC Riser. Each tab has its riser's own drawing settings (drafting view scale, spacing between devices, "
-           "devices per line before wrapping, wrap rounding, address text offset, and the panel detail family drawn for the "
-           "head end - a loaded Detail Item family, or typed) and its own table of the symbol "
+           "devices per line before wrapping, wrap rounding, address text offset, the panel detail family drawn for the "
+           "head end - a loaded Detail Item family, or typed - the circuit label's offset from the start of the "
+           "one-line, and the line end: the end text or a Generic Annotation) and its own table of the symbol "
            "drawn for each Family : Type. Save and Close are shared by both tabs.\n\n"
            "The symbols are any loaded Generic Annotation or Detail Item types. A type can have several, drawn in "
            "order with one address each (the last takes the rest). 'Add Types From Project' lists the loaded Fire Alarm Device types, or the Electrical Equipment types "

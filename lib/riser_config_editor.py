@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v6
+# riser_config_editor module - version v7
 # Change log (last change first):
+#   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
 #   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
 #        head end (picked from the loaded Detail Item families, or typed).
 #   v5 - Riser - Config v11: the Address Callouts help says where callouts now go (a band below the address text,
@@ -11,7 +12,6 @@
 #        the SLC tab shows each type's Address Group (Family Defaults Config) and an Address Callouts table - a
 #        callout symbol per Address Group subgroup, used on the riser instead of the 45 degree address text.
 #        Messages use pyRevit option bars / plain boxes instead of the warning popup.
-#   v2 - SLC Riser v35 (cleanup): number_text comes from slc_riser instead of a copy here.
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -59,6 +59,21 @@ KEEP_EDITING = "Keep Editing"
 def note(msg):
     """A message box without the warning icon and sound."""
     ec.alert(msg, title=TITLE)
+
+
+END_TEXT = "Text (SLC RETURN / NAC RETURN)"
+
+
+def generic_annotation_types():
+    """'Family : Type' of the Generic Annotation types loaded in the project, sorted."""
+    names = set()
+    for s in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_GenericAnnotation)
+              .WhereElementIsElementType().ToElements()):
+        try:
+            names.add(sr.type_key(s))
+        except Exception:
+            pass
+    return sorted(names, key=lambda n: n.upper())
 
 
 def detail_families():
@@ -221,7 +236,15 @@ TAB_XAML = """
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Circuit label offset (ft):" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="How far right of the start of the one-line the circuit label (A, N1-2) and its line down sit, in feet in the view."/>
+                            <TextBox x:Name="PFX_label_x_box" Grid.Row="4" Grid.Column="1" Margin="0,6,0,0"/>
+                            <TextBlock Grid.Row="4" Grid.Column="3" Text="Line end:" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="What goes at the end of each one-line: the riser's end text (SLC RETURN / NAC RETURN), or a Generic Annotation (its origin goes on the end of the line)."/>
+                            <ComboBox x:Name="PFX_end_box" Grid.Row="4" Grid.Column="4" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                                      IsEditable="False"/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Panel detail family:" VerticalAlignment="Center" Margin="0,6,8,0"
                                        ToolTip="The Detail Item family drawn for the head end panel on this riser (its Panel #, Location, reference lines and Loop Spacing parameters are used)."/>
                             <ComboBox x:Name="PFX_panel_family_box" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,6,0,0"
@@ -410,6 +433,10 @@ class RiserTab(object):
 
         # Events (wired here, so each tab's controls call their own tab).
         self.c("panel_family_box").ItemsSource = detail_families()
+        self.end_choices = [END_TEXT] + generic_annotation_types()
+        self.c("end_box").ItemsSource = self.end_choices
+        self.c("end_box").SelectionChanged += self.setting_changed
+        self.c("label_x_box").TextChanged += self.setting_changed
         self.c("panel_family_box").AddHandler(TextBoxBase.TextChangedEvent,
                                               TextChangedEventHandler(self.setting_changed))
         self.c("panel_family_box").SelectionChanged += self.setting_changed
@@ -426,7 +453,8 @@ class RiserTab(object):
         self.c("callout_text_btn").Click += self.callout_text_click
         if self.failed:
             for name in ("grid", "defaults_btn", "add_btn", "set_btn", "delete_btn", "scale_box", "spacing_box",
-                         "per_line_box", "offset_box", "rounding_box", "panel_family_box", "callout_grid",
+                         "per_line_box", "offset_box", "rounding_box", "panel_family_box", "label_x_box",
+                         "end_box", "callout_grid",
                          "callout_set_btn",
                          "callout_text_btn"):
                 self.c(name).IsEnabled = False
@@ -455,6 +483,13 @@ class RiserTab(object):
         self.c("rounding_box").Text = number_text(settings["wrap_rounding"])
         self.c("offset_box").Text = number_text(settings["label_offset_in"])
         self.c("panel_family_box").Text = settings.get(sr.PANEL_FAMILY_KEY) or sr.DEFAULT_PANEL_FAMILY
+        self.c("label_x_box").Text = number_text(settings.get("label_offset_x_ft",
+                                                             sr.DEFAULT_SETTINGS["label_offset_x_ft"]))
+        end = settings.get(sr.END_SYMBOL_KEY) or ""
+        if end and end not in self.end_choices:     # saved, but not loaded in this project: keep it
+            self.end_choices = self.end_choices + [end]
+            self.c("end_box").ItemsSource = self.end_choices
+        self.c("end_box").SelectedItem = end or END_TEXT
         self._loading = False
 
     def setting_changed(self, sender, args):
@@ -481,7 +516,8 @@ class RiserTab(object):
         for key, name, what, kind in [("device_spacing_ft", "spacing_box", "Spacing between devices", float),
                                       ("devices_per_line", "per_line_box", "Devices before wrapping", int),
                                       ("wrap_rounding", "rounding_box", "Wrap rounding", int),
-                                      ("label_offset_in", "offset_box", "Address text below line", float)]:
+                                      ("label_offset_in", "offset_box", "Address text below line", float),
+                                      ("label_offset_x_ft", "label_x_box", "Circuit label offset", float)]:
             lo, hi = self.store.SETTING_LIMITS[key]
             text = (self.c(name).Text or "").strip()
             try:
@@ -497,6 +533,8 @@ class RiserTab(object):
         if not family:
             errors.append("%s: choose the panel detail family." % self.name)
         out[sr.PANEL_FAMILY_KEY] = family
+        end = self.c("end_box").SelectedItem
+        out[sr.END_SYMBOL_KEY] = "" if (not end or str(end) == END_TEXT) else str(end)
         return out
 
     # ---- Symbol table ----

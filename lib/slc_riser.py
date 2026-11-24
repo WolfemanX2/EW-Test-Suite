@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v20
+# slc_riser module - version v21
 # Change log (last change first):
+#   v21 - Riser - Config v13: drawing settings "label_offset_x_ft" (circuit label offset from the start of the
+#         one-line) and "end_symbol" (a Generic Annotation at the end of the line; '' = the end text).
 #   v20 - Riser - Config v12 / SLC Riser v52 / NAC Riser v16: the drawing settings keep "panel_family", the detail
 #         family drawn for the head end (PANEL_FAMILY_KEY, DEFAULT_PANEL_FAMILY), set per riser in Riser - Config.
 #   v19 - SLC Riser v47: LoopKind.return_text - every SLC one-line ends with 'SLC RETURN'.
@@ -10,9 +12,6 @@
 #         subgroup (its Family Defaults Address Group, by its number of addresses) and callout.
 #   v17 - SLC Riser v39: the head end list needs FACU / FACP / FAP / FAC in the family name, plus Head End or a
 #         Panel # parameter (head_list_keywords_required).
-#   v16 - SLC Riser v37: LoopKind.head_list_keywords / head_list_min_matches - the head end list shows panels
-#         meeting 2 of 3: Head End in Family Defaults Config, a Panel # parameter, FACU / FACP / FAP / FAC in the
-#         family name.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -70,6 +69,7 @@ DEFAULT_SETTINGS = {
     "devices_per_line": 5,      # devices on one line before the row wraps underneath
     "wrap_rounding": 0,         # a line only wraps when it would have more than devices_per_line + this
     "label_offset_in": 1.0,     # address text starts this many inches (in the view) below the riser line
+    "label_offset_x_ft": 1.125,  # the circuit label (A, N1-2) sits this far right of the start of the one-line
 }
 SETTING_LIMITS = {              # (smallest, largest) allowed
     "view_scale": (1, 1000),
@@ -77,10 +77,13 @@ SETTING_LIMITS = {              # (smallest, largest) allowed
     "devices_per_line": (1, 200),
     "wrap_rounding": (0, 200),
     "label_offset_in": (0.0, 120.0),
+    "label_offset_x_ft": (0.0, 100.0),
 }
 
 
 PANEL_FAMILY_KEY = "panel_family"           # settings key: the detail family drawn for the head end
+END_SYMBOL_KEY = "end_symbol"               # settings key: Generic Annotation "Family : Type" at the end of the line
+                                            # ('' = the riser's end text, e.g. SLC RETURN)
 DEFAULT_PANEL_FAMILY = "NEX2-DETAIL-RISER"
 CALLOUTS = "address_callouts"       # settings key: {Address Group: {subgroup name: callout "Family : Type"}}
 ADDRESS_CALLOUTS = True             # Riser - Config shows the Address Callouts table on this riser's tab
@@ -123,6 +126,8 @@ def clean_settings(data):
     out[CALLOUTS] = clean_callouts(data.get(CALLOUTS) if isinstance(data, dict) else None)
     family = data.get(PANEL_FAMILY_KEY) if isinstance(data, dict) else None
     out[PANEL_FAMILY_KEY] = (family or "").strip() or DEFAULT_PANEL_FAMILY
+    end_symbol = data.get(END_SYMBOL_KEY) if isinstance(data, dict) else None
+    out[END_SYMBOL_KEY] = (end_symbol or "").strip()
     for key, default in DEFAULT_SETTINGS.items():
         try:
             value = data.get(key)
