@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v28
+# riser_layout module - version v29
 # Change log (last change first):
+#   v29 - SLC Riser v61 / NAC Riser v31: a device's address callout is kept right of the panel (at least the callout
+#         gap past the start of the one-line); the device stays where it is and only its callout and leader move,
+#         with the callouts after it moved on as needed (callout_band).
 #   v28 - SLC Riser v56 / NAC Riser v24: the first device is one device spacing right of the circuit label (with
 #         label_offset_x); label_offset may be negative (text closer to / above the line) and level text uses it too;
 #         text above the line gets room above the row (label_up).
@@ -11,10 +14,6 @@
 #         symbol instead of at 45 degrees (label_drop / label_reach / place).
 #   v25 - SLC Riser v47 / NAC Riser v10: cfg "end_text" ('SLC RETURN', 'NAC RETURN') is written after the last device
 #         of every one-line, the riser line running on to it (otherwise 'RETURNS TO PANEL' only when it returns).
-#   v24 - SLC Riser v46: address callouts go in a band below the bottom of the line's address text, each joined to its
-#         device by orthogonal detail lines (down from the symbol, across, down into the callout); callouts that
-#         would overlap are moved right (callout_band). The line below makes room for the band. A callout is inserted
-#         at its top (the callout families' origin).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -312,16 +311,17 @@ def layout(rows, root, info, returns, cfg):
     def callout_band(chunk, xs, text_below):
         """Where a line's callouts go, relative to the riser line: (how far the band reaches below the line,
         [(device, device x, callout x, callout top below the line)]). The callouts' tops line up cgap below the
-        lowest address text (or symbol); left to right, each is moved right as far as needed to clear the one
-        before it."""
+        lowest address text (or symbol); left to right, each is moved right as far as needed to clear the panel
+        (it starts cgap right of the panel's right side - the start of the one-line) and the one before it. Only
+        the callouts move, never the devices."""
         items = sorted((x, n) for n, x in zip(chunk, xs) if info[n].get("callout"))
         if not items:
             return 0.0, []
         top = text_below + cgap
-        placed, right_edge = [], None
+        placed, right_edge = [], root_r     # the panel is left of the start of the one-line
         for x, n in items:
             l, r, u, d = info[n]["callout"]
-            cx = x if right_edge is None else max(x, right_edge + cgap + l)
+            cx = max(x, right_edge + cgap + l)
             right_edge = cx + r
             placed.append((n, x, cx, top))
         depth = top + max(info[n]["callout"][3] for _x, n in items)   # the origin is the callout's top
