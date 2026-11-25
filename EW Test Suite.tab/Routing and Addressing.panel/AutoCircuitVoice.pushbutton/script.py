@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Auto Circuit - Voice script - version v4
-__title__ = "Auto Circuit\nVoice v4"
+# Auto Circuit - Voice script - version v5
+__title__ = "Auto Circuit\nVoice v5"
 __doc__ = ("Voice addresses and circuits (V#-#.# / V#-#), and the conduit between the devices.\n\n"
            "Choose what to do:\n"
            "- Readdress: Manually (in order of selection) or Automatically (in order of conduit connection).\n"

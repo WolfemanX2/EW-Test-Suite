@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# conduit_routing module - version v3
+# conduit_routing module - version v4
 # Change log (last change first):
+#   v4 - Code audit (Family Defaults Config v12, no change for the routing): parse_length is ew_common's (it reads
+#        a length in the project's units), so Family Defaults Config reads its elevations without this module.
 #   v3 - Code consolidation step 4 (Auto Conduit v6, Auto-Circuit v7): picking a device or its tag, Shift+click and
 #        the pick highlight come from ew_common. A tag can only be picked when it is hosted to a
 #        family instance in this model (other tags used to be pickable and then refused).
@@ -178,21 +180,8 @@ def horizontal_facing(el):
 
 
 def parse_length(text):
-    """Parse a length string using project units; fall back to plain feet."""
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        from Autodesk.Revit.DB import UnitFormatUtils, SpecTypeId
-        ok, val = UnitFormatUtils.TryParse(doc.GetUnits(), SpecTypeId.Length, text)
-        if ok:
-            return val
-    except Exception:
-        pass
-    try:
-        return float(text)
-    except Exception:
-        return None
+    """Parse a length string using project units; fall back to plain feet (ew_common.parse_length)."""
+    return ec.parse_length(doc, text)
 
 
 # ---------------- plain-tuple geometry (no Revit API calls in the hot loops) ----------------

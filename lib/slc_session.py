@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# slc_session module - version v5
+# slc_session module - version v6
 # Change log (last change first):
+#   v6 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
+#        the warning icon and its sound.
 #   v5 - Auto Circuit - SLC v3: a run follows the side of a split holding the next device (prefer) and, to an
 #        end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v4 - Auto Circuit - SLC v1: hooks for the Auto Circuit tools: settings_line() (the settings named in the
@@ -11,8 +13,6 @@
 #        'Address SLC'.
 #   v2 - Address SLC v10: an Automatic (downstream) run is one Undo, 'Address SLC downstream', like Address
 #        NAC / Voice; each device picked by hand is one Undo, 'Address SLC device'.
-#   v1 - Code consolidation step 5 (Address SLC v9): Address SLC's addressing session, moved here from the Address SLC
-#        v8 button script (unchanged, apart from its windows and menus now coming from addressing_ui).
 """Address SLC: the addressing session (moved from the button script, like Address NAC / Voice's
 nac_voice_addressing). The Address SLC button runs main()."""
 from System.Collections.Generic import List
@@ -106,7 +106,7 @@ class Session(aui.SlcCountRules):
             self.table = slc.load_table()
             return True
         except Exception as ex:
-            go_on = forms.alert("Could not read the lookup table:\n%s\n\nPath: %s\n\nContinue without it? Every "
+            go_on = ec.alert("Could not read the lookup table:\n%s\n\nPath: %s\n\nContinue without it? Every "
                                 "device will then prompt for its kind and count." % (ex, slc.table_path()),
                                 title=TITLE, yes=True, no=True)
             self.table = {}
@@ -132,7 +132,7 @@ class Session(aui.SlcCountRules):
                     continue    # Esc: back to the list
             elif choice == FROM_EXISTING:
                 if not loops:
-                    forms.alert("There are no SLC loops in this project yet.", title=TITLE)
+                    ec.alert("There are no SLC loops in this project yet.", title=TITLE)
                     continue
                 label = choose([slc.loop_label(loop) for loop in loops],
                                "SLC: which existing loop do you want to continue?")
@@ -201,7 +201,7 @@ class Session(aui.SlcCountRules):
 
     def start_automatic(self):
         """Explains the conduit pick, then follows the conduit the user picks from the first device."""
-        forms.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
+        ec.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
                     "the addresser to check. Devices are found by following that conduit (and only that conduit "
                     "type) away from the device.\n\nPress Esc while selecting to pick devices manually instead."
                     % slc.eid_int(self.anchor.Id), title=TITLE)
@@ -266,7 +266,7 @@ class Session(aui.SlcCountRules):
         """Addresses every device downstream of the anchor device along the picked conduit's type.
         Returns False when the run has to stop."""
         if self.anchor is None:
-            forms.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
+            ec.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
                         "followed away from the last device addressed (or the device chosen with "
                         "'Continue From Selected').", title=TITLE)
             return True
@@ -277,7 +277,7 @@ class Session(aui.SlcCountRules):
         order, problem = ct.follow(doc, self.anchor, conduit, slc.is_device, prefer=self.prefer)
         self.run_conduit = conduit
         if problem:
-            forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
+            ec.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
                         "Pick a conduit on the run leaving the last device addressed, or pick a device."
                         % (anchor_id, type_name), title=TITLE)
             return True
@@ -297,7 +297,7 @@ class Session(aui.SlcCountRules):
             else:
                 no_params.append(el)
         if not todo:
-            forms.alert("No devices with SLC Address parameters were found downstream of element %d on '%s' "
+            ec.alert("No devices with SLC Address parameters were found downstream of element %d on '%s' "
                         "conduit." % (anchor_id, type_name), title=TITLE)
             return True
 
@@ -335,7 +335,7 @@ class Session(aui.SlcCountRules):
             notes.append("%d device(s) already addressed this run are left as they are." % done)
         if head_end:
             notes.append("%d Head End device(s) on the run are ignored." % head_end)
-        go_on = forms.alert(
+        go_on = ec.alert(
             "Address %d device(s) downstream of element %d on '%s' conduit, in this order:\n\n%s\n\n%s"
             "Address them starting at %s | %s?"
             % (len(todo), anchor_id, type_name, "\n".join(lines),
@@ -385,7 +385,7 @@ class Session(aui.SlcCountRules):
             if n is not None:
                 return ct.end_on_its_side(doc, todo, lambda d: slc.eid_int(d.Id), self.anchor, self.run_conduit,
                                           slc.is_device, self.prefer, slc.eid_int(el.Id))
-            forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that will be "
+            ec.alert("That device is not one of the %d device(s) downstream on '%s' conduit that will be "
                         "addressed. Pick another, or press Esc to go back." % (len(todo), type_name), title=TITLE)
 
     def show(self, device):
@@ -410,7 +410,7 @@ class Session(aui.SlcCountRules):
         # Guard against picking the same device twice (directly or via its tag).
         earlier = self.addressed.get(eid)
         if earlier:
-            again = forms.alert("This device was already addressed this run (%s to %s).\n\nRe-address it with "
+            again = ec.alert("This device was already addressed this run (%s to %s).\n\nRe-address it with "
                                 "new numbers?" % (self.address(earlier["kind"], earlier["first"]),
                                                   self.address(earlier["kind"], earlier["last"])),
                                 title=TITLE, yes=True, no=True)
@@ -437,7 +437,7 @@ class Session(aui.SlcCountRules):
         first = slc.round_up(original, rule["round_to"]) if rule and rule["round_to"] else original
         last = first + len(fill) - 1
         if last > slc.MAX_NUMBER:
-            forms.alert("Addressing %d parameter(s) from %s would exceed %s%d. Stopping."
+            ec.alert("Addressing %d parameter(s) from %s would exceed %s%d. Stopping."
                         % (len(fill), self.address(kind, first), kind, slc.MAX_NUMBER), title=TITLE)
             return False
 

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# nac_voice_addressing module - version v11
+# nac_voice_addressing module - version v12
 # Change log (last change first):
+#   v12 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box
+#         without the warning icon and its sound.
 #   v11 - Auto Circuit - NAC v4 / Voice v4: a run follows the side of a split holding the next device (prefer)
 #        and, to an end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v10 - Auto Circuit - NAC v3 / Auto Circuit - Voice v3: max current counts only the devices already on the
@@ -11,8 +13,6 @@
 #        removed); Shift+Click opens the Address NAC / Voice - Config window (the old menu-based table manager
 #        removed); the EOL and the circuit totals come from nac_voice_eol (shared with Auto-Circuit), on every
 #        device instead of the EOL device's Comments; messages titled with the tool's name.
-#   v7 - Address NAC v5 / Address Voice v5: saving the addresses and the EOL through ew_common.commit (the same
-#        steps, one shared copy).
 """Address NAC and Address Voice: the shared addressing session (split from Address NAC / Voice v7).
 
 NAC Address = N#-#.#  (power supply - circuit . device order), NAC Circuit = N#-#
@@ -64,7 +64,7 @@ def load_table():
     try:
         return nv.load_table()
     except Exception as ex:
-        forms.alert("Could not read the lookup table:\n%s\n\nPath: %s" % (ex, nv.table_path()), title=TITLE)
+        ec.alert("Could not read the lookup table:\n%s\n\nPath: %s" % (ex, nv.table_path()), title=TITLE)
         return {}
 
 
@@ -103,7 +103,7 @@ def choose_circuit(kind, existing, preselected):
 
         if choice == FROM_EXISTING:
             if not circuits:
-                forms.alert("There are no %s circuits in this project yet." % name, title=TITLE)
+                ec.alert("There are no %s circuits in this project yet." % name, title=TITLE)
                 continue
             picked = choose(circuits, "%s: which existing circuit do you want to continue?" % name)
             if not picked:
@@ -124,7 +124,7 @@ def choose_circuit(kind, existing, preselected):
                 el = resolve_device(doc.GetElement(ref.ElementId))
                 parsed = address_on(el, kind) if el is not None else None
                 if not parsed:
-                    forms.alert("That device has no %s in the %s#-#.# format to continue from."
+                    ec.alert("That device has no %s in the %s#-#.# format to continue from."
                                 % (nv.PARAM_NAMES[kind]["address"], kind), title=TITLE)
                     continue
             source, circuit, num = parsed
@@ -438,7 +438,7 @@ class Session(object):
         before = self.addressed.get(eid, {})
         repeats = [k for k in todo if k in before]
         if repeats:
-            again = forms.alert("This device was already addressed this run (%s).\n\nRe-address it with new "
+            again = ec.alert("This device was already addressed this run (%s).\n\nRe-address it with new "
                                 "numbers?" % ", ".join(self.address(k, before[k]) for k in repeats),
                                 title=TITLE, yes=True, no=True)
             if not again:
@@ -482,7 +482,7 @@ class Session(object):
             if n is not None:
                 return ct.end_on_its_side(doc, candidates, lambda c: c["id"], self.anchor, self.run_conduit,
                                           nv.is_device, self.prefer, nv.eid_int(el.Id))
-            forms.alert("That device is not one of the %d device(s) downstream on '%s' conduit that take a %s "
+            ec.alert("That device is not one of the %d device(s) downstream on '%s' conduit that take a %s "
                         "address. Pick another, or press Esc to go back."
                         % (len(candidates), type_name, nv.KIND_NAMES[kind]), title=TITLE)
 
@@ -511,7 +511,7 @@ class Session(object):
     def follow_conduit(self, conduit):
         """Addresses devices downstream of the anchor device along the picked conduit's type."""
         if self.anchor is None:
-            forms.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
+            ec.alert("Pick the device to start from first, then the conduit leaving it.\n\nThe conduit is "
                         "followed away from the last device addressed (or the device chosen with "
                         "'Continue from selected').", title=TITLE)
             return
@@ -523,7 +523,7 @@ class Session(object):
         found, problem = ct.follow(doc, self.anchor, conduit, nv.is_device, prefer=self.prefer)
         self.run_conduit = conduit
         if problem:
-            forms.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
+            ec.alert("That conduit is not connected to the starting device (element %d) by '%s' conduit.\n\n"
                         "Pick a conduit on the run leaving the last device addressed, or pick a device."
                         % (anchor_id, type_name), title=TITLE)
             return
@@ -555,7 +555,7 @@ class Session(object):
             candidates.append({"el": el, "id": eid, "key": key, "targets": targets,
                                "amps": nv.get_current(doc, el), "had": address_on(el, kind)})
         if not candidates:
-            forms.alert("No devices that take a %s address were found downstream of element %d on '%s' conduit."
+            ec.alert("No devices that take a %s address were found downstream of element %d on '%s' conduit."
                         "%s" % (name, anchor_id, type_name,
                                 ("\n\n%d device(s) on the run were passed over." % len(passed)) if passed else ""),
                         title=TITLE)
@@ -612,7 +612,7 @@ class Session(object):
                     chosen.append(c)
                 how = "to max current %s" % nv.fmt_amps(max_amps)
                 if not chosen:
-                    forms.alert("Nothing can be added: %s" % stop_note, title=TITLE)
+                    ec.alert("Nothing can be added: %s" % stop_note, title=TITLE)
                     continue
             break
 
@@ -646,7 +646,7 @@ class Session(object):
             notes.append("%d device(s) already addressed this run are left as they are." % done)
         if head_end:
             notes.append("%d Head End device(s) on the run are ignored." % head_end)
-        go_on = forms.alert("Address %d device(s) downstream of element %d on '%s' conduit?\n\n%s\n\n%s"
+        go_on = ec.alert("Address %d device(s) downstream of element %d on '%s' conduit?\n\n%s\n\n%s"
                             % (len(chosen), anchor_id, type_name, "\n".join(lines), "\n".join(notes)),
                             title=TITLE, yes=True, no=True)
         if not go_on:
@@ -693,7 +693,7 @@ class Session(object):
 
     def start_automatic(self):
         """Explains the conduit pick, then follows the conduit the user picks from the first device."""
-        forms.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
+        ec.alert("Automatic addressing\n\nNext, select the conduit leaving element %d in the direction you want "
                     "the addresser to check. Devices are found by following that conduit (and only that conduit "
                     "type) away from the device.\n\nPress Esc while selecting to pick devices manually instead."
                     % nv.eid_int(self.anchor.Id), title=TITLE)

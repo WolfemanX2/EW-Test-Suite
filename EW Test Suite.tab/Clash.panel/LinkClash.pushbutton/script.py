@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# Link Clash script - version v13
-__title__ = "Link\nClash v13"
+# Link Clash script - version v14
+# v14 - code audit: messages without the warning sound; statuses and last results saved with the shared safe
+#       write (lib/config_store.py), so a failed save never loses the file; ElementId numbers from ew_common
+__title__ = "Link\nClash v14"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
            "When it finishes, the selected elements that clash are left selected and a results window "
@@ -34,7 +36,8 @@ from System.Windows.Controls.Primitives import Selector
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
-from ew_common import eid, tagged_hosts     # shared helpers (lib/ew_common.py)
+from ew_common import eid, element_id, tagged_hosts, alert     # shared helpers (lib/ew_common.py)
+import config_store as cs    # the safe write for the status and results files (lib/config_store.py)
 
 try:
     import clash_rules          # lib/clash_rules.py, edited with the Link Clash - Config tool
@@ -403,7 +406,7 @@ class ClashRow(object):
 
     @property
     def host_id(self):
-        return make_id(self.host_int)
+        return element_id(self.host_int)
 
     def to_dict(self):
         return {"id": self.host_int, "desc": self.desc, "link": self.link, "cat": self.cat,
@@ -413,14 +416,6 @@ class ClashRow(object):
     def from_dict(d):
         box = [tuple(c) for c in d["box"]] if d.get("box") else None
         return ClashRow(d["id"], d["desc"], d["link"], d["cat"], d["type"], d["lid"], d["overlap"], box)
-
-
-def make_id(n):
-    """ElementId from an integer (works across Revit versions)."""
-    try:
-        return ElementId(System.Int64(n))
-    except Exception:
-        return ElementId(int(n))
 
 
 # ---- clash statuses, saved per model ----
@@ -461,13 +456,7 @@ def save_statuses(changed):
     try:
         data = load_statuses()
         data.update(changed)
-        path = status_file()
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"model": model_key(), "clashes": data}, f, indent=1, sort_keys=True)
-        if os.path.exists(path):
-            os.remove(path)
-        os.rename(tmp, path)
+        cs.write_json(status_file(), {"model": model_key(), "clashes": data}, indent=1)
         return True
     except Exception:
         return False
@@ -544,8 +533,7 @@ def results_file():
 
 def save_results(rows):
     try:
-        with open(results_file(), "w") as f:
-            json.dump({"doc": doc_key(), "rows": [r.to_dict() for r in rows]}, f)
+        cs.write_json(results_file(), {"doc": doc_key(), "rows": [r.to_dict() for r in rows]}, indent=None)
     except Exception:
         pass
 
@@ -1097,7 +1085,7 @@ def fix_multi(d, conduit, row, ctx, before_self, before_near, boxes, side_carry,
     for key in sorted(left.keys()):
         if key not in left:
             continue   # an earlier saddle already cleared it
-        piece = d.GetElement(make_id(left[key]))
+        piece = d.GetElement(element_id(left[key]))
         if not isinstance(piece, Conduit):
             continue   # the clash sits on a fitting
         pc = piece.Location.Curve
@@ -1153,7 +1141,7 @@ def auto_fix(row, ask):
         mode = DEVICE_MODE
         if mode == "ask":
             names = "\n".join(u"  {} : {} (id {})".format(*(describe(dev) + (eid(dev),))) for dev in devices)
-            choice = forms.alert(
+            choice = alert(
                 u"Conduit {} is connected to:\n\n{}\n\nIf Auto Fix raises or lowers this conduit, should the "
                 u"device's elevation change with it, or does the device need to remain in place?".format(
                     row.sel, names),
@@ -1190,7 +1178,7 @@ def auto_fix(row, ask):
             note = ""
             if remaining:
                 note = "\n\n{} of its {} clash(es) would remain.".format(len(remaining), len(before_self))
-            ok = forms.alert("Proposed fix for conduit {}:\n\n{}{}\n\nApply it?".format(row.sel, plan, note),
+            ok = alert("Proposed fix for conduit {}:\n\n{}{}\n\nApply it?".format(row.sel, plan, note),
                              title="Link Clash - Auto Fix", yes=True, no=True)
             if not ok:
                 t.RollBack()
@@ -1399,7 +1387,7 @@ def main():
     if RESULTS_WINDOW and not list(uidoc.Selection.GetElementIds()):
         last = load_results()
         if last:
-            choice = forms.alert("Reopen the last clash results for this model ({} clash(es)), "
+            choice = alert("Reopen the last clash results for this model ({} clash(es)), "
                                  "or pick elements for a new check?".format(len(last)),
                                  title="Link Clash",
                                  options=["Reopen last results", "New check"])
@@ -1411,12 +1399,12 @@ def main():
 
     elems = get_selection()
     if not elems:
-        forms.alert("Nothing selected to test.")
+        alert("Nothing selected to test.")
         return
 
     links, unloaded = loaded_links()
     if not links:
-        forms.alert("No loaded Revit links found in this model.")
+        alert("No loaded Revit links found in this model.")
         return
 
     cat_filter = ElementMulticategoryFilter(List[BuiltInCategory](LINK_CATS))
@@ -1458,7 +1446,7 @@ def main():
         notes.append("Showing the first {} of {} clashes.".format(MAX_ROWS, len(results)))
 
     if not results:
-        forms.alert("No clashes found.\n\n" + "\n".join(notes), title="Link Clash")
+        alert("No clashes found.\n\n" + "\n".join(notes), title="Link Clash")
         return
 
     results.sort(key=lambda r: (eid(r[0]), r[1], eid(r[2])))

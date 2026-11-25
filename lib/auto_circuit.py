@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# auto_circuit module - version v3
+# auto_circuit module - version v4
 # Change log (last change first):
+#   v4 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
+#        the warning icon and its sound.
 #   v3 - Auto Circuit - SLC v3 / NAC v4 / Voice v4: the next device picked sets the session's prefer, so at a
 #        split the run goes down its side first.
 #   v2 - Auto Circuit - SLC / NAC / Voice v2: Automatically asks for the next device on the circuit (or its tag)
@@ -57,7 +59,7 @@ def main(kind, shift_clicked=False):
     try:
         cfg = cc.load()
     except Exception as ex:
-        forms.alert("Could not read %s:\n%s\n\nPath: %s\n\nFix or remove the file, then try again."
+        ec.alert("Could not read %s:\n%s\n\nPath: %s\n\nFix or remove the file, then try again."
                     % (CONFIG_NAME, ex, cc.config_path()), title=title)
         return
     what = forms.CommandSwitchWindow.show([READDRESS, ROUTE, REROUTE], message="%s: what do you want to do?" % title)
@@ -70,7 +72,7 @@ def main(kind, shift_clicked=False):
         return
     how = forms.CommandSwitchWindow.show([NEW_ROUTE, ADD_TO_CIRCUIT], message="%s - %s:" % (title, what))
     if how:
-        forms.alert("%s - %s is coming in the next update of the dev branch." % (what, how), title=title)
+        ec.alert("%s - %s is coming in the next update of the dev branch." % (what, how), title=title)
 
 
 # ---------- Readdress ----------

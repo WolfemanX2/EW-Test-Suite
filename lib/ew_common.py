@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# ew_common module - version v7
+# ew_common module - version v8
 # Change log (last change first):
+#   v8 - Code audit (Link Clash v14 / Family Defaults Config v12): element_id (an ElementId from a number in any
+#        Revit version, replacing Link Clash's make_id) and parse_length (a length typed in project units, moved
+#        here from conduit_routing so Family Defaults Config no longer loads the routing engine to read one).
 #   v7 - VESDA Pipe Swap v3: named_value (text of a parameter by name, on the element or its type), moved here from
 #        riser_tool so VESDA Pipe Swap can read a detector's Panel #; riser_tool now uses this copy.
 #   v6 - SLC Riser v45: copy_matching_params matches names with case ignored and takes the type's value when the
@@ -9,12 +12,11 @@
 #        and its sound, for the tools' messages and yes / no questions.
 #   v4 - SLC Riser v43: copy_matching_params - fill an element's own parameters from the same-named parameters of
 #        another element (and its type); used for the riser's address callouts.
-#   v3 - Auto-Circuit v11 / Address SLC v12 / Address NAC v5 / Address Voice v5: commit (run a change in a
-#        transaction and check Revit kept it), moved here from Auto-Circuit; Address SLC and Address NAC / Voice
-#        had copies of it.
 """Small helpers shared by the EW Test Suite tools. Check here before writing a new one.
 
 eid_int / eid        the number of an ElementId in any Revit version (.Value on 2024+, .IntegerValue before)
+element_id           an ElementId from a number in any Revit version (Int64 on 2024+, the int constructor before)
+parse_length         a length typed in the project's units (e.g. 15'-0"), or plain feet, in feet; None if unreadable
 DEVICE_CATEGORIES    the categories that count as devices (Fire Alarm Devices)
 is_device            True for an element in one of those categories
 type_name / type_key the name of a type, and its 'Family : Type' key
@@ -61,6 +63,37 @@ def eid(x):
         return i.Value
     except Exception:
         return i.IntegerValue
+
+
+def element_id(n):
+    """ElementId from a number in any Revit version: Int64 on Revit 2024+ (the int constructor is gone in 2026),
+    the int constructor on older versions."""
+    from Autodesk.Revit.DB import ElementId
+    try:
+        from System import Int64
+        return ElementId(Int64(n))
+    except Exception:
+        return ElementId(int(n))
+
+
+# ---------- Lengths ----------
+def parse_length(doc, text):
+    """A length typed in the project's units (e.g. 15'-0"), in feet; plain numbers are read as feet when the
+    project's units can't read them. None when blank or unreadable."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        from Autodesk.Revit.DB import UnitFormatUtils, SpecTypeId
+        ok, val = UnitFormatUtils.TryParse(doc.GetUnits(), SpecTypeId.Length, text)
+        if ok:
+            return val
+    except Exception:
+        pass
+    try:
+        return float(text)
+    except Exception:
+        return None
 
 
 # ---------- Devices ----------

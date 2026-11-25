@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-# addressing_ui module - version v3
+# addressing_ui module - version v4
 # Change log (last change first):
+#   v4 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
+#        the warning icon and its sound.
 #   v3 - Auto Circuit - SLC v1: SlcCountRules.CONFIG_NAME, the config named in its questions (Address SLC - Config,
 #        or Family Defaults Config for the Auto Circuit tools).
 #   v2 - Auto-Circuit v11 / Address SLC v12: SlcCountRules (how many SLC addresses a device gets, asking only
@@ -391,7 +393,7 @@ class NewCircuitDialog(forms.WPFWindow):
             return
         last = self.existing.get((source, circuit))
         if last and start <= last:
-            go_on = forms.alert("%s already has addresses up to %s in this project. Starting at %s can create "
+            go_on = ec.alert("%s already has addresses up to %s in this project. Starting at %s can create "
                                 "duplicate addresses.\n\nUse it anyway?"
                                 % (nv.fmt_circuit(self.kind, source, circuit),
                                    nv.fmt_address(self.kind, source, circuit, last),

@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# circuit_config_editor module - version v11
+# circuit_config_editor module - version v12
 # Change log (last change first):
+#   v12 - Code audit (Family Defaults Config v12): message boxes without the warning icon and its sound (ec.alert);
+#         Conduit Elevations are read with ew_common.parse_length, so the routing engine (conduit_routing) is no
+#         longer loaded with this window.
 #   v11 - Family Defaults Config v11 (cleanup, no change in use): the first match of each setting comes from
 #         family_detection.first_values (no copy here); _elevation_changed renamed _mark_dirty (it also tracks the
 #         Detection Rules tables); _unsaved removed (self._dirty is used directly).
@@ -13,8 +16,6 @@
 #        Conduit Type from each type's family / type name and parameters, after asking blanks only or replace and
 #        showing a review list; the rules are on a new Detection Rules tab (lib/family_detection.py). The parameters
 #        of families that aren't placed are read once and shared with the Circuit column (family_params).
-#   v7 - Family Defaults Config v7: editing several selected rows works: a click on a cell of a selected row keeps
-#        the selection (the grid would narrow it to that row) and the rows are taken when the edit starts.
 """The Family Defaults Config window (lib/circuit_config.py holds the settings). show_editor(doc).
 
 Family Defaults tab: every Fire Alarm Device and Electrical Equipment family in the project (and any in the settings
@@ -45,7 +46,6 @@ from pyrevit import forms
 import circuit_config as cc
 import slc_addressing as slc  # which parameters are SLC Address parameters
 import mounting_rules         # conduit type labels in the project
-import conduit_routing as cr  # reading a length such as 15'-0"
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import family_detection as fd  # Detect Types in Project rules (lib/family_detection.py)
 
@@ -411,7 +411,7 @@ class ConfigEditor(forms.WPFWindow):
             table.RowDeleted += self._mark_dirty
         self._ready = True
         if cfg["notes"]:
-            self.Loaded += lambda sender, args: forms.alert(
+            self.Loaded += lambda sender, args: ec.alert(
                 "Your settings were filled from the configs this one replaces (they are left as they were):\n\n- "
                 + "\n- ".join(cfg["notes"]), title=TITLE)
 
@@ -864,12 +864,11 @@ class ConfigEditor(forms.WPFWindow):
                 errors.append("Address Groups (%s): a group with several subgroups needs a name for each, so it can "
                               "be chosen." % name)
             cfg["address_groups"].append((name, groups[name]))
-        cr.bind(self.doc, None, TITLE)
         for row in self._live(self.dt_elev):
             label, text = cell_text(row["ConduitType"]), cell_text(row["Elevation"])
             if not text:
                 continue
-            if cr.parse_length(text) is None:
+            if ec.parse_length(self.doc, text) is None:
                 errors.append("Conduit Elevations (%s): '%s' can't be read as a length, e.g. 15'-0\"." % (label, text))
                 continue
             cfg["elevations"][label] = text
@@ -904,13 +903,13 @@ class ConfigEditor(forms.WPFWindow):
         self._commit()
         cfg, errors = self._collect()
         if errors:
-            forms.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors[:25]) +
+            ec.alert("Nothing was saved. Please fix:\n\n" + "\n".join(errors[:25]) +
                         ("\n... and %d more" % (len(errors) - 25) if len(errors) > 25 else ""), title=TITLE)
             return
         try:
             cc.save(cfg)
         except Exception as ex:
-            forms.alert("Could not save the settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
+            ec.alert("Could not save the settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
             return
         for table in (self.dt, self.dt_elev, self.dt_groups, self.dt_rules, self.dt_conduit_rules):
             table.AcceptChanges()
@@ -979,7 +978,7 @@ class ConfigEditor(forms.WPFWindow):
 
     def rule_reset_click(self, sender, args):
         self._commit()
-        if not forms.alert("Replace the detection rules and default conduit types with the starting ones?\n\n"
+        if not ec.alert("Replace the detection rules and default conduit types with the starting ones?\n\n"
                            "(Not saved until you press Save.)", title=TITLE, yes=True, no=True):
             return
         self._show_detection(fd.default_detection())
@@ -1024,7 +1023,7 @@ class ConfigEditor(forms.WPFWindow):
         errors = []
         detection = self._detection(errors)
         if errors:
-            forms.alert("Fix the Detection Rules first:\n\n" + "\n".join(errors[:20]), title=TITLE)
+            ec.alert("Fix the Detection Rules first:\n\n" + "\n".join(errors[:20]), title=TITLE)
             return
         mode = forms.CommandSwitchWindow.show([FILL_BLANKS, REPLACE],
                                               message="Detect Types in Project: where should detected values go?")
@@ -1067,7 +1066,7 @@ class ConfigEditor(forms.WPFWindow):
         note = ("\n\n%d famil(ies) couldn't be opened to read their parameters, so only their names were used: %s"
                 % (len(unread), ", ".join(unread[:10]) + (" ..." if len(unread) > 10 else ""))) if unread else ""
         if not changes:
-            forms.alert("Nothing to change: no rule gave a new value for %s.%s"
+            ec.alert("Nothing to change: no rule gave a new value for %s.%s"
                         % ("a blank cell" if mode == FILL_BLANKS else "any type", note), title=TITLE)
             return
         items = [forms.TemplateListItem(c, checked=True, name_attr="text") for c in changes]
@@ -1080,7 +1079,7 @@ class ConfigEditor(forms.WPFWindow):
         self.status_text.Text = ("Detect Types in Project: %d change(s) put in the table (unsaved - press Save)"
                                  % len(picked))
         if note:
-            forms.alert(note.strip(), title=TITLE)
+            ec.alert(note.strip(), title=TITLE)
 
     def _resolve_device_conflicts(self, found_types, mode):
         """A type matching Device Type rules of more than one group (Panel # and SLC Address, say): ask which is right,
@@ -1146,7 +1145,7 @@ class ConfigEditor(forms.WPFWindow):
                 cc.save(cc.empty())
             os.startfile(path)
         except Exception as ex:
-            forms.alert("Could not open the file:\n%s\n\nPath: %s" % (ex, path), title=TITLE)
+            ec.alert("Could not open the file:\n%s\n\nPath: %s" % (ex, path), title=TITLE)
 
     def load_default_click(self, sender, args):
         """Replace the settings with a default config file's. The default is only read."""
@@ -1163,14 +1162,14 @@ class ConfigEditor(forms.WPFWindow):
         source = dialog.FileName
         try:
             if os.path.normcase(os.path.abspath(source)) == os.path.normcase(os.path.abspath(cc.config_path())):
-                forms.alert("That file is your own settings file, the one this window saves to.\n\nChoose the "
+                ec.alert("That file is your own settings file, the one this window saves to.\n\nChoose the "
                             "default config file instead.", title=TITLE)
                 return
             cfg = cc.read(source)
         except Exception as ex:
-            forms.alert("Could not read the default config:\n%s\n\nPath: %s" % (ex, source), title=TITLE)
+            ec.alert("Could not read the default config:\n%s\n\nPath: %s" % (ex, source), title=TITLE)
             return
-        go_on = forms.alert("Replace your settings with the ones in:\n%s\n\nThe default file is only read. Your "
+        go_on = ec.alert("Replace your settings with the ones in:\n%s\n\nThe default file is only read. Your "
                             "current settings are saved as a backup next to them.%s"
                             % (source, "\n\nYour unsaved changes in this window will be lost." if self._dirty
                                else ""), title=TITLE, yes=True, no=True)
@@ -1183,7 +1182,7 @@ class ConfigEditor(forms.WPFWindow):
             cfg["notes"] = []
             cc.save(cfg)
         except Exception as ex:
-            forms.alert("Could not write your settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
+            ec.alert("Could not write your settings:\n%s\n\nPath: %s" % (ex, cc.config_path()), title=TITLE)
             return
         self._fill(cfg)
         self.status_text.Text = "Loaded the default config and saved it"
@@ -1195,7 +1194,7 @@ class ConfigEditor(forms.WPFWindow):
     def window_closing(self, sender, args):
         self._commit()
         if self._dirty:
-            discard = forms.alert("You have unsaved changes.\n\nClose without saving?", title=TITLE, yes=True, no=True)
+            discard = ec.alert("You have unsaved changes.\n\nClose without saving?", title=TITLE, yes=True, no=True)
             if not discard:
                 args.Cancel = True
 
@@ -1205,7 +1204,7 @@ def show_editor(doc):
     try:
         cfg = cc.load()
     except Exception as ex:
-        forms.alert("Could not read the settings:\n%s\n\nPath: %s\n\nFix or remove the file, then try again."
+        ec.alert("Could not read the settings:\n%s\n\nPath: %s\n\nFix or remove the file, then try again."
                     % (ex, cc.config_path()), title=TITLE)
         return
     ConfigEditor(doc, cfg).ShowDialog()

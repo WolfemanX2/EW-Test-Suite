@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# VESDA Pipe Swap script - version v3
+# VESDA Pipe Swap script - version v4
+# v4 - faster on long runs: one regenerate for all the pipes' new type (lib/vesda_pipe_swap.py v4)
 # v3 - pipe ADDRESS written in full as '<Panel #>: PORT #' from the detector the run connects to ('ASD-##' if none)
 # v2 - ADDRESS renumbered to the new pipe type's number: 'PORT #' on pipes, P# of 'P#:S#:H#' on sampling points
 # v1 - new: swap a VESDA run's pipe type and its elbows / tees without touching the sampling point families
-__title__ = "VESDA\nPipe Swap v3"
+__title__ = "VESDA\nPipe Swap v4"
 __doc__ = ("Changes the pipe type of a VESDA pipe run without breaking it, unlike Revit's Change Type. Pipes get "
            "the new type and keep their size; elbows, tees (and crosses, transitions, unions, caps) are swapped for "
            "the parts set in the new type's Routing Preferences, kept in place and connected. Fittings and "

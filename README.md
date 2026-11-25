@@ -212,36 +212,36 @@ share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
-| Auto Circuit - SLC | v3 |
-| Auto Circuit - NAC | v4 |
-| Auto Circuit - Voice | v4 |
-| lib/auto_circuit.py | v1 |
+| Auto Circuit - SLC | v4 |
+| Auto Circuit - NAC | v5 |
+| Auto Circuit - Voice | v5 |
+| lib/auto_circuit.py | v4 |
 | lib/circuit_rules.py | v1 |
-| lib/ew_common.py | v6 |
-| lib/addressing_ui.py | v3 |
-| lib/config_store.py | v1 |
-| Family Defaults Config | v11 |
+| lib/ew_common.py | v8 |
+| lib/addressing_ui.py | v4 |
+| lib/config_store.py | v2 |
+| Family Defaults Config | v12 |
 | lib/circuit_config.py | v5 |
-| lib/circuit_config_editor.py | v11 |
+| lib/circuit_config_editor.py | v12 |
 | lib/family_detection.py | v3 |
 | Auto Conduit | v6 |
 | Auto-Circuit | v12 |
-| Link Clash | v13 |
+| Link Clash | v14 |
 | Link Clash - Config | v6 |
 | lib/mounting_rules.py | v2 |
-| lib/conduit_routing.py | v3 |
+| lib/conduit_routing.py | v4 |
 | lib/clash_rules.py | v6 |
 | Address SLC | v12 |
-| lib/slc_session.py | v4 |
+| lib/slc_session.py | v6 |
 | lib/slc_addressing.py | v8 |
 | lib/slc_config_editor.py | v4 |
 | Address NAC | v6 |
 | Address Voice | v6 |
-| lib/nac_voice_addressing.py | v9 |
+| lib/nac_voice_addressing.py | v12 |
 | lib/nac_voice_eol.py | v1 |
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
-| lib/conduit_trace.py | v5 |
+| lib/conduit_trace.py | v8 |
 | SLC Riser | v59 |
 | NAC Riser | v29 |
 | Riser - Config (was SLC Riser - Config) | v16 |
@@ -257,3 +257,6 @@ share are in `lib/addressing_ui.py`.
 | Tag Shared Params | v1 |
 | Transfer Family Params | v1 |
 | lib/family_shared_params.py | v1 |
+| VESDA Pipe Swap | v4 |
+| VESDA Pipe Swap - Config | v1 |
+| lib/vesda_pipe_swap.py | v4 |

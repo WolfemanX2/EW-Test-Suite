@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# config_store module - version v1
+# config_store module - version v2
 # Change log (last change first):
+#   v2 - Code audit (Link Clash v14): write_json swaps the new file in with one call (File.Replace), so there is
+#        never a moment with no file; its temporary file has a name of its own, so two people saving a shared
+#        file at once can't write into the same temporary file.
 #   v1 - Code consolidation step 7 (Auto Conduit - Config v3): where the tools' settings files live, the office
 #        defaults and the safe write, shared by clash_rules, slc_addressing, nac_voice_types, slc_riser and
 #        mounting_rules.
@@ -22,6 +25,7 @@ start_from(path, sources)           the first time (path doesn't exist yet): cop
 """
 import json
 import os
+import random
 import shutil
 
 EXTENSION_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,16 +57,42 @@ def read_json(path, empty=None):
 
 
 def write_json(path, data, indent=2):
-    """Write data to path, creating the folder if needed. Written to a temporary file first and then swapped in,
-    so a failed write never leaves a half-written settings file. Raises if it can't be written."""
+    """Write data to path, creating the folder if needed. Written in full to a temporary file first and then
+    swapped in, so a failed write never leaves a half-written or missing settings file. Raises if it can't be
+    written."""
     folder = os.path.dirname(path)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=indent, sort_keys=True)
-    if os.path.exists(path):
-        os.remove(path)
+    tmp = "%s.%08x.tmp" % (path, random.getrandbits(32))    # its own name: two saves at once never share one
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=indent, sort_keys=True)
+        _swap_in(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
+def _swap_in(tmp, path):
+    """Put the finished temporary file in place of path."""
+    if not os.path.exists(path):
+        os.rename(tmp, path)
+        return
+    try:
+        from System.IO import File          # in Revit: one call that replaces the file (Windows ReplaceFile)
+        File.Replace(tmp, path, None)
+        return
+    except ImportError:
+        pass
+    except Exception:
+        pass                                # e.g. a network drive that can't replace files: the older way below
+    if hasattr(os, "replace"):
+        os.replace(tmp, path)               # outside Revit (Python 3)
+        return
+    os.remove(path)
     os.rename(tmp, path)
 
 

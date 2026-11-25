@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# vesda_pipe_swap module - version v3
+# vesda_pipe_swap module - version v4
 # Change log (last change first):
+#   v4 - Code audit (VESDA Pipe Swap v4, no change in use): the pipes' sizes are all read first, the pipes all take
+#        the new type, then one regenerate (it was one per pipe) before any size Revit changed is put back - faster on
+#        long runs, and a size can no longer be read after a neighbouring pipe's change has already moved it.
 #   v3 - VESDA Pipe Swap v3: a swapped pipe's ADDRESS is written in full as "<Panel #>: PORT <n>", Panel # read
 #        from the Fire Alarm Device (detector) the run connects to; "ASD-##" when it has none or none is found.
 #   v2 - VESDA Pipe Swap v2: ADDRESS follows the new pipe type's number - "...PORT #" on the swapped pipes and
@@ -386,22 +389,30 @@ class Plan(object):
         before = self._all_links(watch)
         sampling_types = [(s, ec.eid(s), s.GetTypeId()) for s in self.sampling]
 
-        # 1. Pipes: new type, same size.
+        # 1. Pipes: new type, same size. Every size is read before anything changes, the pipes all take the new
+        #    type, and one regenerate (not one per pipe) shows which sizes Revit changed; those are put back.
+        sizes = []
         for p in self.pipes:
             dp = p.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM)
-            size = dp.AsDouble() if dp is not None else None
+            sizes.append(dp.AsDouble() if dp is not None else None)
+        for p in self.pipes:
             if p.GetTypeId() != target_type.Id:
                 p.ChangeTypeId(target_type.Id)
                 self.pipes_changed += 1
-            doc.Regenerate()
+        doc.Regenerate()
+        resized = False
+        for p, size in zip(self.pipes, sizes):
             dp = p.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM)
             if size is not None and dp is not None and abs(dp.AsDouble() - size) > SIZE_TOLERANCE:
+                resized = True
                 try:
                     dp.Set(size)
                 except Exception:
                     pass
                 if abs(dp.AsDouble() - size) > SIZE_TOLERANCE:
                     self.size_problems.append(p)
+        if resized:
+            doc.Regenerate()    # the fittings below read their sizes after the pipes are back to theirs
 
         # 2. Fittings: the new type's part for the same kind and size.
         for f in self.fittings:
