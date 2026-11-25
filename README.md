@@ -212,10 +212,10 @@ share are in `lib/addressing_ui.py`.
 
 | File | Version |
 |---|---|
-| Auto Circuit - SLC | v4 |
-| Auto Circuit - NAC | v5 |
-| Auto Circuit - Voice | v5 |
-| lib/auto_circuit.py | v4 |
+| Auto Circuit - SLC | v5 |
+| Auto Circuit - NAC | v6 |
+| Auto Circuit - Voice | v6 |
+| lib/auto_circuit.py | v5 |
 | lib/circuit_rules.py | v1 |
 | lib/ew_common.py | v8 |
 | lib/addressing_ui.py | v4 |

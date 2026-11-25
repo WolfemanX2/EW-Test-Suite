@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# auto_circuit module - version v4
+# auto_circuit module - version v5
 # Change log (last change first):
+#   v5 - Auto Circuit - SLC v5 / NAC v6 / Voice v6: a Readdress run is one Undo - readdress() holds the run in one
+#        transaction group, always merged when it ends (each save is still its own checked transaction inside it, and
+#        a run that stops early keeps what it saved).
 #   v4 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
 #        the warning icon and its sound; Family Defaults Config's window (circuit_config_editor) is loaded only for
 #        Shift+Click, so a normal click starts faster.
@@ -23,6 +26,7 @@ with Family Defaults Config (lib/circuit_rules.py) instead of their old tables, 
 at the start instead of after the first device."""
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
+from Autodesk.Revit.DB import TransactionGroup
 from Autodesk.Revit.DB.Electrical import Conduit
 from pyrevit import revit, forms, script
 
@@ -78,15 +82,32 @@ def main(kind, shift_clicked=False):
 
 # ---------- Readdress ----------
 def readdress(kind, cfg, automatic):
+    """One run is one Undo: every device saved, every automatic run and the EOL update is still its own
+    transaction (each is checked as it is saved), all inside one group that is merged when the run ends."""
     title = TITLES[kind]
-    if kind == "SLC":
-        slc_session.doc, slc_session.uidoc, slc_session.output = revit.doc, revit.uidoc, script.get_output()
-        slc_session.TITLE = title
-        SlcReaddress(cfg, automatic, title).run()
-    else:
-        nva.doc, nva.uidoc, nva.output = revit.doc, revit.uidoc, script.get_output()
-        nva.TITLE = title
-        NacReaddress(kind, cfg, automatic, title).run()
+    group = TransactionGroup(revit.doc, title)
+    group.Start()
+    try:
+        if kind == "SLC":
+            slc_session.doc, slc_session.uidoc, slc_session.output = revit.doc, revit.uidoc, script.get_output()
+            slc_session.TITLE = title
+            SlcReaddress(cfg, automatic, title).run()
+        else:
+            nva.doc, nva.uidoc, nva.output = revit.doc, revit.uidoc, script.get_output()
+            nva.TITLE = title
+            NacReaddress(kind, cfg, automatic, title).run()
+    finally:
+        keep_run(group)
+
+
+def keep_run(group):
+    """Merge what the run changed into one Undo. Always kept, never rolled back: a run that stops early keeps
+    what it already saved, as each save did before (a run that changed nothing leaves no Undo)."""
+    try:
+        if group.HasStarted() and not group.HasEnded():
+            group.Assimilate()
+    except Exception:
+        pass
 
 
 class _Preset(object):
