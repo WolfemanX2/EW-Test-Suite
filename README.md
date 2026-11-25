@@ -260,3 +260,10 @@ share are in `lib/addressing_ui.py`.
 | VESDA Pipe Swap | v4 |
 | VESDA Pipe Swap - Config | v1 |
 | lib/vesda_pipe_swap.py | v4 |
+
+## Tests
+
+`tests\` holds checks of the libraries' own logic that run outside Revit with Python 3 (pyRevit ignores the
+folder): `python tests/run_tests.py`. `tests/revit_stand_ins.py` stands in for Revit, pyRevit and .NET, so the
+tests cover the settings files, the conduit tracing order and the shared helpers, not what Revit does with the
+result. Run them after changing a lib file.
