@@ -2,7 +2,8 @@
 # slc_session module - version v6
 # Change log (last change first):
 #   v6 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
-#        the warning icon and its sound.
+#        the warning icon and its sound; Address SLC - Config's window (slc_config_editor) is loaded only for
+#        Shift+Click, so a normal click starts faster.
 #   v5 - Auto Circuit - SLC v3: a run follows the side of a split holding the next device (prefer) and, to an
 #        end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v4 - Auto Circuit - SLC v1: hooks for the Auto Circuit tools: settings_line() (the settings named in the
@@ -23,7 +24,6 @@ from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import revit, forms, script
 
 import slc_addressing as slc
-import slc_config_editor
 import conduit_trace as ct      # the shared conduit tracing (lib/conduit_trace.py)
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import addressing_ui as aui     # shared addressing windows and menus
@@ -543,6 +543,7 @@ def main(shift_clicked=False):
     doc, uidoc, output = revit.doc, revit.uidoc, script.get_output()
     TITLE = "Address SLC"
     if shift_clicked:
+        import slc_config_editor    # Address SLC - Config: loaded only for Shift+Click
         slc_config_editor.show_editor(doc)
     else:
         Session().run()

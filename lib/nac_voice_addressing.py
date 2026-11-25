@@ -2,7 +2,8 @@
 # nac_voice_addressing module - version v12
 # Change log (last change first):
 #   v12 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box
-#         without the warning icon and its sound.
+#         without the warning icon and its sound; Address NAC / Voice - Config's window (nac_voice_config_editor) is
+#         loaded only for Shift+Click, so a normal click starts faster.
 #   v11 - Auto Circuit - NAC v4 / Voice v4: a run follows the side of a split holding the next device (prefer)
 #        and, to an end device, the end device's side (conduit_trace.end_on_its_side), not the side the tee rule puts first.
 #   v10 - Auto Circuit - NAC v3 / Auto Circuit - Voice v3: max current counts only the devices already on the
@@ -30,7 +31,6 @@ import conduit_trace as ct
 import ew_common as ec        # shared helpers (lib/ew_common.py)
 import addressing_ui as aui     # shared addressing windows and menus
 import nac_voice_eol as eol     # the EOL and circuit totals, shared with Auto-Circuit (lib/nac_voice_eol.py)
-import nac_voice_config_editor  # the Address NAC / Voice - Config window (Shift+Click)
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -811,6 +811,7 @@ def main(kind, shift_clicked=False):
     doc, uidoc, output = revit.doc, revit.uidoc, script.get_output()
     TITLE = "Address %s" % nv.KIND_NAMES[kind]
     if shift_clicked:
+        import nac_voice_config_editor  # Address NAC / Voice - Config: loaded only for Shift+Click
         nac_voice_config_editor.show_editor(doc)
     else:
         Session(kind).run()

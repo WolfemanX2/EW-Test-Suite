@@ -2,8 +2,9 @@
 # ew_common module - version v8
 # Change log (last change first):
 #   v8 - Code audit (Link Clash v14 / Family Defaults Config v12): element_id (an ElementId from a number in any
-#        Revit version, replacing Link Clash's make_id) and parse_length (a length typed in project units, moved
-#        here from conduit_routing so Family Defaults Config no longer loads the routing engine to read one).
+#        Revit version, replacing Link Clash's make_id), parse_length (a length typed in project units, moved
+#        here from conduit_routing so Family Defaults Config no longer loads the routing engine to read one) and
+#        bend_fitting (the bend a conduit type would use, for a clear message when it has none).
 #   v7 - VESDA Pipe Swap v3: named_value (text of a parameter by name, on the element or its type), moved here from
 #        riser_tool so VESDA Pipe Swap can read a detector's Panel #; riser_tool now uses this copy.
 #   v6 - SLC Riser v45: copy_matching_params matches names with case ignored and takes the type's value when the
@@ -32,6 +33,7 @@ make_highlight / highlight                           colour picked elements in t
 
 Changing the model:
 commit               run a change in a transaction; None if Revit kept it, otherwise the reason it didn't
+bend_fitting         the bend (elbow) fitting a conduit type uses, or None: without one Revit can't make a bend
 copy_matching_params fill an element's own parameters from the same-named ones of another element and its type
 named_value          text of the parameter with a given name (case ignored) on an element or its type, or ''
 
@@ -291,6 +293,28 @@ def commit(t, work):
         except Exception:
             pass
         return str(ex)
+
+
+# ---------- Conduit fittings ----------
+def bend_fitting(conduit_type):
+    """The bend (elbow) fitting a conduit type uses: its type properties' Bend (MEPCurveType.Elbow), or the first
+    Elbow rule of its routing preferences where the type has them. None when it has neither, which is when
+    Revit's NewElbowFitting can't make a bend for it."""
+    try:
+        sym = conduit_type.Elbow
+        if sym is not None:
+            return sym
+    except Exception:
+        pass
+    try:
+        from Autodesk.Revit.DB import RoutingPreferenceRuleGroupType
+        rpm = conduit_type.RoutingPreferenceManager
+        group = RoutingPreferenceRuleGroupType.Elbows
+        if rpm is not None and rpm.GetNumberOfRules(group) > 0:
+            return conduit_type.Document.GetElement(rpm.GetRule(group, 0).MEPPartId)
+    except Exception:
+        pass
+    return None
 
 
 # ---------- Copying parameter values ----------

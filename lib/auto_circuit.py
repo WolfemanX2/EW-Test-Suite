@@ -2,7 +2,8 @@
 # auto_circuit module - version v4
 # Change log (last change first):
 #   v4 - Code audit (Auto Circuit - SLC v4 / NAC v5 / Voice v5): its message boxes are ec.alert, pyRevit's box without
-#        the warning icon and its sound.
+#        the warning icon and its sound; Family Defaults Config's window (circuit_config_editor) is loaded only for
+#        Shift+Click, so a normal click starts faster.
 #   v3 - Auto Circuit - SLC v3 / NAC v4 / Voice v4: the next device picked sets the session's prefer, so at a
 #        split the run goes down its side first.
 #   v2 - Auto Circuit - SLC / NAC / Voice v2: Automatically asks for the next device on the circuit (or its tag)
@@ -27,7 +28,6 @@ from pyrevit import revit, forms, script
 
 import circuit_config as cc
 import circuit_rules as rules
-import circuit_config_editor     # Family Defaults Config (Shift+Click)
 import slc_session
 import slc_addressing as slc
 import nac_voice_addressing as nva
@@ -53,6 +53,7 @@ def main(kind, shift_clicked=False):
     """Runs Auto Circuit - SLC ("SLC"), - NAC ("N") or - Voice ("V")."""
     doc = revit.doc
     if shift_clicked:
+        import circuit_config_editor    # Family Defaults Config: loaded only for Shift+Click
         circuit_config_editor.show_editor(doc)
         return
     title = TITLES[kind]

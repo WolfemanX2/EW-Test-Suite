@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # Link Clash script - version v14
 # v14 - code audit: messages without the warning sound; statuses and last results saved with the shared safe
-#       write (lib/config_store.py), so a failed save never loses the file; ElementId numbers from ew_common
+#       write (lib/config_store.py), so a failed save never loses the file; ElementId numbers from ew_common;
+#       when no fix works and the conduit type has no Bend fitting, the message says so
 __title__ = "Link\nClash v14"
 __doc__ = ("Tests the selected elements against MEP and structural elements in every loaded Revit link "
            "and lists each clash. Select elements first, or run with nothing selected to pick them. "
@@ -36,7 +37,7 @@ from System.Windows.Controls.Primitives import Selector
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 from System.Windows.Data import CollectionViewSource, PropertyGroupDescription
-from ew_common import eid, element_id, tagged_hosts, alert     # shared helpers (lib/ew_common.py)
+from ew_common import eid, element_id, tagged_hosts, alert, bend_fitting, type_name  # lib/ew_common.py
 import config_store as cs    # the safe write for the status and results files (lib/config_store.py)
 
 try:
@@ -1170,9 +1171,14 @@ def auto_fix(row, ask):
                                           side_carry, lift_carry)
         if not steps:
             t.RollBack()
-            return ("No fix worked for conduit {} within the Link Clash - Config rules: each allowed move or jog either "
-                    "still clashed, disconnected the run, did not fit, or could not be built by Revit "
-                    "(jogs need a level conduit with room either side of the clashing element).".format(row.sel))
+            msg = ("No fix worked for conduit {} within the Link Clash - Config rules: each allowed move or jog either "
+                   "still clashed, disconnected the run, did not fit, or could not be built by Revit "
+                   "(jogs need a level conduit with room either side of the clashing element).".format(row.sel))
+            ctype = d.GetElement(conduit.GetTypeId())
+            if (ALLOW_H_JOG or ALLOW_V_JOG) and ctype is not None and bend_fitting(ctype) is None:
+                msg += (u" Its conduit type ({}) has no Bend fitting in its type properties, so Revit can't build a "
+                        u"jog for it.".format(type_name(ctype)))
+            return msg
         if ask:
             plan = "\n".join("{}. {}".format(i + 1, st) for i, st in enumerate(steps))
             note = ""
