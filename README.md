@@ -244,12 +244,12 @@ share are in `lib/addressing_ui.py`.
 | lib/conduit_trace.py | v8 |
 | SLC Riser | v59 |
 | NAC Riser | v29 |
-| Riser - Config (was SLC Riser - Config) | v16 |
+| Riser - Config (was SLC Riser - Config) | v17 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v23 |
 | lib/riser_tool.py | v32 |
 | lib/nac_riser.py | v12 |
-| lib/riser_config_editor.py | v10 |
+| lib/riser_config_editor.py | v11 |
 | lib/riser_layout.py | v28 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |

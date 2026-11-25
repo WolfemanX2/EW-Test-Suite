@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v10
+# riser_config_editor module - version v11
 # Change log (last change first):
+#   v11 - Riser - Config v17 (code audit): show_editor reads the model that is open now. The module kept the model it
+#         was first loaded in, so after switching projects the window could list the other project's types, or fail to
+#         open once that project was closed.
 #   v10 - Riser - Config v16: the Line end choices are made before the saved settings are shown (the window failed
 #         to open with "'RiserTab' object has no attribute 'end_choices'" once a Generic Annotation was saved as
 #         the line end).
 #   v9 - Riser - Config v15: Gap between circuits (in) box.
 #   v8 - Riser - Config v14: the Address text below line tooltip says negative values move the text up.
 #   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
-#   v6 - Riser - Config v12: each riser tab has a Panel detail family box - the detail item family drawn for the
-#        head end (picked from the loaded Detail Item families, or typed).
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -765,4 +766,6 @@ class RiserConfigWindow(forms.WPFWindow):
 
 
 def show_editor():
+    global doc
+    doc = revit.doc     # the model open now: pyRevit can keep this module loaded between runs
     RiserConfigWindow().ShowDialog()
