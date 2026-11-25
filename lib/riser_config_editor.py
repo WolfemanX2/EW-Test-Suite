@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_config_editor module - version v11
+# riser_config_editor module - version v12
 # Change log (last change first):
+#   v12 - Riser - Config v18: the symbol table's Keynote/Function Symbol column (a symbol drawn above the device;
+#         double-click it or Set Keynote For Selected...), and the Keynote/Function Symbol Offset (in) and Panel #
+#         text offset (in) drawing settings.
 #   v11 - Riser - Config v17 (code audit): show_editor reads the model that is open now. The module kept the model it
 #         was first loaded in, so after switching projects the window could list the other project's types, or fail to
 #         open once that project was closed.
@@ -9,7 +12,6 @@
 #         the line end).
 #   v9 - Riser - Config v15: Gap between circuits (in) box.
 #   v8 - Riser - Config v14: the Address text below line tooltip says negative values move the text up.
-#   v7 - Riser - Config v13: Circuit label offset (ft) and Line end (Text, or a loaded Generic Annotation type).
 """The Riser - Config window: one tab per riser (SLC Riser, NAC Riser), laid out like Family Defaults Config.
 
 Each tab has the riser's drawing settings (view scale, spacing, devices per line, wrap rounding, address text
@@ -50,6 +52,7 @@ TABS = [("SLC Riser", "slc_", sr), ("NAC Riser", "nac_", nac_riser)]     # (tab 
 SCOPES = [("Fire Alarm Device types", BuiltInCategory.OST_FireAlarmDevices),
           ("Electrical Equipment types (panels)", BuiltInCategory.OST_ElectricalEquipment)]
 TEXT_LABEL = "(45 degree address text)"     # the Address Callouts table when a subgroup has no callout
+NO_KEYNOTE = "(no keynote / function symbol)"
 CLOSE_ANYWAY = "Close Without Saving"
 KEEP_EDITING = "Keep Editing"
 
@@ -236,7 +239,14 @@ TAB_XAML = """
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="5" Grid.Column="3" Text="Keynote/Function Symbol Offset (in):" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="The gap (inches in the view) from the top of a device's symbol up to the bottom of its Keynote/Function Symbol (set per Family Type in the table below)."/>
+                            <TextBox x:Name="PFX_keynote_box" Grid.Row="5" Grid.Column="4" Margin="0,6,0,0"/>
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Panel # text offset (in):" VerticalAlignment="Center" Margin="0,6,8,0"
+                                       ToolTip="The gap (inches in the view) from the top of a device's symbol - or of its Keynote/Function Symbol - up to the Panel # text written above it."/>
+                            <TextBox x:Name="PFX_panel_text_box" Grid.Row="6" Grid.Column="1" Margin="0,6,0,0"/>
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Gap between circuits (in):" VerticalAlignment="Center" Margin="0,6,8,0"
                                        ToolTip="The least gap (inches in the view) kept between what is drawn for two circuits - lines, symbols and text, not the groups' boxes. Closer than this counts as an overlap."/>
                             <TextBox x:Name="PFX_gap_box" Grid.Row="5" Grid.Column="1" Margin="0,6,0,0"/>
@@ -273,7 +283,7 @@ TAB_XAML = """
                     </GroupBox>
 
                     <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Choose the symbols drawn on PFX_HEADER diagrams for each Family Type, in order (one address under each, the last symbol takes the rest). Double-click a Symbols cell (or use the buttons) to edit. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it). Addresses are written under the device as 45 degree text, unless its Address Group subgroup has a callout (right)."/>
+                               Text="Choose the symbols drawn on PFX_HEADER diagrams for each Family Type, in order (one address under each, the last symbol takes the rest). Double-click a Symbols cell (or use the buttons) to edit. A Keynote/Function Symbol (optional) is drawn above the device's symbol. Symbols are the Generic Annotation and Detail Item types loaded in this project. Type in the blank bottom row to add an entry (Family : Type, exactly as Revit shows it). Addresses are written under the device as 45 degree text, unless its Address Group subgroup has a callout (right)."/>
 
                     <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
@@ -284,6 +294,7 @@ TAB_XAML = """
                             <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
                                 <Button x:Name="PFX_add_btn" Content="Add Types From Project..." Width="170" Margin="0,0,8,0" DockPanel.Dock="Left"/>
                                 <Button x:Name="PFX_set_btn" Content="Set Symbols For Selected..." Width="180" Margin="0,0,8,0" DockPanel.Dock="Left"/>
+                                <Button x:Name="PFX_keynote_btn" Content="Set Keynote For Selected..." Width="180" Margin="0,0,8,0" DockPanel.Dock="Left"/>
                                 <Button x:Name="PFX_delete_btn" Content="Delete Selected Rows" Width="140" DockPanel.Dock="Left"/>
                             </DockPanel>
                             <DataGrid x:Name="PFX_grid"
@@ -296,6 +307,8 @@ TAB_XAML = """
                                                         Binding="{Binding FamilyType}" Width="*"/>
                                     <DataGridTextColumn Header="Symbols (in order)"
                                                         Binding="{Binding Symbol}" IsReadOnly="True" Width="1.2*"/>
+                                    <DataGridTextColumn Header="Keynote/Function Symbol"
+                                                        Binding="{Binding Keynote}" IsReadOnly="True" Width="0.8*"/>
                                     <DataGridTextColumn Header="Address Group (Family Defaults)"
                                                         Binding="{Binding AddressGroup}" IsReadOnly="True" Width="0.8*"/>
                                 </DataGrid.Columns>
@@ -419,13 +432,15 @@ class RiserTab(object):
         saved = set()
         for entry in table.values():
             saved.update(entry["symbols"])
+            if entry.get("keynote"):
+                saved.add(entry["keynote"])
         for subs in callouts.values():
             saved.update(subs.values())
         self.symbols = sorted(set(sr.available_symbols(doc).keys()) | saved)
 
-        self.dt = _text_table("RiserSymbols", ("FamilyType", "Symbol", "AddressGroup"))
+        self.dt = _text_table("RiserSymbols", ("FamilyType", "Symbol", "Keynote", "AddressGroup"))
         for key in sorted(table.keys()):
-            self._add_row(key, table[key]["symbols"])
+            self._add_row(key, table[key]["symbols"], table[key].get("keynote"))
         self.dt.AcceptChanges()
         self.c("grid").ItemsSource = self.dt.DefaultView
         self.count = len(table)
@@ -435,13 +450,15 @@ class RiserTab(object):
         self.c("callout_grid").ItemsSource = self.dt_callouts.DefaultView
         if not self.callouts_on:
             self.c("callout_box").Visibility = Visibility.Collapsed
-            self.c("grid").Columns[2].Visibility = Visibility.Collapsed
+            self.c("grid").Columns[3].Visibility = Visibility.Collapsed     # Address Group
 
         # Events (wired here, so each tab's controls call their own tab).
         self.c("panel_family_box").ItemsSource = detail_families()
         self.c("end_box").SelectionChanged += self.setting_changed
         self.c("label_x_box").TextChanged += self.setting_changed
         self.c("gap_box").TextChanged += self.setting_changed
+        self.c("keynote_box").TextChanged += self.setting_changed
+        self.c("panel_text_box").TextChanged += self.setting_changed
         self.c("panel_family_box").AddHandler(TextBoxBase.TextChangedEvent,
                                               TextChangedEventHandler(self.setting_changed))
         self.c("panel_family_box").SelectionChanged += self.setting_changed
@@ -452,6 +469,7 @@ class RiserTab(object):
         self.c("grid").MouseDoubleClick += self.grid_double_click
         self.c("add_btn").Click += self.add_click
         self.c("set_btn").Click += self.set_click
+        self.c("keynote_btn").Click += self.keynote_click
         self.c("delete_btn").Click += self.delete_click
         self.c("callout_grid").MouseDoubleClick += self.callout_set_click
         self.c("callout_set_btn").Click += self.callout_set_click
@@ -459,6 +477,7 @@ class RiserTab(object):
         if self.failed:
             for name in ("grid", "defaults_btn", "add_btn", "set_btn", "delete_btn", "scale_box", "spacing_box",
                          "per_line_box", "offset_box", "rounding_box", "panel_family_box", "label_x_box", "gap_box",
+                         "keynote_box", "panel_text_box", "keynote_btn",
                          "end_box", "callout_grid",
                          "callout_set_btn",
                          "callout_text_btn"):
@@ -491,6 +510,10 @@ class RiserTab(object):
         self.c("label_x_box").Text = number_text(settings.get("label_offset_x_ft",
                                                              sr.DEFAULT_SETTINGS["label_offset_x_ft"]))
         self.c("gap_box").Text = number_text(settings.get("circuit_gap_in", sr.DEFAULT_SETTINGS["circuit_gap_in"]))
+        self.c("keynote_box").Text = number_text(settings.get("keynote_offset_in",
+                                                             sr.DEFAULT_SETTINGS["keynote_offset_in"]))
+        self.c("panel_text_box").Text = number_text(settings.get("panel_text_offset_in",
+                                                                sr.DEFAULT_SETTINGS["panel_text_offset_in"]))
         end = settings.get(sr.END_SYMBOL_KEY) or ""
         if end and end not in self.end_choices:     # saved, but not loaded in this project: keep it
             self.end_choices = self.end_choices + [end]
@@ -524,7 +547,9 @@ class RiserTab(object):
                                       ("wrap_rounding", "rounding_box", "Wrap rounding", int),
                                       ("label_offset_in", "offset_box", "Address text below line", float),
                                       ("label_offset_x_ft", "label_x_box", "Circuit label offset", float),
-                                      ("circuit_gap_in", "gap_box", "Gap between circuits", float)]:
+                                      ("circuit_gap_in", "gap_box", "Gap between circuits", float),
+                                      ("keynote_offset_in", "keynote_box", "Keynote/Function Symbol Offset", float),
+                                      ("panel_text_offset_in", "panel_text_box", "Panel # text offset", float)]:
             lo, hi = self.store.SETTING_LIMITS[key]
             text = (self.c(name).Text or "").strip()
             try:
@@ -550,10 +575,11 @@ class RiserTab(object):
             return ""
         return cc.setting(self.cfg, key, "address_group") or ""
 
-    def _add_row(self, key, symbols):
+    def _add_row(self, key, symbols, keynote=""):
         row = self.dt.NewRow()
         row["FamilyType"] = key
         row["Symbol"] = SEP.join(symbols)
+        row["Keynote"] = keynote or ""
         row["AddressGroup"] = self._group_of(key)
         self.dt.Rows.Add(row)
 
@@ -598,6 +624,31 @@ class RiserTab(object):
         if str(col.Header).startswith("Symbols"):
             self.commit()
             self._edit_rows([item.Row])
+        elif str(col.Header).startswith("Keynote"):
+            self.commit()
+            self._edit_keynotes([item.Row])
+
+    def keynote_click(self, sender, args):
+        self.commit()
+        self._edit_keynotes(self._selected_rows())
+
+    def _edit_keynotes(self, rows):
+        """Choose the Keynote / Function symbol drawn above the devices of the rows' types (or none)."""
+        if not rows:
+            self.status("select one or more rows first")
+            return
+        if not self.symbols:
+            note("No Generic Annotation or Detail Item types are loaded in this project.")
+            return
+        title = cell_text(rows[0]["FamilyType"]) if len(rows) == 1 else "%d selected types" % len(rows)
+        picked = forms.SelectFromList.show([NO_KEYNOTE] + self.symbols,
+                                           title="Keynote/Function Symbol for %s" % title,
+                                           button_name="Use", multiselect=False)
+        if not picked:
+            return
+        for row in rows:
+            row["Keynote"] = "" if picked == NO_KEYNOTE else picked
+        self.status("keynote / function symbol set on %d row(s) (unsaved)" % len(rows))
 
     def _edit_rows(self, rows):
         if not rows:
@@ -697,7 +748,8 @@ class RiserTab(object):
         for idx, row in enumerate(_live(self.dt), start=1):
             key = cell_text(row["FamilyType"])
             symbol = cell_text(row["Symbol"])
-            if not key and not symbol:
+            keynote = cell_text(row["Keynote"])
+            if not key and not symbol and not keynote:
                 continue    # fully blank row
             if not key:
                 errors.append("%s row %d: Family Type is blank." % (self.name, idx))
@@ -708,7 +760,7 @@ class RiserTab(object):
             seen.add(key)
             if not symbol:
                 blank += 1
-            table[key] = sr.new_entry([x for x in symbol.split(SEP) if x])
+            table[key] = sr.new_entry([x for x in symbol.split(SEP) if x], keynote)
         return table, settings, blank
 
     def save(self, table, settings):

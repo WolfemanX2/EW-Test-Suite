@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v33
+# riser_tool module - version v34
 # Change log (last change first):
+#   v34 - SLC Riser v62 / NAC Riser v32: a type's Keynote / Function symbol (Riser - Config table) is drawn above its
+#         device's first symbol, Keynote/Function Symbol Offset above it; the Panel # text above a device keeps
+#         Panel # text offset above its symbols (KEYNOTE_OFFSET_IN, PANEL_TEXT_OFFSET_IN, node_keynote).
 #   v33 - SLC Riser v60 / NAC Riser v30 (code audit, no change in what is drawn): draw notes the ElementId of
 #         everything it creates (made), so a one-line and each spare are grouped from that list instead of listing the
 #         whole view before and after each one; the loop letters are all placed, then measured after one regenerate
@@ -19,7 +22,6 @@
 #         the view is traced again and redrawn, lowest loop / circuit first, as one undo step with one summary;
 #         each question (devices with no conduit path, a type with no symbol, which panel detail) is asked once
 #         for all of them (update_panel, PanelBatch, stop_with).
-#   v29 - NAC Riser v26: the circuit label drawn on the one-line goes through the kind's tag_text (if it has one).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -108,6 +110,8 @@ UNCONNECTED_LEAVE_OFF = "Leave Them Off"
 PANEL_NUMBER_PARAM = "Panel #"      # the panel's name on the diagram and in the view name
 LABEL_OFFSET_X_FT = 1.125   # circuit label offset from the start of the one-line (set from the settings)
 END_SYMBOL = ""             # Generic Annotation at the end of the line ('' = end text; set from the settings)
+KEYNOTE_OFFSET_IN = 6.0     # gap (inches in the view) from the top of a device symbol to its keynote symbol
+PANEL_TEXT_OFFSET_IN = 6.0  # gap (inches in the view) from the top of a device's symbols to its Panel # text
 PANEL_FAMILY = sr.DEFAULT_PANEL_FAMILY   # detail item drawn for the head end panel; set from the riser's settings
 NO_ROOM_TEXT = "(Room ##)"          # Location when the panel is not in a room
 HEAD_SEARCH_RADIUS_FT = 5.0    # a head end with no conduit: look this far around it for an element with conduit
@@ -1986,7 +1990,8 @@ def shift_plan(plan, dx, dy):
            "leader_texts": [(x + dx, y + dy, t, ex + dx, ey + dy)
                             for x, y, t, ex, ey in plan.get("leader_texts", [])],
            "callouts": [(x + dx, y + dy, n) for x, y, n in plan.get("callouts", [])],
-           "end_marks": [(x + dx, y + dy) for x, y in plan.get("end_marks", [])]}
+           "end_marks": [(x + dx, y + dy) for x, y in plan.get("end_marks", [])],
+           "keynotes": [(x + dx, y + dy, n) for x, y, n in plan.get("keynotes", [])]}
     return out
 
 
@@ -2037,13 +2042,13 @@ def made_ids(made, el):
 
 
 def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None, node_callout=None,
-         elements=None, end_symbol=None, made=None):
+         elements=None, end_symbol=None, made=None, node_keynote=None):
     """Create everything in the layout. Returns the number of things that could not be created.
     created: a list that gets (start, end, detail curve) for every line drawn.
     made: a list that gets the ElementId of everything created (and of the shared families nested in it), so the
     caller can group the one-line without looking through the whole view.
     node_callout / elements: {id: callout FamilySymbol} and {id: device}; each callout's parameters are filled from
-    its device's same-named parameters."""
+    its device's same-named parameters. node_keynote: {id: Keynote / Function FamilySymbol} drawn above them."""
     failed = [0]
     min_len = doc.Application.ShortCurveTolerance
 
@@ -2061,6 +2066,11 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
     for x, y, n in plan["symbols"]:
         try:
             made_ids(made, doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view))
+        except Exception:
+            failed[0] += 1
+    for x, y, n in plan.get("keynotes", []):
+        try:
+            made_ids(made, doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_keynote[n], view))
         except Exception:
             failed[0] += 1
     if end_symbol is not None:
@@ -2927,7 +2937,7 @@ def apply_settings():
     """Use the drawing settings saved in the kind's tab of Riser - Config. False if the file can't be read and the user
     chose to stop."""
     global VIEW_SCALE, PER_LINE, WRAP_ROUNDING, DEVICE_SPACING_FT, LABEL_OFFSET_IN, ADDRESS_CALLOUTS, PANEL_FAMILY
-    global LABEL_OFFSET_X_FT, END_SYMBOL, CIRCUIT_GAP_FT
+    global LABEL_OFFSET_X_FT, END_SYMBOL, CIRCUIT_GAP_FT, KEYNOTE_OFFSET_IN, PANEL_TEXT_OFFSET_IN
     try:
         settings = KIND.load_settings()
     except Exception as ex:
@@ -2946,6 +2956,8 @@ def apply_settings():
     LABEL_OFFSET_X_FT = settings.get("label_offset_x_ft", sr.DEFAULT_SETTINGS["label_offset_x_ft"])
     CIRCUIT_GAP_FT = settings.get("circuit_gap_in", sr.DEFAULT_SETTINGS["circuit_gap_in"]) / 12.0
     END_SYMBOL = settings.get(sr.END_SYMBOL_KEY) or ""
+    KEYNOTE_OFFSET_IN = settings.get("keynote_offset_in", sr.DEFAULT_SETTINGS["keynote_offset_in"])
+    PANEL_TEXT_OFFSET_IN = settings.get("panel_text_offset_in", sr.DEFAULT_SETTINGS["panel_text_offset_in"])
     return True
 
 
@@ -3066,11 +3078,18 @@ def _riser_symbols(r):
     r.keys = dict((n, sr.family_key(doc, r.elements[n])) for n in r.drawn)
     # Symbols for each device: its type's symbols. Symbols that aren't loaded are left out.
     device_symbols, missing, not_loaded = {}, [], set()
+    device_keynote = {}     # Keynote / Function symbol drawn above the device
     for n in r.drawn:
         key = r.keys[n]
-        wanted = (table.get(key) or sr.new_entry())["symbols"]
+        entry = table.get(key) or sr.new_entry()
+        wanted = entry["symbols"]
         loaded = [sym for sym in wanted if sym in available]
         not_loaded.update(sym for sym in wanted if sym not in available)
+        keynote = entry.get("keynote")
+        if keynote and keynote in available:
+            device_keynote[n] = available[keynote]
+        elif keynote:
+            not_loaded.add(keynote)
         if loaded:
             device_symbols[n] = loaded
         elif key not in missing:
@@ -3107,7 +3126,7 @@ def _riser_symbols(r):
                     for n in r.drawn:
                         if r.keys[n] == key and n not in device_symbols:
                             device_symbols[n] = [picked]
-                    table[key] = sr.new_entry([picked])
+                    table[key] = sr.new_entry([picked], old.get("keynote"))
                     picked_any = True
                     continue
                 go_on = ec.alert("No symbol chosen for:\n%s\n\nDraw it as a box labeled with the type name? "
@@ -3134,6 +3153,7 @@ def _riser_symbols(r):
                                                         device_symbols, available)
     # A callout is drawn once per device, under its first symbol; its other symbols get no address text.
     r.node_callout = dict((n, device_callout[n]) for n in r.firsts if n in device_callout)
+    r.node_keynote = dict((n, device_keynote[n]) for n in r.firsts if n in device_keynote)  # over its first symbol
     r.callout_parts = set(sid for sid in [n for row in r.rows for n in row["nodes"]]
                         if sid not in r.firsts and base_id(sid) in r.node_callout)
     r.drawn = [n for row in r.rows for n in row["nodes"]]
@@ -3320,13 +3340,15 @@ def _riser_draw(r):
         above_type_id, above_h = None, line_h
         if any(named_value(r.elements[n], PANEL_NUMBER_PARAM) for n in r.drawn if n in r.firsts):
             above_type_id, above_h = small_text_type(type_id)
-        used, callouts_used, fill_from = {}, {}, {}
+        used, callouts_used, fill_from, keynotes_used = {}, {}, {}, {}
         for sym in r.node_symbol.values():
             used[sr.eid_int(sym.Id)] = sym
         for n, sym in r.node_callout.items():
             callouts_used[sr.eid_int(sym.Id)] = sym
             fill_from.setdefault(sr.eid_int(sym.Id), r.elements[n])
-        for sym in list(used.values()) + list(callouts_used.values()):
+        for sym in r.node_keynote.values():
+            keynotes_used[sr.eid_int(sym.Id)] = sym
+        for sym in list(used.values()) + list(callouts_used.values()) + list(keynotes_used.values()):
             if not sym.IsActive:
                 sym.Activate()
         doc.Regenerate()
@@ -3345,6 +3367,7 @@ def _riser_draw(r):
                                           capped=False)[sr.eid_int(end_sym.Id)]
         # Callouts: filled in from a device first (their labels change their size), and not capped in size.
         callout_sizes = measure_symbols(r.view, callouts_used, fill_from, capped=False)
+        keynote_sizes = measure_symbols(r.view, keynotes_used, capped=False) if keynotes_used else {}
 
         box = paper(BOX_SIZE) / 2.0
         # The run starts at its origin; the layout's "panel" is that point.
@@ -3367,6 +3390,8 @@ def _riser_draw(r):
             info[n] = {"mapped": n in r.node_symbol, "ext": ext, "lines": lines, "above": above}
             if getattr(KIND, "level_labels", False):
                 info[n]["level"] = True
+            if n in r.node_keynote:
+                info[n]["keynote"] = keynote_sizes[sr.eid_int(r.node_keynote[n].Id)]
             if n in r.node_callout:
                 info[n]["callout"] = callout_sizes[sr.eid_int(r.node_callout[n].Id)]
                 info[n]["lines"] = []
@@ -3378,7 +3403,8 @@ def _riser_draw(r):
                "label_offset": LABEL_OFFSET_IN / 12.0, "above_h": above_h,
                "loop_label_raise": LOOP_LABEL_RAISE_IN / 12.0,
                "pad": paper(PAD), "text_gap": paper(TEXT_GAP), "line_h": line_h, "row_gap": paper(ROW_GAP),
-               "end_text": getattr(KIND, "return_text", None), "label_offset_x": LABEL_OFFSET_X_FT}
+               "end_text": getattr(KIND, "return_text", None), "label_offset_x": LABEL_OFFSET_X_FT,
+               "keynote_gap": KEYNOTE_OFFSET_IN / 12.0, "above_gap": PANEL_TEXT_OFFSET_IN / 12.0}
         if end_sym is not None:
             cfg["end_symbol_ext"] = end_ext
 
@@ -3399,7 +3425,7 @@ def _riser_draw(r):
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
             curves, new_ids = [], []
             n_failed = draw(r.view, plan, r.node_symbol, type_id, line_h, above_type_id, curves, r.node_callout, r.elements,
-                            end_sym, made=new_ids)
+                            end_sym, made=new_ids, node_keynote=r.node_keynote)
             doc.Regenerate()
             group = None
             if new_ids:

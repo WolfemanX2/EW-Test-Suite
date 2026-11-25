@@ -45,3 +45,35 @@ class Callouts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeynoteAndPanelText(unittest.TestCase):
+    def layout(self, keynote, above, cfg_extra):
+        info = {"P": {"mapped": False, "ext": (0.0, 0.0, 0.0, 0.0), "lines": [], "panel": True, "exit_dy": 0.0},
+                1: {"mapped": True, "ext": (0.5, 0.5, 0.5, 0.5), "lines": ["N1L1M001"], "above": above}}
+        if keynote:
+            info[1]["keynote"] = keynote
+        cfg = dict(CFG)
+        cfg.update(cfg_extra)
+        plan = rl.layout([{"nodes": [1], "label": "A"}], "P", info, set(), cfg)
+        sx, sy = [(x, y) for x, y, n in plan["symbols"] if n == 1][0]
+        return plan, sx, sy
+
+    def test_the_keynote_sits_its_offset_above_the_symbol(self):
+        plan, sx, sy = self.layout((0.3, 0.3, 0.4, 0.2), "", {"keynote_gap": 0.5})
+        kx, ky, n = plan["keynotes"][0]
+        self.assertEqual(n, 1)
+        self.assertAlmostEqual(kx, sx)
+        self.assertAlmostEqual((ky - 0.2) - (sy + 0.5), 0.5)       # its bottom 0.5 above the symbol's top
+
+    def test_the_panel_text_goes_its_offset_above_the_keynote(self):
+        plan, sx, sy = self.layout((0.3, 0.3, 0.4, 0.2), "FACU-01", {"keynote_gap": 0.5, "above_gap": 0.25})
+        top = [(x, y) for x, y, t, how in plan["texts"] if t == "FACU-01"][0][1]
+        keynote_top = plan["keynotes"][0][1] + 0.4
+        self.assertAlmostEqual(top - keynote_top, 0.25 + CFG["line_h"])    # gap, then one line of text
+
+    def test_without_a_keynote_the_panel_text_is_its_offset_above_the_symbol(self):
+        plan, sx, sy = self.layout(None, "FACU-01", {"above_gap": 0.25})
+        top = [(x, y) for x, y, t, how in plan["texts"] if t == "FACU-01"][0][1]
+        self.assertEqual(plan["keynotes"], [])
+        self.assertAlmostEqual(top - (sy + 0.5), 0.25 + CFG["line_h"])

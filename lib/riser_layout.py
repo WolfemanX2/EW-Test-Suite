@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-# riser_layout module - version v29
+# riser_layout module - version v30
 # Change log (last change first):
+#   v30 - SLC Riser v62: a device's info may carry "keynote" (the reach of its Keynote / Function symbol) - drawn
+#         above the symbol, cfg "keynote_gap" over it (out["keynotes"]); cfg "above_gap" - the gap under the text
+#         above a symbol (Panel #), which goes above the keynote.
 #   v29 - SLC Riser v61 / NAC Riser v31: a device's address callout is kept right of the panel (at least the callout
 #         gap past the start of the one-line); the device stays where it is and only its callout and leader move,
 #         with the callouts after it moved on as needed (callout_band).
@@ -12,8 +15,6 @@
 #         (out["end_marks"]) instead of the end text.
 #   v26 - NAC Riser v19: a device's info may carry "level" - its address text is level and centred under the
 #         symbol instead of at 45 degrees (label_drop / label_reach / place).
-#   v25 - SLC Riser v47 / NAC Riser v10: cfg "end_text" ('SLC RETURN', 'NAC RETURN') is written after the last device
-#         of every one-line, the riser line running on to it (otherwise 'RETURNS TO PANEL' only when it returns).
 """The parts of the riser tools that don't touch Revit: following the conduit from the panel to find the
 order of connection, splitting the result into rows, and working out where everything is drawn.
 
@@ -199,6 +200,8 @@ def layout(rows, root, info, returns, cfg):
 
     info[id] = {"mapped": bool, "ext": (left, right, up, down) from the insertion point, "lines": [text],
                 "above": text written above the symbol, or "" (optional),
+                "keynote": (left, right, up, down) of its Keynote / Function symbol, drawn above the symbol
+                (out["keynotes"]: its insertion point, its bottom cfg "keynote_gap" above the symbol) (optional),
                 "callout": (left, right, up, down) of its address callout symbol (optional) - drawn instead of
                 the address text, in a band below the bottom of the line's address text, joined to the device by
                 orthogonal leader lines and moved right when it would overlap the callout before it. The callouts
@@ -233,14 +236,24 @@ def layout(rows, root, info, returns, cfg):
     offset = cfg.get("label_offset", 0.0)
     above_h = cfg.get("above_h", lh)
 
+    keynote_gap = cfg.get("keynote_gap", text_gap)
+    above_gap = cfg.get("above_gap", text_gap)
+
+    def keynote_y(n):
+        """Height of the insertion point of a device's keynote symbol above the riser line: its bottom keynote_gap
+        above the top of the device symbol."""
+        return info[n]["ext"][2] + keynote_gap + info[n]["keynote"][3]
+
     def above_up(n):
-        """How far a symbol and the text above it reach above the riser line."""
+        """How far a symbol, its keynote symbol and the text above them reach above the riser line."""
         u = info[n]["ext"][2]
+        if info[n].get("keynote"):
+            u = keynote_y(n) + info[n]["keynote"][2]
         text = info[n].get("above")
-        return u + text_gap + (text.count("\n") + 1) * above_h if text else u
+        return u + above_gap + (text.count("\n") + 1) * above_h if text else u
     diag = 0.7071067811865476       # sin 45 = cos 45
     out = {"symbols": [], "boxes": [], "lines": [], "texts": [], "panel": None, "leader_texts": [], "callouts": [],
-           "end_marks": []}
+           "end_marks": [], "keynotes": []}
     end_ext = cfg.get("end_symbol_ext")     # (left, right, up, down) of the end-of-line symbol, or None for text
     label_raise = cfg.get("loop_label_raise", 0.0)
     custom_panel = bool(info[root].get("panel"))
@@ -291,6 +304,8 @@ def layout(rows, root, info, returns, cfg):
             out["symbols"].append((x, y, n))
         else:
             out["boxes"].append((x, y, l, r, u, d))
+        if info[n].get("keynote") and n != root:
+            out["keynotes"].append((x, y + keynote_y(n), n))
         above = info[n].get("above")
         if above and n != root:
             out["texts"].append((x, y + above_up(n), above, "A"))

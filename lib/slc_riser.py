@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-# slc_riser module - version v23
+# slc_riser module - version v24
 # Change log (last change first):
+#   v24 - SLC Riser v62 / Riser - Config v18: a table entry may have a "keynote" - a Keynote / Function symbol drawn
+#         above the device's (first) symbol; drawing settings "keynote_offset_in" (gap from the top of the device
+#         symbol to the keynote symbol) and "panel_text_offset_in" (gap below the Panel # text above a device).
 #   v23 - Riser - Config v15: drawing setting "circuit_gap_in" - the least gap kept between two circuits.
 #   v22 - SLC Riser v56 / NAC Riser v24: Address text below line (label_offset_in) may be negative, down to -120".
 #   v21 - Riser - Config v13: drawing settings "label_offset_x_ft" (circuit label offset from the start of the
 #         one-line) and "end_symbol" (a Generic Annotation at the end of the line; '' = the end text).
 #   v20 - Riser - Config v12 / SLC Riser v52 / NAC Riser v16: the drawing settings keep "panel_family", the detail
 #         family drawn for the head end (PANEL_FAMILY_KEY, DEFAULT_PANEL_FAMILY), set per riser in Riser - Config.
-#   v19 - SLC Riser v47: LoopKind.return_text - every SLC one-line ends with 'SLC RETURN'.
 """Shared pieces of the riser tools: SLC Riser's loop kind for the riser engine (LoopKind), the SLC address parameter names, the conduit connections between
 elements (from conduit_trace, shared with the addressing tools), and the lookup table that says which
 symbol is drawn for each Family : Type.
@@ -67,6 +69,8 @@ DEFAULT_SETTINGS = {
     "label_offset_in": 1.0,     # address text starts this many inches (in the view) below the riser line
     "label_offset_x_ft": 1.125,  # the circuit label (A, N1-2) sits this far right of the start of the one-line
     "circuit_gap_in": 1.0,      # least gap (inches in the view) between what is drawn for two circuits
+    "keynote_offset_in": 6.0,   # gap (inches in the view) from the top of a device symbol up to its keynote symbol
+    "panel_text_offset_in": 6.0,    # gap (inches in the view) from the top of a device's symbols up to its Panel #
 }
 SETTING_LIMITS = {              # (smallest, largest) allowed
     "view_scale": (1, 1000),
@@ -76,6 +80,8 @@ SETTING_LIMITS = {              # (smallest, largest) allowed
     "label_offset_in": (-120.0, 120.0),    # negative: closer to, or above, the riser line
     "label_offset_x_ft": (0.0, 100.0),
     "circuit_gap_in": (0.0, 120.0),
+    "keynote_offset_in": (0.0, 120.0),
+    "panel_text_offset_in": (0.0, 120.0),
 }
 
 
@@ -257,13 +263,15 @@ def available_symbols(doc):
 
 
 # ---------- Lookup table ----------
-def new_entry(symbols=None):
-    """A table entry: the riser symbols for one Family : Type, in order."""
-    return {"symbols": [s for s in (symbols or []) if s]}
+def new_entry(symbols=None, keynote=""):
+    """A table entry: the riser symbols for one Family : Type, in order, and its Keynote / Function symbol ('' for
+    none) - drawn above the device."""
+    return {"symbols": [s for s in (symbols or []) if s], "keynote": (keynote or "").strip()}
 
 
 def load_table(path=None, start_from=None):
-    """{"Family : Type" of a device: {"symbols": [its symbols, in order]}}, each symbol a "Family : Type". Older
+    """{"Family : Type" of a device: {"symbols": [its symbols, in order], "keynote": its Keynote / Function symbol
+    or ''}}, each symbol a "Family : Type". Older
     tables with a single "symbol" are read as a one-symbol list; their "rules" are ignored. Raises if the file
     can't be read. path / start_from: another riser's table and its office default (NAC Riser); SLC Riser's
     own by default."""
@@ -279,7 +287,7 @@ def load_table(path=None, start_from=None):
             symbols = value.get("symbols")
             if not isinstance(symbols, list):
                 symbols = [value.get("symbol") or ""]
-            table[key] = new_entry([(s or "").strip() for s in symbols])
+            table[key] = new_entry([(s or "").strip() for s in symbols], value.get("keynote") or "")
         else:
             table[key] = new_entry([(value or "").strip()])
     return table
@@ -292,6 +300,8 @@ def save_table(table, path=None):
     for key, entry in table.items():
         symbols = list(entry.get("symbols") or [])
         data[key] = {"symbols": symbols, "symbol": symbols[0] if symbols else ""}     # "symbol": read by older versions
+        if entry.get("keynote"):
+            data[key]["keynote"] = entry["keynote"]
     cs.write_json(path or table_path(), data)
 
 

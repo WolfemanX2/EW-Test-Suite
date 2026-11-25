@@ -60,6 +60,8 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
 - **Update Selected One-Line:** run SLC Riser or NAC Riser from a drafting view, pick a one-line group, and its
   circuit is traced again and redrawn in place with the current symbols, callouts and settings. Each one-line ends
   with SLC RETURN / NAC RETURN; the panel detail's Panel Model comes from the panel's Model.
+- **Keynote / Function symbols:** a type's optional Keynote/Function Symbol (Riser - Config table) is drawn
+  above its device; Keynote/Function Symbol Offset and Panel # text offset set the gaps above the symbol.
 - **Update Panel:** from the same drafting view options, every one-line of one panel in the view is traced again and
   redrawn (lowest loop / circuit first) as one undo step, with one summary; each question is asked once for all of them.
   NAC Riser (power supplies nested in the panel detail) also deletes circuits no longer in the model, draws new circuits
@@ -242,15 +244,15 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_config_editor.py | v1 |
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v8 |
-| SLC Riser | v61 |
-| NAC Riser | v31 |
-| Riser - Config (was SLC Riser - Config) | v17 |
+| SLC Riser | v62 |
+| NAC Riser | v32 |
+| Riser - Config (was SLC Riser - Config) | v18 |
 | NAC Coverage Checker | v3 |
-| lib/slc_riser.py | v23 |
-| lib/riser_tool.py | v33 |
+| lib/slc_riser.py | v24 |
+| lib/riser_tool.py | v34 |
 | lib/nac_riser.py | v12 |
-| lib/riser_config_editor.py | v11 |
-| lib/riser_layout.py | v29 |
+| lib/riser_config_editor.py | v12 |
+| lib/riser_layout.py | v30 |
 | Line Nuke | v4 |
 | Consolidate Text Styles | v5 |
 | Device Shared Params | v1 |
