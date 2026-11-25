@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v32
+# riser_tool module - version v33
 # Change log (last change first):
+#   v33 - SLC Riser v60 / NAC Riser v30 (code audit, no change in what is drawn): draw notes the ElementId of
+#         everything it creates (made), so a one-line and each spare are grouped from that list instead of listing the
+#         whole view before and after each one; the loop letters are all placed, then measured after one regenerate
+#         (it was one per letter); draw_spares draws every spare, regenerates once, then groups and locks them;
+#         draw_riser runs in six named steps (_riser_trace, _riser_symbols, _riser_target_view, _riser_view_and_panel,
+#         _riser_draw, _riser_report) sharing a _RiserRun - the same statements, checked against the old function; the
+#         ElementId(int) fallback uses ew_common.element_id.
 #   v32 - NAC Riser v29: Update Panel keeps the panel's outputs in step with the model (a kind with sync_outputs and
 #         power supplies nested in the panel detail): one-lines of circuits no longer in the model are deleted,
 #         circuits new in the model are drawn on the output of their power supply, and an output with no circuit
@@ -13,10 +20,6 @@
 #         each question (devices with no conduit path, a type with no symbol, which panel detail) is asked once
 #         for all of them (update_panel, PanelBatch, stop_with).
 #   v29 - NAC Riser v26: the circuit label drawn on the one-line goes through the kind's tag_text (if it has one).
-#   v28 - SLC Riser v57 / NAC Riser v25: the gap kept between circuits is the Gap between circuits setting (inches in
-#         the view, 1" default) instead of 1/8" on the sheet (a foot at 1/8"); an overlap names the two elements
-#         in the output window. Only nested Detail Items count as power supplies (a nested Generic Annotation with
-#         a Power Supply # had its lines used, so circuits started at its end).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -708,7 +711,7 @@ def trace_from(root, firsts, allowed=None, circuits=None):
             type_uids.append(doc.GetElement(net.type_elem_ids[tid]).UniqueId)
         except Exception:
             try:
-                type_uids.append(doc.GetElement(ElementId(tid)).UniqueId)
+                type_uids.append(doc.GetElement(ec.element_id(tid)).UniqueId)
             except Exception:
                 pass
     children, returns, passed = rl.trace(root_id, net.ports, net.is_node, starts or None)
@@ -837,14 +840,6 @@ def choose_target_view():
     if not picked:
         return False
     return views[picked]
-
-
-def view_element_ids(view):
-    """{id number: ElementId} of every element drawn in the view."""
-    try:
-        return dict((sr.eid_int(i), i) for i in FilteredElementCollector(doc, view.Id).ToElementIds())
-    except Exception:
-        return {}
 
 
 def panel_family_symbol():
@@ -1220,7 +1215,7 @@ def device_label(view, x, y, text, type_id):
             opts.VerticalAlignment = VerticalTextAlignment.Top
         except Exception:
             pass
-    TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+    return TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
 
 
 def base_id(sid):
@@ -2027,10 +2022,26 @@ def measure_symbols(view, symbols, fill_from=None, capped=True):
     return sizes
 
 
+def made_ids(made, el):
+    """Add an element draw() created to made, with the shared families nested in it (as the view shows them)."""
+    if made is None or el is None:
+        return
+    todo = [el]
+    while todo:
+        e = todo.pop()
+        made.append(e.Id)
+        try:
+            todo.extend(doc.GetElement(i) for i in e.GetSubComponentIds())
+        except Exception:
+            pass        # not a family instance, or nothing nested
+
+
 def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=None, node_callout=None,
-         elements=None, end_symbol=None):
+         elements=None, end_symbol=None, made=None):
     """Create everything in the layout. Returns the number of things that could not be created.
     created: a list that gets (start, end, detail curve) for every line drawn.
+    made: a list that gets the ElementId of everything created (and of the shared families nested in it), so the
+    caller can group the one-line without looking through the whole view.
     node_callout / elements: {id: callout FamilySymbol} and {id: device}; each callout's parameters are filled from
     its device's same-named parameters."""
     failed = [0]
@@ -2043,23 +2054,25 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
             curve = doc.Create.NewDetailCurve(view, Line.CreateBound(XYZ(p[0], p[1], 0), XYZ(q[0], q[1], 0)))
             if created is not None:
                 created.append((p, q, curve))
+            made_ids(made, curve)
         except Exception:
             failed[0] += 1
 
     for x, y, n in plan["symbols"]:
         try:
-            doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view)
+            made_ids(made, doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_symbol[n], view))
         except Exception:
             failed[0] += 1
     if end_symbol is not None:
         for x, y in plan.get("end_marks", []):
             try:
-                doc.Create.NewFamilyInstance(XYZ(x, y, 0), end_symbol, view)
+                made_ids(made, doc.Create.NewFamilyInstance(XYZ(x, y, 0), end_symbol, view))
             except Exception:
                 failed[0] += 1
     for x, y, n in plan.get("callouts", []):
         try:
             inst = doc.Create.NewFamilyInstance(XYZ(x, y, 0), node_callout[n], view)
+            made_ids(made, inst)
             ec.copy_matching_params(elements[n], inst)
         except Exception:
             failed[0] += 1
@@ -2074,30 +2087,38 @@ def draw(view, plan, node_symbol, type_id, line_h, above_type_id=None, created=N
     for x, y, text, how in plan["texts"]:
         try:
             if how == "D":
-                device_label(view, x, y, text, type_id)
+                made_ids(made, device_label(view, x, y, text, type_id))
                 continue
             if how == "A":
                 opts = TextNoteOptions(above_type_id or type_id)
                 opts.HorizontalAlignment = HorizontalTextAlignment.Center
-                TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+                made_ids(made, TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts))
                 continue
             opts = TextNoteOptions(type_id)
             opts.HorizontalAlignment = align[how]
-            TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+            made_ids(made, TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts))
         except Exception:
             failed[0] += 1
+    # The loop letters, centred over the riser, each with a detail line from under it down to the riser line. All
+    # the letters are placed first and measured after one regenerate (not one regenerate per letter).
+    notes = []
     for x, y, text, ex, ey in plan.get("leader_texts", []):
-        # The loop letter, centred over the riser, with a detail line from under it down to the riser line.
         try:
             opts = TextNoteOptions(type_id)
             opts.HorizontalAlignment = HorizontalTextAlignment.Center
             note = TextNote.Create(doc, view.Id, XYZ(x, y, 0), text, opts)
+            made_ids(made, note)
+            notes.append((note, x, y, ex, ey))
         except Exception:
             failed[0] += 1
-            continue
-        bottom = y - line_h / LINE_SPACING * 1.2     # about the letter's height, if it can't be measured
+    if notes:
         try:
             doc.Regenerate()
+        except Exception:
+            pass
+    for note, x, y, ex, ey in notes:
+        bottom = y - line_h / LINE_SPACING * 1.2     # about the letter's height, if it can't be measured
+        try:
             bb = note.get_BoundingBox(view)
             if bb is not None:
                 bottom = bb.Min.Y
@@ -2652,16 +2673,20 @@ def draw_spares(view, root, outputs, counts):
     t.Start()
     try:
         type_id, line_h = text_type()
+        # Every spare is drawn first, noting what each creates (no look through the whole view before and after
+        # each one); one regenerate; then each is grouped and locked.
+        drawn = []
         for c, y in sorted(free, key=lambda item: (item[0]["supply"], item[0]["loop"])):
             circuit = (c["supply"], c["loop"])
             label = KIND.circuit_label(circuit)
             drawn_label = KIND.tag_text(label) if hasattr(KIND, "tag_text") else label
             origin = (c["vx"], y)
-            before = view_element_ids(view)
-            curves = []
-            draw(view, spare_plan(origin, drawn_label, line_h), {}, type_id, line_h, created=curves)
+            curves, new_ids = [], []
+            draw(view, spare_plan(origin, drawn_label, line_h), {}, type_id, line_h, created=curves, made=new_ids)
+            drawn.append((c, y, circuit, label, origin, curves, new_ids))
+        if drawn:
             doc.Regenerate()
-            new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
+        for c, y, circuit, label, origin, curves, new_ids in drawn:
             if not new_ids:
                 continue
             group = doc.Create.NewGroup(List[ElementId](new_ids))
@@ -2973,47 +2998,61 @@ def main():
     draw_riser()
 
 
-def draw_riser(update=None):
-    """Create a riser (update None), or redraw the one-line group in update (an Update from prepare_update).
-    Returns True when drawn, False when it couldn't be (the user was told why - see stop_with), None when the user
-    cancelled."""
-    if update is None:
-        root = starting_element()
-        if root is None:
+class _RiserRun(object):
+    """What the steps of draw_riser share for one riser (or one one-line redrawn): set by one step, used by
+    the later ones."""
+    def __init__(self, update):
+        self.update = update
+
+
+_GO_ON = object()     # a step of draw_riser finished: go on to the next one
+
+
+def _riser_trace(r):
+    """1. What to draw: the panel (or the one-line being redrawn), its first devices and circuits, traced along the
+    conduit into rows. Stops (None) when the user cancels, or with stop_with when nothing can be drawn."""
+    if r.update is None:
+        r.root = starting_element()
+        if r.root is None:
             return
-        picked = first_devices(root)
+        picked = first_devices(r.root)
         if picked is None:
             return
-        firsts, circuits = picked
+        r.firsts, circuits = picked
         allowed = None
     else:
-        root, firsts, allowed, circuits = update.root, update.firsts, update.allowed, update.circuits
-    entry = conduit_entry(root)     # the panel, or its gutter box when the conduit lands there
-    traced = trace_from(entry, firsts, allowed, circuits)
+        r.root, r.firsts, allowed, circuits = r.update.root, r.update.firsts, r.update.allowed, r.update.circuits
+    entry = conduit_entry(r.root)     # the panel, or its gutter box when the conduit lands there
+    traced = trace_from(entry, r.firsts, allowed, circuits)
     if traced is None:
         return
-    rows, returns, elements, addresses, unaddressed, unconnected, type_uids = traced
-    missing_circuits = []
-    if circuits and (update is None or update.group is None):
+    r.rows, r.returns, r.elements, r.addresses, r.unaddressed, r.unconnected, r.type_uids = traced
+    r.missing_circuits = []
+    if circuits and (r.update is None or r.update.group is None):
         # Trace Selected Circuits (or a circuit new in the model): one one-line per circuit.
-        rows, missing_circuits = split_rows_by_circuit(rows, addresses, circuits)
-    first_uids = [el.UniqueId for el in firsts]
-    if update is not None and rows:
-        rows = update_rows(rows, addresses, update)
-        if not rows:
+        r.rows, r.missing_circuits = split_rows_by_circuit(r.rows, r.addresses, circuits)
+    r.first_uids = [el.UniqueId for el in r.firsts]
+    if r.update is not None and r.rows:
+        r.rows = update_rows(r.rows, r.addresses, r.update)
+        if not r.rows:
             return stop_with("The circuit of '%s' could not be found from its panel any more (no traced %s matches "
                              "it). Check the conduit, or draw it again from a plan view."
-                             % (update.name, KIND.run_word.lower()))
-        on_row = set(rows[0]["nodes"])
-        unconnected["added"] = [n for n in unconnected["added"] if n in on_row]
-    root_id = sr.eid_int(root.Id)
-    if not rows:
+                             % (r.update.name, KIND.run_word.lower()))
+        on_row = set(r.rows[0]["nodes"])
+        r.unconnected["added"] = [n for n in r.unconnected["added"] if n in on_row]
+    r.root_id = sr.eid_int(r.root.Id)
+    if not r.rows:
         msg = ("No devices with %s are connected to the selected element by conduit of the "
                "chosen type(s)." % KIND.address_phrase)
-        if unaddressed:
-            msg += ("\n\n%d Fire Alarm Device(s) on that conduit %s." % (len(unaddressed), KIND.no_address_hint))
+        if r.unaddressed:
+            msg += ("\n\n%d Fire Alarm Device(s) on that conduit %s." % (len(r.unaddressed), KIND.no_address_hint))
         return stop_with(msg)
+    return _GO_ON
 
+
+def _riser_symbols(r):
+    """2. The symbols: the panel detail item, each device's symbols from the riser's table (asking for those not set
+    or not loaded) and the address callouts; each device then becomes its symbols, in order."""
     try:
         table = KIND.load_table()
     except Exception as ex:
@@ -3021,14 +3060,14 @@ def draw_riser(update=None):
     available = sr.available_symbols(doc)
 
     # The panel is the NEX2-DETAIL-RISER detail item; the devices use the symbols from the table.
-    panel_sym = panel_family_symbol()
-    panel_refs = panel_reference_lines(panel_sym) if panel_sym is not None else []
-    drawn = [n for row in rows for n in row["nodes"]]
-    keys = dict((n, sr.family_key(doc, elements[n])) for n in drawn)
+    r.panel_sym = panel_family_symbol()
+    r.panel_refs = panel_reference_lines(r.panel_sym) if r.panel_sym is not None else []
+    r.drawn = [n for row in r.rows for n in row["nodes"]]
+    r.keys = dict((n, sr.family_key(doc, r.elements[n])) for n in r.drawn)
     # Symbols for each device: its type's symbols. Symbols that aren't loaded are left out.
     device_symbols, missing, not_loaded = {}, [], set()
-    for n in drawn:
-        key = keys[n]
+    for n in r.drawn:
+        key = r.keys[n]
         wanted = (table.get(key) or sr.new_entry())["symbols"]
         loaded = [sym for sym in wanted if sym in available]
         not_loaded.update(sym for sym in wanted if sym not in available)
@@ -3037,7 +3076,7 @@ def draw_riser(update=None):
         elif key not in missing:
             missing.append(key)
     # Address callouts (SLC): by the device's Address Group subgroup; the others keep the 45 degree text.
-    device_callout, no_subgroup = device_callouts(drawn, keys, addresses, available, not_loaded)
+    device_callout, r.no_subgroup = device_callouts(r.drawn, r.keys, r.addresses, available, not_loaded)
     if not_loaded and BATCH is not None:
         BATCH.not_loaded |= not_loaded      # Update Panel: named once, in its summary
     elif not_loaded:
@@ -3065,8 +3104,8 @@ def draw_riser(update=None):
                     names, title="Symbol for %s  (%d of %d without one)" % (key, i, len(missing)),
                     button_name="Use Symbol", multiselect=False)
                 if picked:
-                    for n in drawn:
-                        if keys[n] == key and n not in device_symbols:
+                    for n in r.drawn:
+                        if r.keys[n] == key and n not in device_symbols:
                             device_symbols[n] = [picked]
                     table[key] = sr.new_entry([picked])
                     picked_any = True
@@ -3090,49 +3129,58 @@ def draw_riser(update=None):
                 return
 
     # Each device becomes its symbols, in order, each with its own address(es).
-    device_count = len(drawn)
-    rows, returns, node_symbol, firsts = expand_devices(rows, returns, elements, addresses, keys,
+    r.device_count = len(r.drawn)
+    r.rows, r.returns, r.node_symbol, r.firsts = expand_devices(r.rows, r.returns, r.elements, r.addresses, r.keys,
                                                         device_symbols, available)
     # A callout is drawn once per device, under its first symbol; its other symbols get no address text.
-    node_callout = dict((n, device_callout[n]) for n in firsts if n in device_callout)
-    callout_parts = set(sid for sid in [n for row in rows for n in row["nodes"]]
-                        if sid not in firsts and base_id(sid) in node_callout)
-    drawn = [n for row in rows for n in row["nodes"]]
+    r.node_callout = dict((n, device_callout[n]) for n in r.firsts if n in device_callout)
+    r.callout_parts = set(sid for sid in [n for row in r.rows for n in row["nodes"]]
+                        if sid not in r.firsts and base_id(sid) in r.node_callout)
+    r.drawn = [n for row in r.rows for n in row["nodes"]]
+    return _GO_ON
 
-    if update is None and not review_layout(rows, device_count):
+
+def _riser_target_view(r):
+    """3. Where to draw: the one-line's own view (an update), or the view chosen after the layout is reviewed."""
+    if r.update is None and not review_layout(r.rows, r.device_count):
         return
-    target = update.view if update is not None else choose_target_view()
-    if target is False:
+    r.target = r.update.view if r.update is not None else choose_target_view()
+    if r.target is False:
         return
-    if target is None and panel_sym is None:
+    if r.target is None and r.panel_sym is None:
         go_on = ec.alert("The %s detail item is not loaded in this project, so no panel will be drawn and "
                             "you will pick where each %s's one-line starts.\n\nContinue?" % (PANEL_FAMILY, KIND.run_word.lower()),
                             title=TITLE, yes=True, no=True)
         if not go_on:
             return
+    return _GO_ON
 
+
+def _riser_view_and_panel(r):
+    """4. The drafting view and the panel detail (one transaction), then where each circuit's one-line starts and
+    the reference line it is locked to."""
     global VIEW_SCALE
-    panel_name = (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip()
+    r.panel_name = (named_value(r.root, PANEL_NUMBER_PARAM) or element_name(r.root)).strip()
 
     # 1. The view, and the panel detail (a new one in a new view; the one already there otherwise).
     created_view = False
-    panel_skipped = []
+    r.panel_skipped = []
     t = Transaction(doc, "%s - view and panel" % TITLE)
     t.Start()
     try:
-        if target is None:
-            view = new_drafting_view(view_name(root))
+        if r.target is None:
+            r.view = new_drafting_view(view_name(r.root))
             created_view = True
-            panel_inst = None
-            if panel_sym is not None:
-                panel_inst, _, shift, _, panel_skipped = place_panel(view, panel_sym, root)
+            r.panel_inst = None
+            if r.panel_sym is not None:
+                r.panel_inst, _, shift, _, r.panel_skipped = place_panel(r.view, r.panel_sym, r.root)
                 # Top right corner at the origin, as before.
-                ElementTransformUtils.MoveElement(doc, panel_inst.Id, XYZ(shift[0], shift[1], 0))
+                ElementTransformUtils.MoveElement(doc, r.panel_inst.Id, XYZ(shift[0], shift[1], 0))
         else:
-            view = target
-            VIEW_SCALE = view.Scale     # sizes on the sheet follow the view being added to
-            panel_inst = None
-        ensure_sketch_plane(view)
+            r.view = r.target
+            VIEW_SCALE = r.view.Scale     # sizes on the sheet follow the view being added to
+            r.panel_inst = None
+        ensure_sketch_plane(r.view)
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
@@ -3144,65 +3192,66 @@ def draw_riser(update=None):
             t2 = Transaction(doc, "%s - cancelled" % TITLE)
             t2.Start()
             try:
-                doc.Delete(view.Id)
+                doc.Delete(r.view.Id)
                 t2.Commit()
             except Exception:
                 t2.RollBack()
+    r.undo_view = undo_view     # used by a later step
 
-    if target is not None:
+    if r.target is not None:
         if BATCH is not None and BATCH.panel_asked and (BATCH.panel_inst is None or BATCH.panel_inst.IsValidObject):
-            panel_inst = BATCH.panel_inst       # Update Panel: chosen for an earlier one-line of the panel
+            r.panel_inst = BATCH.panel_inst       # Update Panel: chosen for an earlier one-line of the panel
         else:
-            panel_inst = find_view_panel(view, root)
+            r.panel_inst = find_view_panel(r.view, r.root)
             if BATCH is not None:
-                BATCH.panel_inst, BATCH.panel_asked = panel_inst, True
-    exit_x, panel_top, placed_refs = panel_exit_points(view, panel_inst, panel_refs)
+                BATCH.panel_inst, BATCH.panel_asked = r.panel_inst, True
+    exit_x, panel_top, placed_refs = panel_exit_points(r.view, r.panel_inst, r.panel_refs)
     # Power supplies nested in the panel detail, each with its own numbered lines (NAC).
-    nested = nested_exit_points(view, panel_inst) if hasattr(KIND, "supply_of") else []
+    r.nested = nested_exit_points(r.view, r.panel_inst) if hasattr(KIND, "supply_of") else []
 
     # 2. Where each circuit's one-line starts, and the reference line it is locked to.
-    origins, lock_refs, reported, skipped_circuits = [], [], False, []
-    for i, row in enumerate(rows, start=1):
-        name = run_name(panel_name, row, i)
-        loop = row_loop(addresses, row["nodes"])
+    r.origins, r.lock_refs, reported, r.skipped_circuits = [], [], False, []
+    for i, row in enumerate(r.rows, start=1):
+        name = run_name(r.panel_name, row, i)
+        loop = row_loop(r.addresses, row["nodes"])
         match = None
-        if nested:
-            circuits = row_circuits(addresses, row["nodes"])
+        if r.nested:
+            circuits = row_circuits(r.addresses, row["nodes"])
             if len(circuits) == 1:
                 circuit = list(circuits)[0]
-                for c, y in nested:
+                for c, y in r.nested:
                     if c["supply"] == KIND.supply_of(circuit) and c["loop"] == loop:
                         match = (c, y)
                         break
-            if match is None and update is not None and update.origin is not None:
-                origins.append(update.origin)
-                lock_refs.append(None)
+            if match is None and r.update is not None and r.update.origin is not None:
+                r.origins.append(r.update.origin)
+                r.lock_refs.append(None)
                 continue
             if match is None:
-                supplies = sorted(set(c["supply"] for c, _y in nested))
-                skipped_circuits.append("%s (%s)" % (
+                supplies = sorted(set(c["supply"] for c, _y in r.nested))
+                r.skipped_circuits.append("%s (%s)" % (
                     row.get("label") or name,
                     "its power supply is not in the panel detail - it has power supplies %s"
                     % ", ".join(str(n) for n in supplies)
                     if len(circuits) == 1 and KIND.supply_of(list(circuits)[0]) not in supplies else
                     "no reference line %s on its power supply" % loop if loop is not None else
                     "its circuit could not be read"))
-                origins.append(None)
-                lock_refs.append(None)
+                r.origins.append(None)
+                r.lock_refs.append(None)
                 continue
-            origins.append((match[0].get("vx", exit_x), match[1]))
-            lock_refs.append(match)
+            r.origins.append((match[0].get("vx", exit_x), match[1]))
+            r.lock_refs.append(match)
             continue
         if exit_x is not None and loop is not None:
             for c, y in placed_refs:
                 if c["loop"] == loop:
                     match = (c, y)
                     break
-        if match is None and update is not None and update.origin is not None:
-            origins.append(update.origin)       # where the one-line being updated started
-            lock_refs.append(None)
+        if match is None and r.update is not None and r.update.origin is not None:
+            r.origins.append(r.update.origin)       # where the one-line being updated started
+            r.lock_refs.append(None)
             continue
-        if match is None and panel_inst is not None:
+        if match is None and r.panel_inst is not None:
             if not reported:
                 report_reference_lines(placed_refs, panel_top)
                 reported = True
@@ -3212,111 +3261,116 @@ def draw_riser(update=None):
                       % (loop, loop, loop, loop, PANEL_FAMILY))
             match = choose_reference(name, reason, placed_refs, panel_top)
             if match is None:
-                undo_view()
+                r.undo_view()
                 return
             if match == "pick":
                 match = None
-                point = pick_origin(view, name, reason)
+                point = pick_origin(r.view, name, reason)
                 if point is None:
-                    undo_view()
+                    r.undo_view()
                     return
-                origins.append(point)
-                lock_refs.append(None)
+                r.origins.append(point)
+                r.lock_refs.append(None)
                 continue
         if match is not None:
-            origins.append((match[0].get("vx", exit_x), match[1]))   # the right end of the reference line
-            lock_refs.append(match)
+            r.origins.append((match[0].get("vx", exit_x), match[1]))   # the right end of the reference line
+            r.lock_refs.append(match)
             continue
-        point = pick_origin(view, name, "There is no %s panel detail to join it to." % PANEL_FAMILY)
+        point = pick_origin(r.view, name, "There is no %s panel detail to join it to." % PANEL_FAMILY)
         if point is None:
-            undo_view()
+            r.undo_view()
             return
-        origins.append(point)
-        lock_refs.append(None)
+        r.origins.append(point)
+        r.lock_refs.append(None)
 
-    if skipped_circuits:
+    if r.skipped_circuits:
         output.print_md("### %s - reference lines of the nested power supplies" % TITLE)
         by_supply = {}
-        for c, _y in nested:
+        for c, _y in r.nested:
             by_supply.setdefault(c["supply"], set()).add(c["loop"])
         for supply in sorted(by_supply):
             output.print_md("- Power Supply # %d: lines %s" % (supply, ", ".join(str(n) for n in sorted(by_supply[supply]))))
-        keep = [k for k, o in enumerate(origins) if o is not None]
-        rows = [rows[k] for k in keep]
-        origins = [origins[k] for k in keep]
-        lock_refs = [lock_refs[k] for k in keep]
-        if not rows:
-            undo_view()
-            return stop_with("Nothing was drawn:\n\n" + "\n".join(skipped_circuits))
+        keep = [k for k, o in enumerate(r.origins) if o is not None]
+        r.rows = [r.rows[k] for k in keep]
+        r.origins = [r.origins[k] for k in keep]
+        r.lock_refs = [r.lock_refs[k] for k in keep]
+        if not r.rows:
+            r.undo_view()
+            return stop_with("Nothing was drawn:\n\n" + "\n".join(r.skipped_circuits))
+    return _GO_ON
 
+
+def _riser_draw(r):
+    """5. Each circuit's one-line drawn and grouped, room made for it on the panel and locked to its reference line
+    (one transaction)."""
     # 3. Draw each circuit and group it.
-    failed = 0
-    end_symbol_missing = False
-    groups, not_locked, spacing_changes = [], [], []
-    t = Transaction(doc, ("Update one-line - %s" % TITLE) if update is not None else
-                    ("Create %s" if target is None else "Add circuit to %s") % TITLE)
+    r.failed = 0
+    r.end_symbol_missing = False
+    r.groups, r.not_locked, r.spacing_changes = [], [], []
+    t = Transaction(doc, ("Update one-line - %s" % TITLE) if r.update is not None else
+                    ("Create %s" if r.target is None else "Add circuit to %s") % TITLE)
     t.Start()
     try:
-        if update is not None:
-            if update.group is not None:
-                remove_group(update.group)      # its name is free again for the new one-line
-            if panel_inst is not None:
-                refresh_panel(panel_inst, root)
+        if r.update is not None:
+            if r.update.group is not None:
+                remove_group(r.update.group)      # its name is free again for the new one-line
+            if r.panel_inst is not None:
+                refresh_panel(r.panel_inst, r.root)
         type_id, line_h = text_type()
         above_type_id, above_h = None, line_h
-        if any(named_value(elements[n], PANEL_NUMBER_PARAM) for n in drawn if n in firsts):
+        if any(named_value(r.elements[n], PANEL_NUMBER_PARAM) for n in r.drawn if n in r.firsts):
             above_type_id, above_h = small_text_type(type_id)
         used, callouts_used, fill_from = {}, {}, {}
-        for sym in node_symbol.values():
+        for sym in r.node_symbol.values():
             used[sr.eid_int(sym.Id)] = sym
-        for n, sym in node_callout.items():
+        for n, sym in r.node_callout.items():
             callouts_used[sr.eid_int(sym.Id)] = sym
-            fill_from.setdefault(sr.eid_int(sym.Id), elements[n])
+            fill_from.setdefault(sr.eid_int(sym.Id), r.elements[n])
         for sym in list(used.values()) + list(callouts_used.values()):
             if not sym.IsActive:
                 sym.Activate()
         doc.Regenerate()
-        sizes = measure_symbols(view, used)
+        sizes = measure_symbols(r.view, used)
         # The end of each line: the riser's end text, or the Generic Annotation set in Riser - Config.
         end_sym, end_ext = None, None
         if END_SYMBOL:
             end_sym = sr.available_symbols(doc).get(END_SYMBOL)
             if end_sym is None:
-                end_symbol_missing = True
+                r.end_symbol_missing = True
             else:
                 if not end_sym.IsActive:
                     end_sym.Activate()
                     doc.Regenerate()
-                end_ext = measure_symbols(view, {sr.eid_int(end_sym.Id): end_sym},
+                end_ext = measure_symbols(r.view, {sr.eid_int(end_sym.Id): end_sym},
                                           capped=False)[sr.eid_int(end_sym.Id)]
         # Callouts: filled in from a device first (their labels change their size), and not capped in size.
-        callout_sizes = measure_symbols(view, callouts_used, fill_from, capped=False)
+        callout_sizes = measure_symbols(r.view, callouts_used, fill_from, capped=False)
 
         box = paper(BOX_SIZE) / 2.0
         # The run starts at its origin; the layout's "panel" is that point.
-        info = {root_id: {"mapped": False, "ext": (0.0, 0.0, 0.0, 0.0), "lines": [], "panel": True,
+        info = {r.root_id: {"mapped": False, "ext": (0.0, 0.0, 0.0, 0.0), "lines": [], "panel": True,
                           "exit_dy": 0.0}}
-        for n in drawn:
-            lines = list(addresses.get(n, []))
+        for n in r.drawn:
+            lines = list(r.addresses.get(n, []))
             if len(lines) > 1:
                 lines = [lines[0] + "-", lines[-1]]     # several addresses: first- / last, on two lines
-            if n in node_symbol:
-                ext = sizes[sr.eid_int(node_symbol[n].Id)]
+            if n in r.node_symbol:
+                ext = sizes[sr.eid_int(r.node_symbol[n].Id)]
             else:
                 ext = (box, box, box, box)
-                lines.insert(0, keys[n].split(" : ")[-1])
-            if getattr(KIND, "candela_line", False) and n in firsts:
-                candela = candela_text(elements[n])
+                lines.insert(0, r.keys[n].split(" : ")[-1])
+            if getattr(KIND, "candela_line", False) and n in r.firsts:
+                candela = candela_text(r.elements[n])
                 if candela:
                     lines.append(candela)
-            above = named_value(elements[n], PANEL_NUMBER_PARAM) if n in firsts else ""
-            info[n] = {"mapped": n in node_symbol, "ext": ext, "lines": lines, "above": above}
+            above = named_value(r.elements[n], PANEL_NUMBER_PARAM) if n in r.firsts else ""
+            info[n] = {"mapped": n in r.node_symbol, "ext": ext, "lines": lines, "above": above}
             if getattr(KIND, "level_labels", False):
                 info[n]["level"] = True
-            if n in node_callout:
-                info[n]["callout"] = callout_sizes[sr.eid_int(node_callout[n].Id)]
+            if n in r.node_callout:
+                info[n]["callout"] = callout_sizes[sr.eid_int(r.node_callout[n].Id)]
                 info[n]["lines"] = []
-            elif n in callout_parts:
+            elif n in r.callout_parts:
                 info[n]["lines"] = []
 
         char_w = line_h / LINE_SPACING * 0.7    # a character is taken as about 0.7 of the text size wide
@@ -3328,40 +3382,38 @@ def draw_riser(update=None):
         if end_sym is not None:
             cfg["end_symbol_ext"] = end_ext
 
-        replaced = [0]
+        r.replaced = [0]
 
         def draw_circuit(row, origin, i, row_cfg):
             """Draw one circuit's one-line at origin and group it. (group or None, [(start, end, curve)], items that
             could not be drawn)."""
-            if update is None:
+            if r.update is None:
                 # Drawn again: the circuit's previous one-line is replaced, not kept as '... (2)'.
-                replaced[0] += remove_previous_groups(run_name(panel_name, row, i))
+                r.replaced[0] += remove_previous_groups(run_name(r.panel_name, row, i))
             drawn_row = row
             if hasattr(KIND, "tag_text") and row.get("label"):
                 drawn_row = dict(row)
                 drawn_row["label"] = KIND.tag_text(row["label"])     # e.g. N12 on the drawing for N1-2
-            plan = rl.layout([drawn_row], root_id, info, returns, row_cfg)
+            plan = rl.layout([drawn_row], r.root_id, info, r.returns, row_cfg)
             px, py = plan["panel"]
             plan = shift_plan(plan, origin[0] - px, origin[1] - py)
-            before = view_element_ids(view)
-            curves = []
-            n_failed = draw(view, plan, node_symbol, type_id, line_h, above_type_id, curves, node_callout, elements,
-                            end_sym)
+            curves, new_ids = [], []
+            n_failed = draw(r.view, plan, r.node_symbol, type_id, line_h, above_type_id, curves, r.node_callout, r.elements,
+                            end_sym, made=new_ids)
             doc.Regenerate()
-            new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
             group = None
             if new_ids:
                 group = doc.Create.NewGroup(List[ElementId](new_ids))
-                gname = unique_group_name(update.name if update is not None else run_name(panel_name, row, i))
+                gname = unique_group_name(r.update.name if r.update is not None else run_name(r.panel_name, row, i))
                 try:
                     group.GroupType.Name = gname
                 except Exception:
                     pass
-                groups.append(group.GroupType.Name)
+                r.groups.append(group.GroupType.Name)
                 save_oneline_data(group, {
-                    "kind": KIND.title, "root": root.UniqueId, "firsts": first_uids, "conduit_types": type_uids,
-                    "loop": row_loop(addresses, row["nodes"]), "label": row.get("label") or "",
-                    "circuits": sorted(list(c) for c in row_circuits(addresses, row["nodes"])),
+                    "kind": KIND.title, "root": r.root.UniqueId, "firsts": r.first_uids, "conduit_types": r.type_uids,
+                    "loop": row_loop(r.addresses, row["nodes"]), "label": row.get("label") or "",
+                    "circuits": sorted(list(c) for c in row_circuits(r.addresses, row["nodes"])),
                     "origin": [origin[0], origin[1]]})
             return group, curves, n_failed
 
@@ -3369,8 +3421,8 @@ def draw_riser(update=None):
             """Delete a circuit's group, its members and its group type (so the redraw keeps the name)."""
             gtype = group.GroupType
             name = gtype.Name
-            if name in groups:
-                groups.remove(name)
+            if name in r.groups:
+                r.groups.remove(name)
             members = list(group.GetMemberIds())
             doc.Delete(group.Id)
             for mid in members:
@@ -3386,27 +3438,27 @@ def draw_riser(update=None):
                 pass
             doc.Regenerate()
 
-        for i, (row, origin, lock) in enumerate(zip(rows, origins, lock_refs), start=1):
-            if lock is not None and spacing_changes:
+        for i, (row, origin, lock) in enumerate(zip(r.rows, r.origins, r.lock_refs), start=1):
+            if lock is not None and r.spacing_changes:
                 # An earlier circuit raised a Loop Spacing: read this one's place on the panel again.
-                for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
+                for c, y in panel_exit_points(r.view, r.panel_inst, r.panel_refs)[2]:
                     if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
                         lock = (c, y)
                         origin = (c.get("vx", origin[0]), y)
                         break
             group, curves, n_failed = draw_circuit(row, origin, i, cfg)
-            failed += n_failed
+            r.failed += n_failed
             make_room = True
             if (group is not None and lock is not None and lock[0]["loop"] is not None
                     and getattr(KIND, "redraw_on_overlap", False)):
                 # Ask before making room: a different wrap length may fit it between its neighbours.
                 row_cfg = dict(cfg)
-                name = run_name(panel_name, row, i)
+                name = run_name(r.panel_name, row, i)
                 while True:
                     if lock[0].get("inst") is not None:
-                        sides = nested_overlap(view, nested, group, lock[1])
+                        sides = nested_overlap(r.view, r.nested, group, lock[1])
                     else:
-                        sides = circuit_overlap(view, panel_inst, panel_refs, lock[0]["loop"], group)
+                        sides = circuit_overlap(r.view, r.panel_inst, r.panel_refs, lock[0]["loop"], group)
                     if not sides:
                         break
                     choice = forms.CommandSwitchWindow.show(
@@ -3425,7 +3477,7 @@ def draw_riser(update=None):
                     row_cfg["per_line"] = per_line
                     remove_circuit(group)
                     group, curves, n_failed = draw_circuit(row, origin, i, row_cfg)
-                    failed += n_failed
+                    r.failed += n_failed
                     if group is None:
                         break
             if lock is not None:
@@ -3438,18 +3490,18 @@ def draw_riser(update=None):
                         break
                 # Room for it between the circuits below and above (its text and callouts included).
                 if group is not None and lock[0]["loop"] is not None and make_room and lock[0].get("inst") is None:
-                    changed = fit_circuit(view, panel_inst, panel_refs, lock[0]["loop"], group)
+                    changed = fit_circuit(r.view, r.panel_inst, r.panel_refs, lock[0]["loop"], group)
                     if changed:
-                        spacing_changes.extend(changed)
-                        for c, y in panel_exit_points(view, panel_inst, panel_refs)[2]:
+                        r.spacing_changes.extend(changed)
+                        for c, y in panel_exit_points(r.view, r.panel_inst, r.panel_refs)[2]:
                             if c["loop"] == lock[0]["loop"] and c["kind"] == lock[0]["kind"]:
                                 lock = (c, y)
                                 break
-                gname = run_name(panel_name, row, i)
+                gname = run_name(r.panel_name, row, i)
                 if first is None:
-                    not_locked.append("%s: its first line could not be found" % gname)
+                    r.not_locked.append("%s: its first line could not be found" % gname)
                 else:
-                    why = lock_to_reference(view, references_in_instance(lock[0].get("inst") or panel_inst, view,
+                    why = lock_to_reference(r.view, references_in_instance(lock[0].get("inst") or r.panel_inst, r.view,
                                                                          lock[0], lock[1]),
                                             first)
                     if why:
@@ -3465,85 +3517,101 @@ def draw_riser(update=None):
                                    "the view is the current version of %s. (%s)"
                                    % (cand["kind"].lower(), label, cand.get("is_ref") or "unknown",
                                       PANEL_FAMILY, why))
-                        not_locked.append("%s: %s The one-line is drawn in line with it; only the lock is "
+                        r.not_locked.append("%s: %s The one-line is drawn in line with it; only the lock is "
                                           "missing." % (gname, why))
         t.Commit()
     except Exception as ex:
         if t.HasStarted() and not t.HasEnded():
             t.RollBack()
-        undo_view()
+        r.undo_view()
         return stop_with("The riser could not be created:\n%s" % ex)
 
     try:
-        if uidoc.ActiveView is None or uidoc.ActiveView.Id != view.Id:
-            uidoc.ActiveView = view
+        if uidoc.ActiveView is None or uidoc.ActiveView.Id != r.view.Id:
+            uidoc.ActiveView = r.view
     except Exception:
         pass
+    return _GO_ON
 
-    count = device_count
-    if update is not None:
-        msg = "Updated '%s' in '%s': %d device(s)." % (update.name, view.Name, count)
+
+def _riser_report(r):
+    """6. The summary message: what was drawn, and what was left out and why. Returns True."""
+    count = r.device_count
+    if r.update is not None:
+        msg = "Updated '%s' in '%s': %d device(s)." % (r.update.name, r.view.Name, count)
     else:
-        msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if target is None else "Added to",
-                                                        view.Name, count, len(rows))
+        msg = "%s '%s': %d device(s) on %d run(s)." % ("Created" if r.target is None else "Added to",
+                                                        r.view.Name, count, len(r.rows))
     notes = []      # each its own paragraph under msg
-    if replaced[0]:
-        notes.append("Replaced %d earlier one-line group(s) of the same circuit(s)." % replaced[0])
-    if groups and BATCH is None:
-        notes.append("Group(s): " + ", ".join(groups))
-    if target is not None and panel_inst is None:
+    if r.replaced[0]:
+        notes.append("Replaced %d earlier one-line group(s) of the same circuit(s)." % r.replaced[0])
+    if r.groups and BATCH is None:
+        notes.append("Group(s): " + ", ".join(r.groups))
+    if r.target is not None and r.panel_inst is None:
         notes.append("No %s panel detail was used in this view, so no panel was added." % PANEL_FAMILY)
-    if failed:
-        notes.append("%d item(s) could not be drawn." % failed)
-    if skipped_circuits:
-        notes.append("Not drawn:\n" + "\n".join(skipped_circuits))
-    if end_symbol_missing:
+    if r.failed:
+        notes.append("%d item(s) could not be drawn." % r.failed)
+    if r.skipped_circuits:
+        notes.append("Not drawn:\n" + "\n".join(r.skipped_circuits))
+    if r.end_symbol_missing:
         notes.append("The end-of-line symbol '%s' set in Riser - Config is not loaded in this project, so the end "
                      "text was used." % END_SYMBOL)
-    if missing_circuits:
+    if r.missing_circuits:
         notes.append("No device of %s could be reached by conduit from the panel, so %s not drawn."
-                     % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in missing_circuits),
-                        "it was" if len(missing_circuits) == 1 else "they were"))
-    if spacing_changes:
+                     % (", ".join(CIRCUIT_LABELS.get(c) or str(c) for c in r.missing_circuits),
+                        "it was" if len(r.missing_circuits) == 1 else "they were"))
+    if r.spacing_changes:
         notes.append("More room was made between circuits:\n" + "\n".join(
             "Loop Spacing %d: %s -> %s%s" % (n, feet_text(old), feet_text(new),
                                             " (type parameter - other panels of this type change too)"
                                             if where == "type" else "")
-            for n, old, new, where in spacing_changes))
-    if not_locked:
-        notes.append("Not locked to the reference line:\n" + "\n".join(not_locked))
-    if panel_skipped:
+            for n, old, new, where in r.spacing_changes))
+    if r.not_locked:
+        notes.append("Not locked to the reference line:\n" + "\n".join(r.not_locked))
+    if r.panel_skipped:
         notes.append("The %s detail item has no editable parameter named %s, so it was left as is."
-                     % (PANEL_FAMILY, " / ".join(panel_skipped)))
-    if no_subgroup:
+                     % (PANEL_FAMILY, " / ".join(r.panel_skipped)))
+    if r.no_subgroup:
         notes.append("%d type(s) have an Address Group but no subgroup with their number of addresses, so they have "
-                     "the 45 degree address text; they are listed in the output window." % len(no_subgroup))
-    which = (" - %s" % update.name) if update is not None else ""     # the one-line, in the output window
-    no_path = unconnected["added"] or unconnected["left_off"]
+                     "the 45 degree address text; they are listed in the output window." % len(r.no_subgroup))
+    which = (" - %s" % r.update.name) if r.update is not None else ""     # the one-line, in the output window
+    no_path = r.unconnected["added"] or r.unconnected["left_off"]
     if no_path:
         done = {UNCONNECTED_BY_ADDRESS: "were added in address order",
                 UNCONNECTED_AT_END: "were added at the end of the line",
-                UNCONNECTED_LEAVE_OFF: "were left off"}.get(unconnected["how"], "")
+                UNCONNECTED_LEAVE_OFF: "were left off"}.get(r.unconnected["how"], "")
         notes.append("%d device(s) on this %s have no conduit path from the panel and %s; they are listed in the "
                      "output window." % (len(no_path), KIND.run_word.lower(), done))
         output.print_md("### %s%s - devices with no conduit path (%s)" % (TITLE, which, done))
         for i in no_path:
-            output.print_md("- %s %s - %s" % (output.linkify(elements[i].Id), sr.family_key(doc, elements[i]),
-                                              ", ".join(addresses.get(i) or [])))
-    if unaddressed and BATCH is not None:
+            output.print_md("- %s %s - %s" % (output.linkify(r.elements[i].Id), sr.family_key(doc, r.elements[i]),
+                                              ", ".join(r.addresses.get(i) or [])))
+    if r.unaddressed and BATCH is not None:
         # Update Panel: each one-line's trace passes the same devices - list each once.
-        unaddressed = [el for el in unaddressed if sr.eid_int(el.Id) not in BATCH.unaddressed]
-        BATCH.unaddressed.update(sr.eid_int(el.Id) for el in unaddressed)
-    if unaddressed:
+        r.unaddressed = [el for el in r.unaddressed if sr.eid_int(el.Id) not in BATCH.unaddressed]
+        BATCH.unaddressed.update(sr.eid_int(el.Id) for el in r.unaddressed)
+    if r.unaddressed:
         notes.append("%d Fire Alarm Device(s) on the conduit have no %s and were left off. "
-                     "They are listed in the output window." % (len(unaddressed), KIND.address_label))
+                     "They are listed in the output window." % (len(r.unaddressed), KIND.address_label))
         output.print_md("### %s%s - devices on the conduit without %s" % (TITLE, which, KIND.address_phrase))
-        for el in unaddressed:
+        for el in r.unaddressed:
             output.print_md("- %s %s" % (output.linkify(el.Id), sr.family_key(doc, el)))
     if BATCH is not None:
         # Update Panel: one summary for all of the panel's one-lines (panel_summary).
-        BATCH.done.append((groups[0] if groups else update.name, count, notes))
+        BATCH.done.append((r.groups[0] if r.groups else r.update.name, count, notes))
         return True
     ec.alert("\n\n".join([msg] + notes), title=TITLE)
     return True
+
+
+def draw_riser(update=None):
+    """Create a riser (update None), or redraw the one-line group in update (an Update from prepare_update).
+    Returns True when drawn, False when it couldn't be (the user was told why - see stop_with), None when the user
+    cancelled."""
+    r = _RiserRun(update)
+    for step in (_riser_trace, _riser_symbols, _riser_target_view, _riser_view_and_panel, _riser_draw):
+        done = step(r)
+        if done is not _GO_ON:
+            return done
+    return _riser_report(r)
 

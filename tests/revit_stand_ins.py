@@ -285,3 +285,7 @@ module("Autodesk.Revit.DB.Plumbing", Pipe=type("Pipe", (), {}))
 sys.modules["Autodesk.Revit.DB"].Plumbing = sys.modules["Autodesk.Revit.DB.Plumbing"]
 for _enum in ("PartType", "RoutingPreferenceRuleGroupType"):
     setattr(sys.modules["Autodesk.Revit.DB"], _enum, EnumMeta(_enum, (object,), {}))
+
+# ---- extensible storage (the riser one-lines' data) ----
+module("Autodesk.Revit.DB.ExtensibleStorage")
+sys.modules["Autodesk.Revit.DB"].ExtensibleStorage = sys.modules["Autodesk.Revit.DB.ExtensibleStorage"]
