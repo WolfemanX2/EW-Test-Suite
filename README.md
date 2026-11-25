@@ -62,6 +62,8 @@ Tools being replaced are kept in the **Obsolete** panel on the separate **EW Pro
   with SLC RETURN / NAC RETURN; the panel detail's Panel Model comes from the panel's Model.
 - **Update Panel:** from the same drafting view options, every one-line of one panel in the view is traced again and
   redrawn (lowest loop / circuit first) as one undo step, with one summary; each question is asked once for all of them.
+  NAC Riser (power supplies nested in the panel detail) also deletes circuits no longer in the model, draws new circuits
+  on their power supply's output (N2-3 -> line 3 of power supply 2), and marks outputs with no circuit as SPARE.
 - **Riser - Config (SLC Riser tab):** sets the drawing settings (including the panel detail family drawn for the head end, the circuit label's offset from the start of the one-line, and the line end: text or a Generic Annotation) and the symbols used for each device type, and an
   optional address callout symbol per Address Group subgroup (Family Defaults Config) used instead of the 45 degree
   address text, placed in a band below the line's address text with detail lines to the device (build callouts as
@@ -241,12 +243,12 @@ share are in `lib/addressing_ui.py`.
 | lib/nac_voice_types.py | v11 |
 | lib/conduit_trace.py | v5 |
 | SLC Riser | v59 |
-| NAC Riser | v28 |
+| NAC Riser | v29 |
 | Riser - Config (was SLC Riser - Config) | v16 |
 | NAC Coverage Checker | v3 |
 | lib/slc_riser.py | v23 |
-| lib/riser_tool.py | v31 |
-| lib/nac_riser.py | v11 |
+| lib/riser_tool.py | v32 |
+| lib/nac_riser.py | v12 |
 | lib/riser_config_editor.py | v10 |
 | lib/riser_layout.py | v28 |
 | Line Nuke | v4 |

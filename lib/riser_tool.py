@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-# riser_tool module - version v31
+# riser_tool module - version v32
 # Change log (last change first):
+#   v32 - NAC Riser v29: Update Panel keeps the panel's outputs in step with the model (a kind with sync_outputs and
+#         power supplies nested in the panel detail): one-lines of circuits no longer in the model are deleted,
+#         circuits new in the model are drawn on the output of their power supply, and an output with no circuit
+#         in the model gets a SPARE one-line (circuit label, no devices, SPARE at the end - draw_spares).
 #   v31 - SLC Riser v59 / NAC Riser v28: the drafting view options are offered when the active view is a drafting
 #         view by its view type too, or holds one-lines this riser drew (in_drafting_view), and the model / active
 #         view are read again on every run (run) - a drafting view could get the plan view prompts instead.
@@ -13,9 +17,6 @@
 #         the view, 1" default) instead of 1/8" on the sheet (a foot at 1/8"); an overlap names the two elements
 #         in the output window. Only nested Detail Items count as power supplies (a nested Generic Annotation with
 #         a Power Supply # had its lines used, so circuits started at its end).
-#   v27 - SLC Riser v56 / NAC Riser v24: overlaps between circuits are found from what is drawn in the groups
-#         (lines, symbols, text as its real - turned - outline), not the groups' boxes (group_shapes,
-#         shapes_clash, raise_needed).
 """The one-line riser engine: pick the head end and the first device, trace the conduit, check the device count,
 choose the view, place the head end detail (NEX2-DETAIL-RISER), draw each circuit's one-line, group it and lock it
 to the head end's numbered reference line.
@@ -119,6 +120,7 @@ HEAD_IN_MODEL = "Select in Model"
 HEAD_END_CATEGORIES = [BuiltInCategory.OST_FireAlarmDevices, BuiltInCategory.OST_ElectricalEquipment]
 UPDATE_ONELINE = "Update Selected One-Line"
 UPDATE_PANEL = "Update Panel"       # every one-line of one panel in the drafting view
+SPARE_TEXT = "SPARE"                # written at the end of the one-line of an output with no circuit in the model
 ONELINE_SCHEMA_GUID = "6f3f0a52-6c1e-4b5e-9a57-2f1d8c4e7b31"    # extensible storage on each one-line group
 PANEL_MODEL_PARAM = "Panel Model"   # the panel detail's field, filled from the panel's Model
 NEW_VIEW = "Generate New Drafting View"
@@ -386,10 +388,8 @@ def panel_supplies(root):
     return found
 
 
-def choose_circuits(root=None):
-    """The circuits (KIND.groups) chosen from a list of every circuit in the project, shown as 'N1-2 (5 devices)'.
-    With a kind that has supply_of, only circuits of the selected panel's power supplies are listed (all when the
-    panel names none). None when cancelled or there are none."""
+def project_circuits():
+    """({circuit (KIND.groups): number of devices on it}, {circuit: 'N1-2'}) for every device in the project."""
     counts, labels = {}, {}
     reader = KIND.new_reader()
     for el in (FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_FireAlarmDevices)
@@ -406,6 +406,14 @@ def choose_circuits(root=None):
                 seen.add(g)
         for g in seen:
             counts[g] = counts.get(g, 0) + 1
+    return counts, labels
+
+
+def choose_circuits(root=None):
+    """The circuits (KIND.groups) chosen from a list of every circuit in the project, shown as 'N1-2 (5 devices)'.
+    With a kind that has supply_of, only circuits of the selected panel's power supplies are listed (all when the
+    panel names none). None when cancelled or there are none."""
+    counts, labels = project_circuits()
     if not counts:
         ec.alert("No devices in this project have %s." % KIND.address_phrase, title=TITLE)
         return None
@@ -2146,8 +2154,10 @@ class Update(object):
     """A one-line group to redraw: the group, its view and name, and the circuit to trace (panel, first devices,
     conduit types - "auto" when worked out), the loop it shows and where it starts (None = from its reference
     line)."""
-    def __init__(self, group, view, root, firsts, allowed, loop, label, origin, circuits):
-        self.group, self.view, self.name = group, view, group.GroupType.Name
+    def __init__(self, group, view, root, firsts, allowed, loop, label, origin, circuits, name=None):
+        # group None: a circuit new in the model, drawn for the first time (Update Panel), named name.
+        self.group, self.view = group, view
+        self.name = name or group.GroupType.Name
         self.root, self.firsts, self.allowed = root, firsts, allowed
         self.loop, self.label, self.origin = loop, label, origin
         self.circuits = set(circuits or []) or None     # only these circuits' devices are drawn
@@ -2182,9 +2192,10 @@ def remove_group(group):
 
 
 def remove_previous_groups(name):
-    """Delete every one-line group named name (or 'name (2)', 'name (3)' ... from earlier runs) and their group
-    types, so a circuit drawn again replaces its previous one-line. Returns how many groups were deleted."""
-    pattern = re.compile(r"^%s(?: \(\d+\))?$" % re.escape(name))
+    """Delete every one-line group named name (or 'name (2)', 'name (3)' ... from earlier runs, or 'name - SPARE')
+    and their group types, so a circuit drawn again replaces its previous one-line. Returns how many groups were
+    deleted."""
+    pattern = re.compile(r"^%s(?: - %s)?(?: \(\d+\))?$" % (re.escape(name), SPARE_TEXT))
     removed = 0
     for gtype in list(FilteredElementCollector(doc).OfClass(GroupType).ToElements()):
         try:
@@ -2343,6 +2354,10 @@ def update_for_group(group, view, data=None, root=None):
         ec.alert("'%s' was drawn by %s. Run %s to update it." % (group.GroupType.Name, data["kind"], data["kind"]),
                  title=TITLE)
         return None
+    if data.get("spare"):
+        ec.alert("'%s' is a spare output (no circuit in the model). %s draws its circuit there once the circuit is "
+                 "in the model." % (group.GroupType.Name, UPDATE_PANEL), title=TITLE)
+        return None
     stored = doc.GetElement(data.get("root") or "")
     if stored is None:
         if root is None:
@@ -2400,6 +2415,12 @@ class PanelBatch(object):
         self.unaddressed = set()        # devices without an address already listed
         self.panel_inst = None          # the panel detail used, once chosen (find_view_panel)
         self.panel_asked = False
+        # Outputs kept in step with the model (sync_outputs):
+        self.added = []                 # one-lines drawn for circuits new in the model
+        self.removed = []               # one-lines deleted: their circuit is no longer in the model
+        self.spares = []                # outputs drawn as SPARE
+        self.no_output = []             # circuits on the panel's power supplies with no output for them
+        self.spare_problems = []
 
 
 def stop_with(msg):
@@ -2501,7 +2522,16 @@ def panel_summary(batch, view):
     parts = ["Updated %d of %d one-line(s) of %s in '%s': %d device(s)."
              % (len(batch.done), len(batch.done) + len(batch.failed), batch.panel, view.Name, total)]
     if batch.done:
-        parts.append("\n".join("%s: %d device(s)" % (name, n) for name, n, _notes in batch.done))
+        parts.append("\n".join("%s: %d device(s)%s" % (name, n, " - new" if name in batch.added else "")
+                               for name, n, _notes in batch.done))
+    if batch.removed:
+        parts.append("Deleted - the circuit is no longer in the model:\n" + "\n".join(batch.removed))
+    if batch.spares:
+        parts.append("Spare outputs (no circuit in the model): " + ", ".join(batch.spares))
+    if batch.no_output:
+        parts.append("In the model on this panel's power supplies, but the riser has no output for them, so they "
+                     "were not drawn: " + ", ".join(batch.no_output))
+    parts.extend(batch.spare_problems)
     # A note made for every one-line is shown once; the others name their one-lines.
     notes, note_order = {}, []
     for name, _n, items in batch.done:
@@ -2524,6 +2554,144 @@ def panel_summary(batch, view):
     return "\n\n".join(parts)
 
 
+def panel_outputs(view, root):
+    """[(candidate, y)] for each output (numbered reference line) of the power supplies nested in the panel detail -
+    one per power supply and number - with the panel detail used (BATCH remembers it for the one-lines)."""
+    if BATCH.panel_asked and (BATCH.panel_inst is None or BATCH.panel_inst.IsValidObject):
+        panel_inst = BATCH.panel_inst
+    else:
+        panel_inst = find_view_panel(view, root)
+        BATCH.panel_inst, BATCH.panel_asked = panel_inst, True
+    outputs, seen = [], set()
+    for c, y in nested_exit_points(view, panel_inst):
+        key = (c["supply"], c["loop"])
+        if key not in seen and c.get("vx") is not None:
+            seen.add(key)
+            outputs.append((c, y))
+    return outputs
+
+
+def sync_outputs(view, root, updates, old_spares, number):
+    """Update Panel, for a kind with sync_outputs: delete the one-lines whose circuit is no longer in the model (and
+    the SPARE one-lines, drawn again by draw_spares), and add an Update (no group) for each circuit in the model on
+    one of the nested power supplies that isn't drawn yet and has an output. Changes updates in place. Returns
+    (outputs, {circuit: devices} in the model); ([], {}) when the panel detail has no nested power supplies."""
+    outputs = panel_outputs(view, root)
+    if not outputs:
+        return [], {}
+    counts, labels = project_circuits()
+    in_model = set(counts)
+    types = set()       # conduit types followed by the panel's one-lines: traced for the new circuits too
+    for u in updates:
+        if isinstance(u.allowed, set):
+            types |= u.allowed
+    gone = [u for u in updates if u.circuits and not (u.circuits & in_model)]
+    if gone or old_spares:
+        t = Transaction(doc, "%s - remove circuits no longer in the model" % TITLE)
+        t.Start()
+        try:
+            for u in gone:
+                BATCH.removed.append(u.name)
+                remove_group(u.group)
+                updates.remove(u)
+            for g in old_spares:
+                if g.IsValidObject:
+                    remove_group(g)
+            t.Commit()
+        except Exception:
+            if t.HasStarted() and not t.HasEnded():
+                t.RollBack()
+            raise
+    drawn = set()
+    for u in updates:
+        drawn |= set(u.circuits or [])
+    supplies = set(c["supply"] for c, _y in outputs)
+    at_output = set((c["supply"], c["loop"]) for c, _y in outputs)
+    panel_name = (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip() or number
+    for g in sorted(counts):
+        if KIND.supply_of(g) not in supplies or g in drawn:
+            continue
+        label = labels.get(g) or KIND.circuit_label(g)
+        if g not in at_output:
+            BATCH.no_output.append(label)
+            continue
+        CIRCUIT_LABELS[g] = label
+        updates.append(Update(None, view, root, [], set(types) or "auto", g[1], label, None, [g],
+                              name=run_name(panel_name, {"label": label}, 0)))
+    return outputs, counts
+
+
+def spare_plan(origin, label, line_h):
+    """A spare output's one-line at origin: its circuit label (as a circuit's), a line one device spacing past the
+    label, and SPARE at its end - no devices."""
+    x0, y = origin
+    sp = DEVICE_SPACING_FT
+    lx = x0 + LABEL_OFFSET_X_FT
+    end = lx + sp
+    return {"symbols": [], "boxes": [], "lines": [((x0, y), (end, y))],
+            "texts": [(end + sp * 0.05, y + line_h * 0.6, SPARE_TEXT, "L")], "panel": None,
+            "leader_texts": [(lx, y + line_h * 1.25 + LOOP_LABEL_RAISE_IN / 12.0, label, lx, y)],
+            "callouts": [], "end_marks": []}
+
+
+def draw_spares(view, root, outputs, counts):
+    """A SPARE one-line, grouped and locked to its reference line, on every output whose circuit has no device in
+    the model and no one-line of the panel in the view."""
+    global VIEW_SCALE
+    taken = set(counts)
+    mine, _others = view_onelines(view)
+    for g, data in mine:
+        if data is not None and data.get("root") == root.UniqueId and not data.get("spare"):
+            taken |= set(tuple(c) for c in data.get("circuits") or [])
+    free = [(c, y) for c, y in outputs if (c["supply"], c["loop"]) not in taken]
+    if not free:
+        return
+    VIEW_SCALE = view.Scale
+    panel_name = (named_value(root, PANEL_NUMBER_PARAM) or element_name(root)).strip()
+    t = Transaction(doc, "%s - spare outputs" % TITLE)
+    t.Start()
+    try:
+        type_id, line_h = text_type()
+        for c, y in sorted(free, key=lambda item: (item[0]["supply"], item[0]["loop"])):
+            circuit = (c["supply"], c["loop"])
+            label = KIND.circuit_label(circuit)
+            drawn_label = KIND.tag_text(label) if hasattr(KIND, "tag_text") else label
+            origin = (c["vx"], y)
+            before = view_element_ids(view)
+            curves = []
+            draw(view, spare_plan(origin, drawn_label, line_h), {}, type_id, line_h, created=curves)
+            doc.Regenerate()
+            new_ids = [eid for k, eid in view_element_ids(view).items() if k not in before]
+            if not new_ids:
+                continue
+            group = doc.Create.NewGroup(List[ElementId](new_ids))
+            name = unique_group_name("%s - %s %s - %s" % (panel_name, KIND.run_word, label, SPARE_TEXT))
+            try:
+                group.GroupType.Name = name
+            except Exception:
+                pass
+            save_oneline_data(group, {
+                "kind": KIND.title, "root": root.UniqueId, "spare": True, "firsts": [], "conduit_types": [],
+                "loop": c["loop"], "label": label, "circuits": [list(circuit)], "origin": [origin[0], origin[1]]})
+            BATCH.spares.append(label)
+            first = None
+            for p, q, curve in curves:
+                if abs(p[1] - y) < 1e-6 and abs(q[1] - y) < 1e-6 and abs(min(p[0], q[0]) - origin[0]) < 1e-6:
+                    first = curve
+                    break
+            why = None if first is None else lock_to_reference(
+                view, references_in_instance(c.get("inst") or BATCH.panel_inst, view, c, y), first)
+            if first is None or why:
+                BATCH.spare_problems.append("%s: not locked to its reference line%s" % (
+                    group.GroupType.Name, (" (%s)" % why) if why else ""))
+        t.Commit()
+    except Exception as ex:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        del BATCH.spares[:]
+        BATCH.spare_problems.append("The spare outputs could not be drawn:\n%s" % ex)
+
+
 def update_panel(view):
     """Update Panel: every one-line of one panel in the drafting view is traced again in the model and redrawn in
     place (as Update Selected One-Line does for one), lowest loop / circuit first, as one undo step. Cancelling
@@ -2537,33 +2705,44 @@ def update_panel(view):
         root = panel_by_number(number)
         if root is None:
             return
-    updates = []
+    updates, old_spares = [], []
     for group, data in items:
+        if data is not None and data.get("spare"):
+            old_spares.append(group)        # drawn again below, where the outputs are still spare
+            continue
         update = update_for_group(group, view, data, root)
         if update is not None:
             updates.append(update)
-    if not updates:
-        return
-    updates.sort(key=update_order)
     number = number or element_name(root)
     BATCH = PanelBatch(number)
     tg = TransactionGroup(doc, "%s - %s" % (UPDATE_PANEL, TITLE))
     finished = False
     try:
         tg.Start()
+        outputs, counts = [], {}
+        if getattr(KIND, "sync_outputs", False) and hasattr(KIND, "supply_of"):
+            outputs, counts = sync_outputs(view, root, updates, old_spares, number)
+        updates.sort(key=update_order)
         for update in updates:
-            if not update.group.IsValidObject:
-                continue
-            try:
-                # Where it starts now: making room for an earlier one-line may have moved it.
-                update.origin = group_origin([doc.GetElement(i) for i in update.group.GetMemberIds()]) or update.origin
-            except Exception:
-                pass
+            if update.group is not None:
+                if not update.group.IsValidObject:
+                    continue
+                try:
+                    # Where it starts now: making room for an earlier one-line may have moved it.
+                    update.origin = (group_origin([doc.GetElement(i) for i in update.group.GetMemberIds()])
+                                     or update.origin)
+                except Exception:
+                    pass
             BATCH.current = update.name
-            if draw_riser(update) is None:
+            result = draw_riser(update)
+            if result is None:
                 break       # cancelled
+            if result and update.group is None:
+                BATCH.added.append(BATCH.done[-1][0])
         else:
             finished = True
+        if finished and outputs:
+            draw_spares(view, root, outputs, counts)
         if finished:
             tg.Assimilate()
         else:
@@ -2815,8 +2994,8 @@ def draw_riser(update=None):
         return
     rows, returns, elements, addresses, unaddressed, unconnected, type_uids = traced
     missing_circuits = []
-    if update is None and circuits:
-        # Trace Selected Circuits: one one-line per chosen circuit.
+    if circuits and (update is None or update.group is None):
+        # Trace Selected Circuits (or a circuit new in the model): one one-line per circuit.
         rows, missing_circuits = split_rows_by_circuit(rows, addresses, circuits)
     first_uids = [el.UniqueId for el in firsts]
     if update is not None and rows:
@@ -3079,7 +3258,8 @@ def draw_riser(update=None):
     t.Start()
     try:
         if update is not None:
-            remove_group(update.group)          # its name is free again for the new one-line
+            if update.group is not None:
+                remove_group(update.group)      # its name is free again for the new one-line
             if panel_inst is not None:
                 refresh_panel(panel_inst, root)
         type_id, line_h = text_type()

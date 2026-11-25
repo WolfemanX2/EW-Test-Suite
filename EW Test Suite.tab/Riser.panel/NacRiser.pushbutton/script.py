@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# NAC Riser script - version v28
-__title__ = "NAC\nRiser v28"
+# NAC Riser script - version v29
+__title__ = "NAC\nRiser v29"
 __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "<LEVEL> - NAC RISER - <PANEL #> (the power supply's level and its Panel # parameter, in capitals). "
            "The circuits go on the power supplies nested in the panel detail: circuit N#-C on reference line C of the "
@@ -24,7 +24,7 @@ __doc__ = ("Draws a one-line NAC riser diagram in a new drafting view named "
            "settings; the panel detail's Panel #, Location and Panel Model are refreshed too. Hand edits inside "
            "the group are replaced. One-lines drawn before v10 are worked out from their group name (Panel #) and "
            "the addresses written in them.\n\n"
-           "Update Panel - every one-line of one panel in the view (the only panel there, else chosen from a list) is updated the same way, lowest circuit first, as one undo step with one summary at the end; a question (devices with no conduit path, a type without a symbol) is asked once for all of them, and cancelling one leaves the view as it was. Circuits of the panel that aren't drawn in the view yet are not added.\n\n"
+           "Update Panel - every one-line of one panel in the view (the only panel there, else chosen from a list) is updated the same way, lowest circuit first, as one undo step with one summary at the end; a question (devices with no conduit path, a type without a symbol) is asked once for all of them, and cancelling one leaves the view as it was. With power supplies nested in the panel detail, Update Panel also keeps the outputs in step with the model: the one-line of a circuit no longer in the model is deleted, a circuit new in the model is drawn on the output (reference line) of the power supply with its number (N2-3 -> line 3 of power supply 2), and an output with no circuit in the model gets a one-line with just its circuit label and SPARE at the end. A circuit with no output on the riser is named in the summary.\n\n"
            "Steps: choose the NAC power supply (FACU, NAC panel, booster ...) from a list - panels with NAC / NCP / NACP "
            "in the family name that are also set to Head End in Family Defaults Config or have a Panel # parameter - "
            "or select it in the model, then the first device in the circuit "

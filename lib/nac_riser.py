@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-# nac_riser module - version v11
+# nac_riser module - version v12
 # Change log (last change first):
+#   v12 - NAC Riser v29: CircuitKind.sync_outputs (Update Panel deletes circuits no longer in the model, draws new
+#         ones on their power supply's output and SPARE on outputs with no circuit) and circuit_label.
 #   v11 - NAC Riser v26: CircuitKind.tag_text - the circuit label on the one-line has no hyphen (N1-2 -> N12).
 #   v10 - NAC Riser v20: CircuitKind.redraw_on_overlap - an overlapping circuit can be redrawn with another wrap length.
 #   v9 - NAC Riser v19: CircuitKind.level_labels and candela_line - NAC address text is level and centred under
 #        the symbol, with the candela on the line below (N1-1.2 / 30CD).
 #   v8 - NAC Riser v18: CircuitKind.supply_of(circuit) - the power supply number (N#) of a circuit, for the list.
-#   v7 - NAC Riser v17: CircuitKind.location_name_only (Location = room / space name) and panel_number_params
-#        (Power Supply #1-3: the number in the panel's text, written to the panel detail as an integer).
 """NAC Riser: what the riser engine (lib/riser_tool.py) needs to know about NAC circuits.
 
 The head end is a power supply (FACU, NAC panel, booster ...). Each circuit leaving it is one row, labeled with the
@@ -115,6 +115,10 @@ class CircuitKind(object):
         # A circuit that would overlap the one below or above it: ask to redraw it with a different wrap length
         # (riser_tool) before making room by raising Loop Spacing.
         self.redraw_on_overlap = True
+        # Update Panel keeps the outputs of the power supplies nested in the panel detail in step with the model:
+        # one-lines of circuits no longer in the model are deleted, new circuits are drawn on the output (reference
+        # line) of their power supply, and an output with no circuit in the model gets a SPARE one-line.
+        self.sync_outputs = True
 
     # ---- Addresses ----
     def new_reader(self):
@@ -147,6 +151,10 @@ class CircuitKind(object):
         """The circuit label as drawn on the one-line: without the hyphen (N1-2 -> N12). Group and view names keep
         the hyphen."""
         return (label or "").replace("-", "")
+
+    def circuit_label(self, group):
+        """'N1-2' for the circuit (power supply, circuit)."""
+        return nv.fmt_circuit(self.kind, group[0], group[1])
 
     def supply_of(self, group):
         """The power supply number (N#) of a circuit (KIND.groups), e.g. 1 for N1-3."""
